@@ -280,17 +280,8 @@ SUBMIT_INITIAL_DELAY = 0.35
 SUBMIT_CLICK_SETTLE_DELAY = 0.25
 POST_SUBMIT_URL_MAX_WAIT = 0.5
 POST_SUBMIT_URL_POLL_INTERVAL = 0.1
-PYFREEPROXY_MAX_PAGES = 2
-PYFREEPROXY_MAX_PROXIES = 80
-PYFREEPROXY_SOURCES = [
-    "GeonodeProxiedSession",
-    "IP3366ProxiedSession",
-    "IP89ProxiedSession",
-    "KuaidailiProxiedSession",
-    "ProxylistProxiedSession",
-    "ProxydailyProxiedSession",
-]
-PYFREEPROXY_FILTER_RULE = {"protocol": ["http"]}
+PROXY_LIST_FILENAME = "ips.txt"
+PROXY_MAX_PROXIES = 80
 PROXY_HEALTH_CHECK_URL = "https://www.baidu.com/"
 PROXY_HEALTH_CHECK_TIMEOUT = 5
 PROXY_HEALTH_CHECK_MAX_DURATION = 45
@@ -459,51 +450,61 @@ def _get_runtime_directory() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def _load_proxy_ip_pool() -> List[str]:
+def _parse_proxy_line(line: str) -> Optional[str]:
+    if not line:
+        return None
+    cleaned = line.strip()
+    if not cleaned or cleaned.startswith("#"):
+        return None
+    if "://" in cleaned:
+        return cleaned
+    if ":" in cleaned and cleaned.count(":") == 1:
+        host, port = cleaned.split(":", 1)
+    else:
+        parts = re.split(r"[\s,]+", cleaned)
+        if len(parts) < 2:
+            return None
+        host, port = parts[0], parts[1]
+    host = host.strip()
+    port = port.strip()
+    if not host or not port:
+        return None
     try:
-        from freeproxy.freeproxy import ProxiedSessionClient  # pyfreeproxy
-    except ImportError as exc:
-        raise RuntimeError("pyfreeproxy 模块不可用，请先安装 pyfreeproxy") from exc
+        int(port)
+    except ValueError:
+        return None
+    return f"{host}:{port}"
 
+
+def _load_proxy_ip_pool() -> List[str]:
+    proxy_file = os.path.join(_get_runtime_directory(), PROXY_LIST_FILENAME)
+    if not os.path.exists(proxy_file):
+        raise FileNotFoundError(f"未找到代理列表文件：{proxy_file}")
     try:
-        client = ProxiedSessionClient(
-            proxy_sources=PYFREEPROXY_SOURCES,
-            init_proxied_session_cfg={
-                "max_pages": PYFREEPROXY_MAX_PAGES,
-                "disable_print": True,
-                "filter_rule": PYFREEPROXY_FILTER_RULE,
-            },
-            disable_print=True,
-        )
+        raw_text = Path(proxy_file).read_text(encoding="utf-8")
     except Exception as exc:
-        raise OSError(f"使用 pyfreeproxy 获取代理失败：{exc}") from exc
+        raise OSError(f"读取代理列表失败：{exc}") from exc
 
     proxies: List[str] = []
     seen: Set[str] = set()
-    total_candidates = 0
-    for session in client.proxied_sessions.values():
-        for proxy_info in getattr(session, "candidate_proxies", []):
-            total_candidates += 1
-            try:
-                proxy_url = proxy_info.proxy.strip()
-            except Exception:
-                continue
-            if not proxy_url or proxy_url in seen:
-                continue
-            protocol = (getattr(proxy_info, "protocol", "") or "").lower()
-            if protocol != "http":
-                continue
-            country_code = (getattr(proxy_info, "country_code", "") or "").lower()
-            in_cn = country_code == "cn" or bool(getattr(proxy_info, "in_chinese_mainland", False))
-            if not in_cn:
-                continue
-            proxies.append(proxy_url)
-            seen.add(proxy_url)
+    for line in raw_text.splitlines():
+        candidate = _parse_proxy_line(line)
+        if not candidate:
+            continue
+        if "://" not in candidate:
+            candidate = f"http://{candidate}"
+        scheme = candidate.split("://", 1)[0].lower()
+        if scheme not in ("http", "https"):
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        proxies.append(candidate)
     if not proxies:
-        raise ValueError(f"未找到符合条件的代理（仅限中国大陆 HTTP 协议）。原始候选数量：{total_candidates}")
+        raise ValueError(f"代理列表为空，请检查：{proxy_file}")
     random.shuffle(proxies)
-    if len(proxies) > PYFREEPROXY_MAX_PROXIES:
-        proxies = proxies[:PYFREEPROXY_MAX_PROXIES]
+    if len(proxies) > PROXY_MAX_PROXIES:
+        proxies = proxies[:PROXY_MAX_PROXIES]
     return proxies
 
 
@@ -3133,6 +3134,8 @@ class SurveyGUI:
         self._default_paned_position_applied = False
         self._paned_configure_binding: Optional[str] = None
         self._qq_group_window: Optional[tk.Toplevel] = None
+        self._proxy_health_cancel_event = threading.Event()
+        self._closing = False
         self._qq_group_photo: Optional[ImageTk.PhotoImage] = None
         self._qq_group_image_path: Optional[str] = None
         self._config_changed = False  # 跟踪配置是否有改动
@@ -3739,6 +3742,9 @@ class SurveyGUI:
             return
         self._proxy_health_check_running = True
         self._apply_proxy_health_button_state()
+        cancel_evt = getattr(self, "_proxy_health_cancel_event", None)
+        if cancel_evt:
+            cancel_evt.clear()
         started_at = time.perf_counter()
         self.root.after(
             int(PROXY_HEALTH_CHECK_MAX_DURATION * 1000),
@@ -3754,7 +3760,11 @@ class SurveyGUI:
                 "examples": [],
             }
             try:
+                if cancel_evt and cancel_evt.is_set():
+                    return
                 proxies = _load_proxy_ip_pool()
+                if cancel_evt and cancel_evt.is_set():
+                    return
                 total = len(proxies)
                 result["total"] = total
                 if proxies:
@@ -3764,6 +3774,8 @@ class SurveyGUI:
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
                         future_map = {executor.submit(_proxy_is_responsive, proxy): proxy for proxy in proxies}
                         for future in as_completed(future_map):
+                            if cancel_evt and cancel_evt.is_set():
+                                break
                             proxy = future_map[future]
                             try:
                                 if future.result():
@@ -3782,6 +3794,10 @@ class SurveyGUI:
             elapsed = time.perf_counter() - start_ts
 
             def finish():
+                if cancel_evt and cancel_evt.is_set():
+                    self._proxy_health_check_running = False
+                    self._apply_proxy_health_button_state()
+                    return
                 self._proxy_health_check_running = False
                 self._apply_proxy_health_button_state()
                 error_message = result.get("error")
@@ -3822,6 +3838,14 @@ class SurveyGUI:
         self._proxy_health_check_running = False
         self._apply_proxy_health_button_state()
         self._log_popup_error("IP地址验活失败", "验活超时，请稍后重试或减少代理数量。")
+
+    def _stop_proxy_health_if_running(self):
+        if getattr(self, "_proxy_health_check_running", False):
+            self._proxy_health_check_running = False
+            self._apply_proxy_health_button_state()
+        cancel_evt = getattr(self, "_proxy_health_cancel_event", None)
+        if cancel_evt:
+            cancel_evt.set()
 
     def _on_full_simulation_toggle(self, *args):
         if self.full_simulation_enabled_var.get() and not self.full_sim_target_var.get().strip():
@@ -6449,22 +6473,75 @@ class SurveyGUI:
                 self.preview_survey()
                 return
         random_proxy_flag = bool(self.random_ip_enabled_var.get())
-        proxy_pool: List[str] = []
+        ctx = {
+            "url_value": url_value,
+            "target": target,
+            "threads_count": threads_count,
+            "interval_total_seconds": interval_total_seconds,
+            "max_interval_total_seconds": max_interval_total_seconds,
+            "answer_min_seconds": answer_min_seconds,
+            "answer_max_seconds": answer_max_seconds,
+            "full_sim_enabled": full_sim_enabled,
+            "full_sim_est_seconds": full_sim_est_seconds,
+            "full_sim_total_seconds": full_sim_total_seconds,
+            "random_proxy_flag": random_proxy_flag,
+        }
         if random_proxy_flag:
-            try:
-                proxy_pool = _load_proxy_ip_pool()
-            except (OSError, ValueError, RuntimeError) as exc:
-                self._log_popup_error("代理IP错误", str(exc))
-                return
-            logging.info(f"[Action Log] 启用随机代理 IP，共 {len(proxy_pool)} 条（pyfreeproxy，CN/http）")
+            self.start_button.config(state=tk.DISABLED)
+            self.stop_button.config(state=tk.DISABLED)
+            self.status_var.set("正在获取代理...")
+            Thread(target=self._load_proxies_and_start, args=(ctx,), daemon=True).start()
+            return
+        self._finish_start_run(ctx, proxy_pool=[])
+
+    def _load_proxies_and_start(self, ctx: Dict[str, Any]):
+        if getattr(self, "_closing", False):
+            return
+        try:
+            proxy_pool = _load_proxy_ip_pool()
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.root.after(0, lambda: self._on_proxy_load_failed(str(exc)))
+            return
+        if getattr(self, "_closing", False):
+            return
+        self.root.after(0, lambda: self._finish_start_run(ctx, proxy_pool))
+
+    def _on_proxy_load_failed(self, message: str):
+        if getattr(self, "_closing", False):
+            return
+        self.start_button.config(state=tk.NORMAL)
+        self.stop_button.config(state=tk.DISABLED, text="🚫 停止")
+        self.status_var.set("准备就绪")
+        self._log_popup_error("代理IP错误", message)
+
+    def _finish_start_run(self, ctx: Dict[str, Any], proxy_pool: List[str]):
+        if getattr(self, "_closing", False):
+            return
+        random_proxy_flag = bool(ctx.get("random_proxy_flag"))
+        if random_proxy_flag:
+            logging.info(f"[Action Log] 启用随机代理 IP，共 {len(proxy_pool)} 条（{PROXY_LIST_FILENAME}）")
         try:
             configure_probabilities(self.question_entries)
         except ValueError as exc:
+            self.start_button.config(state=tk.NORMAL)
+            self.stop_button.config(state=tk.DISABLED, text="🚫 停止")
+            self.status_var.set("准备就绪")
             self._log_popup_error("配置错误", str(exc))
             return
 
         self.stop_requested_by_user = False
         self.stop_request_ts = None
+
+        url_value = ctx["url_value"]
+        target = ctx["target"]
+        threads_count = ctx["threads_count"]
+        interval_total_seconds = ctx["interval_total_seconds"]
+        max_interval_total_seconds = ctx["max_interval_total_seconds"]
+        answer_min_seconds = ctx["answer_min_seconds"]
+        answer_max_seconds = ctx["answer_max_seconds"]
+        full_sim_enabled = ctx["full_sim_enabled"]
+        full_sim_est_seconds = ctx["full_sim_est_seconds"]
+        full_sim_total_seconds = ctx["full_sim_total_seconds"]
 
         logging.info(
             f"[Action Log] Starting run url={url_value} target={target} threads={threads_count}"
@@ -6484,6 +6561,9 @@ class SurveyGUI:
             full_simulation_total_duration_seconds = full_sim_total_seconds
             schedule = _prepare_full_simulation_schedule(target, full_sim_total_seconds)
             if not schedule:
+                self.start_button.config(state=tk.NORMAL)
+                self.stop_button.config(state=tk.DISABLED, text="🚫 停止")
+                self.status_var.set("准备就绪")
                 self._log_popup_error("参数错误", "模拟时间设置无效")
                 return
             full_simulation_schedule = schedule
@@ -6505,7 +6585,7 @@ class SurveyGUI:
 
         self.running = True
         self.start_button.config(state=tk.DISABLED)
-        self.stop_button.config(state=tk.NORMAL)
+        self.stop_button.config(state=tk.NORMAL, text="🚫 停止")
         self.status_var.set("正在启动浏览器...")
 
         self.runner_thread = Thread(target=self._launch_threads, daemon=True)
@@ -6613,6 +6693,8 @@ class SurveyGUI:
         print("已暂停新的问卷提交，等待现有流程退出")
 
     def on_close(self):
+        self._closing = True
+        self._stop_proxy_health_if_running()
         # 停止日志刷新
         if self._log_refresh_job:
             try:

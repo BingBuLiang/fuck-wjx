@@ -5,3 +5,4 @@ logs/
 *.ico
 __pycache__/
 desktop.ini
+ips.txt

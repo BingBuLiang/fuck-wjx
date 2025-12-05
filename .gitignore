@@ -1,0 +1,5 @@
+push.bat
+configs/
+logs/
+*.code-workspace
+*.ico

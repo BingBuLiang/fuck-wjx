@@ -736,7 +736,7 @@ def _kill_playwright_browser_processes():
         logging.info(f"共终止 {killed_count} 个 Playwright 浏览器进程")
 
 
-def create_playwright_driver(headless: bool = False, prefer_browsers: Optional[List[str]] = None, proxy_address: Optional[str] = None, user_agent: Optional[str] = None) -> Tuple[BrowserDriver, str]:
+def create_playwright_driver(headless: bool = False, prefer_browsers: Optional[List[str]] = None, proxy_address: Optional[str] = None, user_agent: Optional[str] = None, window_position: Optional[Tuple[int, int]] = None) -> Tuple[BrowserDriver, str]:
     candidates = prefer_browsers or list(BROWSER_PREFERENCE)
     if not candidates:
         candidates = list(BROWSER_PREFERENCE)
@@ -756,6 +756,9 @@ def create_playwright_driver(headless: bool = False, prefer_browsers: Optional[L
                 launch_args["channel"] = "msedge"
             elif browser == "chrome":
                 launch_args["channel"] = "chrome"
+            if window_position and not headless:
+                x, y = window_position
+                launch_args["args"] = [f"--window-position={x},{y}"]
             browser_instance = pw.chromium.launch(**launch_args)
             context_args: Dict[str, Any] = {}
             if normalized_proxy:
@@ -3190,6 +3193,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                     prefer_browsers=list(preferred_browsers) if preferred_browsers else None,
                     proxy_address=proxy_address,
                     user_agent=ua_value,
+                    window_position=(window_x_pos, window_y_pos),
                 )
             except Exception as exc:
                 if stop_signal.is_set():
@@ -3201,7 +3205,6 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             preferred_browsers = [active_browser] + [b for b in BROWSER_PREFERENCE if b != active_browser]
             _register_driver(driver)
             driver.set_window_size(550, 650)
-            driver.set_window_position(x=window_x_pos, y=window_y_pos)
 
         driver_had_error = False
         try:
@@ -7054,6 +7057,8 @@ class SurveyGUI:
                 self.preview_survey()
                 return
         random_proxy_flag = bool(self.random_ip_enabled_var.get())
+        random_ua_flag = bool(self.random_ua_enabled_var.get())
+        random_ua_keys_list = self._get_selected_random_ua_keys() if random_ua_flag else []
         ctx = {
             "url_value": url_value,
             "target": target,
@@ -7066,6 +7071,8 @@ class SurveyGUI:
             "full_sim_est_seconds": full_sim_est_seconds,
             "full_sim_total_seconds": full_sim_total_seconds,
             "random_proxy_flag": random_proxy_flag,
+            "random_ua_flag": random_ua_flag,
+            "random_ua_keys_list": random_ua_keys_list,
         }
         if random_proxy_flag:
             self.start_button.config(state=tk.DISABLED)
@@ -7099,6 +7106,8 @@ class SurveyGUI:
         if getattr(self, "_closing", False):
             return
         random_proxy_flag = bool(ctx.get("random_proxy_flag"))
+        random_ua_flag = bool(ctx.get("random_ua_flag"))
+        random_ua_keys_list = ctx.get("random_ua_keys_list", [])
         if random_proxy_flag:
             logging.info(f"[Action Log] 启用随机代理 IP，共 {len(proxy_pool)} 条（{PROXY_LIST_FILENAME}）")
         try:
@@ -7137,8 +7146,8 @@ class SurveyGUI:
         full_simulation_enabled = full_sim_enabled
         random_proxy_ip_enabled = random_proxy_flag
         proxy_ip_pool = proxy_pool if random_proxy_flag else []
-        random_user_agent_enabled = random_ua_enabled
-        user_agent_pool_keys = random_ua_keys if random_ua_enabled else []
+        random_user_agent_enabled = random_ua_flag
+        user_agent_pool_keys = random_ua_keys_list
         if full_sim_enabled:
             full_simulation_estimated_seconds = full_sim_est_seconds
             full_simulation_total_duration_seconds = full_sim_total_seconds
@@ -7183,7 +7192,7 @@ class SurveyGUI:
             if stop_event.is_set():
                 break
             window_x = 50 + browser_index * 60
-            window_y = 50
+            window_y = 50 + browser_index * 60
             thread = Thread(target=run, args=(window_x, window_y, stop_event, self), daemon=True)
             threads.append(thread)
         self.worker_threads = threads

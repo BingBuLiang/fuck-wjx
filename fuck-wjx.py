@@ -276,6 +276,34 @@ USER_AGENT_PRESETS: Dict[str, Dict[str, str]] = {
         "label": "苹果微信端",
         "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.43(0x18002b2f) NetType/WIFI Language/zh_CN",
     },
+    "wechat_ipad": {
+        "label": "iPad微信端",
+        "ua": "Mozilla/5.0 (iPad; CPU OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.43(0x18002b2f) NetType/WIFI Language/zh_CN",
+    },
+    "ipad_web": {
+        "label": "iPad网页端",
+        "ua": "Mozilla/5.0 (iPad; CPU OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+    },
+    "wechat_android_tablet": {
+        "label": "安卓平板微信端",
+        "ua": "Mozilla/5.0 (Linux; Android 13; SM-X906C Build/TP1A.220624.014; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.0.0 Safari/537.36 MicroMessenger/8.0.43.2460(0x28002B3B) Process/appbrand0 WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64",
+    },
+    "android_tablet_web": {
+        "label": "安卓平板网页端",
+        "ua": "Mozilla/5.0 (Linux; Android 13; SM-X906C) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    },
+    "wechat_mac": {
+        "label": "Mac微信WebView",
+        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36 MicroMessenger/8.0.43 NetType/WIFI WindowsWechat Language/zh_CN",
+    },
+    "wechat_windows": {
+        "label": "Windows微信WebView",
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 MicroMessenger/3.9.8.25 NetType/WIFI WindowsWechat/WMPF WindowsWechat(0x63090819) XWEB/9129 Flue",
+    },
+    "mac_web": {
+        "label": "Mac网页端",
+        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    },
 }
 DEFAULT_RANDOM_UA_KEYS = list(USER_AGENT_PRESETS.keys())
 DEFAULT_USER_AGENT = USER_AGENT_PRESETS["pc_web"]["ua"]
@@ -2954,18 +2982,36 @@ def submit(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None)
                     '.layui-layer-btn0',
                     '.layui-layer-btn a',
                     '.layui-layer-dialog .layui-layer-btn0',
-                    '.layui-layer .layui-layer-btn a'
+                    '.layui-layer .layui-layer-btn a',
+                    '.layui-layer-btn .layui-layer-btn0',
+                    'a.layui-layer-btn0',
+                    '.layui-layer-page .layui-layer-btn a',
+                    '.layui-layer-dialog .layui-layer-btn a'
                 ];
                 const matchText = (txt) => /^(确\s*定|确\s*认|OK|好的?)$/i.test((txt || '').trim());
+                
+                // 方法1: 使用选择器查找
                 for (const sel of selectors) {
                     const nodes = document.querySelectorAll(sel);
                     for (const node of nodes) {
+                        if (!node.offsetParent) continue; // 跳过不可见元素
                         const text = (node.innerText || node.textContent || '').trim();
                         if (matchText(text)) {
                             try { node.click(); return true; } catch (e) {}
                         }
                     }
                 }
+                
+                // 方法2: 查找所有可见的 a 标签和 button 标签
+                const allButtons = [...document.querySelectorAll('a, button')];
+                for (const btn of allButtons) {
+                    if (!btn.offsetParent) continue; // 跳过不可见元素
+                    const text = (btn.innerText || btn.textContent || '').trim();
+                    if (matchText(text)) {
+                        try { btn.click(); return true; } catch (e) {}
+                    }
+                }
+                
                 return false;
             })();
         """
@@ -2979,7 +3025,7 @@ def submit(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None)
             return False
 
     def _handle_captcha_failure_refresh():
-        """处理验证失败后的刷新流程：刷新页面 -> 点击'是'继续作答 -> 点击提交"""
+        """处理验证失败后的刷新流程：刷新页面 -> 点击'是'继续作答 -> 点击提交 -> 重新进行智能验证"""
         logging.info("验证失败，正在刷新页面...")
         driver.refresh()
         time.sleep(1.5)  # 等待页面刷新完成
@@ -3023,15 +3069,27 @@ def submit(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None)
             time.sleep(0.2)
         
         time.sleep(0.5)
-        # 点击提交按钮
+        # 点击提交按钮，会触发新的智能验证
         _click_submit_buttons()
+        # 点击安全校验确认弹窗（如果有）
+        for _ in range(5):
+            if stop_signal and stop_signal.is_set():
+                return
+            if _click_security_confirm_dialog():
+                break
+            time.sleep(0.3)
         _click_security_confirm_dialog()
 
     if pre_submit_delay > 0:
         time.sleep(pre_submit_delay)
     _click_submit_buttons()
-    # 检查并处理"需要安全校验"的确认弹窗
-    _click_security_confirm_dialog()
+    # 检查并处理"需要安全校验"的确认弹窗，多次尝试
+    for _ in range(5):  # 尝试5次，共约1.5秒
+        if stop_signal and stop_signal.is_set():
+            return
+        if _click_security_confirm_dialog():
+            break  # 成功点击就退出
+        time.sleep(0.3)
     if stop_signal and stop_signal.is_set():
         return
     
@@ -3243,6 +3301,9 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                     else:
                         stop_signal.set()
                         break
+                # 成功提交后关闭浏览器，以便下次使用新的UA和代理
+                if random_user_agent_enabled or proxy_ip_pool:
+                    _dispose_driver()
         except Exception:
             driver_had_error = True
             if stop_signal.is_set():
@@ -3671,6 +3732,13 @@ class SurveyGUI:
         self.random_ua_pc_web_var = tk.BooleanVar(value=True)
         self.random_ua_android_wechat_var = tk.BooleanVar(value=True)
         self.random_ua_ios_wechat_var = tk.BooleanVar(value=True)
+        self.random_ua_ipad_wechat_var = tk.BooleanVar(value=True)
+        self.random_ua_ipad_web_var = tk.BooleanVar(value=True)
+        self.random_ua_android_tablet_wechat_var = tk.BooleanVar(value=True)
+        self.random_ua_android_tablet_web_var = tk.BooleanVar(value=True)
+        self.random_ua_mac_wechat_var = tk.BooleanVar(value=True)
+        self.random_ua_windows_wechat_var = tk.BooleanVar(value=True)
+        self.random_ua_mac_web_var = tk.BooleanVar(value=True)
         self.random_ip_enabled_var = tk.BooleanVar(value=False)
         self.full_simulation_enabled_var = tk.BooleanVar(value=False)
         self.full_sim_target_var = tk.StringVar(value="")
@@ -3925,6 +3993,13 @@ class SurveyGUI:
             self.random_ua_pc_web_var,
             self.random_ua_android_wechat_var,
             self.random_ua_ios_wechat_var,
+            self.random_ua_ipad_wechat_var,
+            self.random_ua_ipad_web_var,
+            self.random_ua_android_tablet_wechat_var,
+            self.random_ua_android_tablet_web_var,
+            self.random_ua_mac_wechat_var,
+            self.random_ua_windows_wechat_var,
+            self.random_ua_mac_web_var,
         ):
             _ua_var.trace_add("write", lambda *args: self._mark_config_changed())
         self.random_ip_enabled_var.trace_add("write", lambda *args: self._mark_config_changed())
@@ -4560,13 +4635,23 @@ class SurveyGUI:
         ua_options_inner = ttk.Frame(ua_options_frame)
         ua_options_inner.grid(row=0, column=1, sticky="w")
         ua_option_widgets: List[tk.Widget] = []
-        for idx, (text_value, var) in enumerate([
+        ua_options_list = [
             ("电脑网页端", self.random_ua_pc_web_var),
             ("安卓微信端", self.random_ua_android_wechat_var),
             ("苹果微信端", self.random_ua_ios_wechat_var),
-        ]):
+            ("iPad微信端", self.random_ua_ipad_wechat_var),
+            ("iPad网页端", self.random_ua_ipad_web_var),
+            ("安卓平板微信端", self.random_ua_android_tablet_wechat_var),
+            ("安卓平板网页端", self.random_ua_android_tablet_web_var),
+            ("Mac微信WebView", self.random_ua_mac_wechat_var),
+            ("Windows微信WebView", self.random_ua_windows_wechat_var),
+            ("Mac网页端", self.random_ua_mac_web_var),
+        ]
+        for idx, (text_value, var) in enumerate(ua_options_list):
+            row = idx // 3
+            col = idx % 3
             cb = ttk.Checkbutton(ua_options_inner, text=text_value, variable=var)
-            cb.grid(row=0, column=idx, padx=(0, 10), sticky="w")
+            cb.grid(row=row, column=col, padx=(0, 10), pady=2, sticky="w")
             ua_option_widgets.append(cb)
         self._random_ua_option_widgets.extend(ua_option_widgets)
         self._settings_window_widgets.extend(ua_option_widgets)
@@ -7595,6 +7680,13 @@ class SurveyGUI:
             ("pc_web", self.random_ua_pc_web_var),
             ("wechat_android", self.random_ua_android_wechat_var),
             ("wechat_ios", self.random_ua_ios_wechat_var),
+            ("wechat_ipad", self.random_ua_ipad_wechat_var),
+            ("ipad_web", self.random_ua_ipad_web_var),
+            ("wechat_android_tablet", self.random_ua_android_tablet_wechat_var),
+            ("android_tablet_web", self.random_ua_android_tablet_web_var),
+            ("wechat_mac", self.random_ua_mac_wechat_var),
+            ("wechat_windows", self.random_ua_windows_wechat_var),
+            ("mac_web", self.random_ua_mac_web_var),
         ]
 
     def _get_selected_random_ua_keys(self) -> List[str]:

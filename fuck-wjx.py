@@ -3962,13 +3962,19 @@ class SurveyGUI:
     def _open_contact_dialog(self):
         """打开联系对话框，允许用户发送消息"""
         window = tk.Toplevel(self.root)
-        window.title("联系我们")
-        window.geometry("500x450")
+        window.title("联系开发者")
+        window.geometry("500x350")
         window.resizable(True, True)
         window.transient(self.root)
 
         container = ttk.Frame(window, padding=15)
         container.pack(fill=tk.BOTH, expand=True)
+
+        # 邮箱输入框
+        ttk.Label(container, text="您的邮箱（选填，如果希望收到回复的话）：", font=("", 10)).pack(anchor=tk.W, pady=(0, 5))
+        email_var = tk.StringVar()
+        email_entry = ttk.Entry(container, textvariable=email_var, font=("", 10))
+        email_entry.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(container, text="请输入您的消息：", font=("", 10)).pack(anchor=tk.W, pady=(0, 5))
 
@@ -3979,7 +3985,7 @@ class SurveyGUI:
         scrollbar = ttk.Scrollbar(text_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        text_widget = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, font=("", 10))
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, font=("", 10), height=8)
         text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=text_widget.yview)
 
@@ -3989,14 +3995,27 @@ class SurveyGUI:
 
         def send_message():
             """发送消息到API"""
-            message = text_widget.get("1.0", tk.END).strip()
-            if not message:
+            message_content = text_widget.get("1.0", tk.END).strip()
+            email = email_var.get().strip()
+            
+            if not message_content:
                 messagebox.showwarning("提示", "请输入消息内容", parent=window)
                 return
 
             if not requests:
                 messagebox.showerror("错误", "requests 模块未安装，无法发送消息", parent=window)
                 return
+
+            # 组合邮箱、来源和消息内容
+            try:
+                version = __VERSION__
+            except NameError:
+                version = "unknown"
+            
+            full_message = f"来源：fuck-wjx v{version}\n"
+            if email:
+                full_message += f"联系邮箱：{email}\n"
+            full_message += f"消息：{message_content}"
 
             # 禁用发送按钮，防止重复点击
             send_btn.config(state=tk.DISABLED)
@@ -4014,10 +4033,10 @@ class SurveyGUI:
                     
                     api_url = "https://bot.hungrym0.top"
                     payload = {
-                        "message": message,
-                        "timestamp": datetime.now().isoformat(),
-                        "version": __VERSION__
+                        "message": full_message,
+                        "timestamp": datetime.now().isoformat()
                     }
+                    
                     response = requests.post(
                         api_url,
                         json=payload,

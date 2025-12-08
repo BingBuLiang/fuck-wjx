@@ -1,0 +1,11 @@
+- name: Sync to Gitee
+    run: |
+      git config --global user.name "hungryM0"
+      git config --global user.email "hungryM0@qq.com"
+      git clone https://oauth2:${Gitee}@gitee.com/hungryM0/fuck-wjx.git gitee-repo
+      cd gitee-repo
+      git remote add github-origin https://github.com/hungryM0/fuck-wjx.git
+      git pull github-origin main
+      git push origin main
+    env:
+      GITEE_TOKEN: ${{ secrets.Gitee }}

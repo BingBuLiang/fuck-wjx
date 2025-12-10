@@ -432,6 +432,22 @@ def _get_runtime_directory() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _get_resource_path(relative_path: str) -> str:
+    """
+    获取资源文件的完整路径。
+    在 PyInstaller 打包时，资源会被提取到 sys._MEIPASS 目录。
+    在开发时，资源位于项目根目录。
+    """
+    if getattr(sys, "frozen", False):
+        # PyInstaller 打包后，资源在 _MEIPASS 目录中
+        base_path = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    else:
+        # 开发环境，资源在项目根目录
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    return os.path.join(base_path, relative_path)
+
+
 def _parse_proxy_line(line: str) -> Optional[str]:
     if not line:
         return None
@@ -4213,7 +4229,7 @@ class SurveyGUI:
                 pass
             return
 
-        qr_image_path = os.path.join(_get_runtime_directory(), QQ_GROUP_QR_RELATIVE_PATH)
+        qr_image_path = _get_resource_path(QQ_GROUP_QR_RELATIVE_PATH)
         if not os.path.exists(qr_image_path):
             logging.error(f"未找到 QQ 群二维码图片: {qr_image_path}")
             self._log_popup_error("资源缺失", f"没有找到 QQ 群二维码图片：\n{qr_image_path}")
@@ -4477,7 +4493,7 @@ class SurveyGUI:
         window.protocol("WM_DELETE_WINDOW", lambda: window.destroy())
 
         # 加载payment.png图片
-        payment_image_path = os.path.join(_get_runtime_directory(), "assets", "payment.png")
+        payment_image_path = _get_resource_path(os.path.join("assets", "payment.png"))
         
         if not os.path.exists(payment_image_path):
             logging.error(f"未找到支付二维码图片: {payment_image_path}")

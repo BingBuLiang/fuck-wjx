@@ -1,15 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_dynamic_libs
+import os
 
 binaries = []
 binaries += collect_dynamic_libs('pyzbar')
 
+# 使用相对路径，PyInstaller 会正确地将这些文件打包进 EXE
+datas = [
+    ('assets', 'assets'),
+    ('.env', '.'),
+]
 
 a = Analysis(
     ['fuck-wjx.py'],
     pathex=[],
     binaries=binaries,
-    datas=[('assets', 'assets'), ('.env', '.')],
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

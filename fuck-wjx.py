@@ -1280,6 +1280,7 @@ random_proxy_ip_enabled = False
 proxy_ip_pool: List[str] = []
 random_user_agent_enabled = False
 user_agent_pool_keys: List[str] = []
+wechat_login_bypass_enabled = True
 last_submit_had_captcha = False
 # 标记是否已经因达到20份限制而弹出过对话框
 _quota_limit_dialog_shown = False
@@ -2555,8 +2556,55 @@ def dismiss_resume_dialog_if_present(
     return False
 
 
+def dismiss_wechat_login_popup_if_present(
+    driver: BrowserDriver, stop_signal: Optional[threading.Event] = None
+) -> bool:
+    """
+    检查并移除“需要微信登录才能参与”的遮罩弹窗。
+    如检测到对应元素，则在页面环境中执行 show_zhezhao_utils(0, 0)，
+    然后移除遮罩与弹窗节点，最后再开始填写答案。
+    """
+    if not wechat_login_bypass_enabled:
+        return False
+    script = r"""
+        (function() {
+            var shade = document.getElementById('layui-layer-shade1');
+            var layer = document.getElementById('layui-layer1');
+            var hasPopup = !!(shade || layer);
+            if (!hasPopup) {
+                return false;
+            }
+            try {
+                if (typeof window.show_zhezhao_utils === 'function') {
+                    window.show_zhezhao_utils(0, 0);
+                }
+            } catch (e) {}
+            try {
+                if (shade && shade.parentNode) {
+                    shade.parentNode.removeChild(shade);
+                }
+            } catch (e) {}
+            try {
+                if (layer && layer.parentNode) {
+                    layer.parentNode.removeChild(layer);
+                }
+            } catch (e) {}
+            return true;
+        })();
+    """
+    try:
+        removed = bool(driver.execute_script(script))
+    except Exception as exc:
+        logging.debug("dismiss_wechat_login_popup_if_present failed: %s", exc)
+        return False
+    if removed:
+        logging.info("检测到微信登录遮罩弹窗，已执行 show_zhezhao_utils(0, 0) 并移除相关元素")
+    return removed
+
+
 def detect(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) -> List[int]:
     dismiss_resume_dialog_if_present(driver, stop_signal=stop_signal)
+    dismiss_wechat_login_popup_if_present(driver, stop_signal=stop_signal)
     try_click_start_answer_button(driver, stop_signal=stop_signal)
     question_counts_per_page: List[int] = []
     total_pages = len(driver.find_elements(By.XPATH, '//*[@id="divQuestion"]/fieldset'))
@@ -4800,6 +4848,7 @@ class SurveyGUI:
         self.random_ua_mac_wechat_var = tk.BooleanVar(value=False)
         self.random_ua_windows_wechat_var = tk.BooleanVar(value=False)
         self.random_ua_mac_web_var = tk.BooleanVar(value=False)
+        self.wechat_login_bypass_enabled_var = tk.BooleanVar(value=True)
         self.random_ip_enabled_var = tk.BooleanVar(value=False)
         self.full_simulation_enabled_var = tk.BooleanVar(value=False)
         self.full_sim_target_var = tk.StringVar(value="")
@@ -5052,6 +5101,7 @@ class SurveyGUI:
             self.random_ua_mac_web_var,
         ):
             _ua_var.trace_add("write", lambda *args: self._mark_config_changed())
+        self.wechat_login_bypass_enabled_var.trace_add("write", lambda *args: self._mark_config_changed())
         self.random_ip_enabled_var.trace_add("write", lambda *args: self._mark_config_changed())
         self.full_sim_target_var.trace_add("write", lambda *args: self._on_full_sim_target_changed())
         self.full_sim_estimated_minutes_var.trace("w", lambda *args: self._mark_config_changed())
@@ -5091,16 +5141,29 @@ class SurveyGUI:
         self._main_parameter_widgets.extend([thread_dec_button, thread_entry, thread_inc_button])
 
         proxy_control_frame = ttk.Frame(step3_frame)
-        proxy_control_frame.pack(fill=tk.X, padx=4, pady=(6, 4))
-        random_ip_toggle = ttk.Checkbutton(
+        proxy_control_frame.pack(fill=tk.X, padx=4, pady=(6, 2))
+
+        # 微信登录弹窗处理开关单独占一行
+        wechat_bypass_toggle = ttk.Checkbutton(
             proxy_control_frame,
+            text="破解仅微信可作答（目前仍在开发中）",
+            variable=self.wechat_login_bypass_enabled_var,
+        )
+        wechat_bypass_toggle.pack(side=tk.LEFT, anchor="w")
+
+        # 随机 IP 开关单独一行，放在微信弹窗开关下方
+        random_ip_frame = ttk.Frame(step3_frame)
+        random_ip_frame.pack(fill=tk.X, padx=4, pady=(0, 4))
+        random_ip_toggle = ttk.Checkbutton(
+            random_ip_frame,
             text="启用随机 IP 提交（若触发智能验证可尝试开启此选项）",
             variable=self.random_ip_enabled_var,
             command=self._on_random_ip_toggle,
         )
-        random_ip_toggle.pack(side=tk.LEFT, padx=(0, 10))
+        random_ip_toggle.pack(side=tk.LEFT)
+        self._wechat_login_bypass_toggle_widget = wechat_bypass_toggle
         self._random_ip_toggle_widget = random_ip_toggle
-        self._main_parameter_widgets.append(random_ip_toggle)
+        self._main_parameter_widgets.extend([wechat_bypass_toggle, random_ip_toggle])
 
         # 随机IP计数显示和管理
         ip_counter_frame = ttk.Frame(step3_frame)
@@ -5357,7 +5420,10 @@ class SurveyGUI:
         allowed_when_locked = []
         if locking:
             allowed_when_locked.extend(
-                [getattr(self, "_random_ip_toggle_widget", None)]
+                [
+                    getattr(self, "_wechat_login_bypass_toggle_widget", None),
+                    getattr(self, "_random_ip_toggle_widget", None),
+                ]
             )
             allowed_when_locked.extend(getattr(self, "_random_ua_option_widgets", []))
             allowed_when_locked = [w for w in allowed_when_locked if w is not None]
@@ -8544,6 +8610,7 @@ class SurveyGUI:
             "random_proxy_flag": random_proxy_flag,
             "random_ua_flag": random_ua_flag,
             "random_ua_keys_list": random_ua_keys_list,
+            "wechat_login_bypass_enabled": bool(self.wechat_login_bypass_enabled_var.get()),
         }
         if random_proxy_flag:
             self.start_button.config(state=tk.DISABLED)
@@ -8588,6 +8655,7 @@ class SurveyGUI:
         random_proxy_flag = bool(ctx.get("random_proxy_flag"))
         random_ua_flag = bool(ctx.get("random_ua_flag"))
         random_ua_keys_list = ctx.get("random_ua_keys_list", [])
+        wechat_bypass_flag = bool(ctx.get("wechat_login_bypass_enabled", True))
         if random_proxy_flag:
             logging.info(f"[Action Log] 启用随机代理 IP（每个浏览器独立分配），已预取 {len(proxy_pool)} 条（{PROXY_REMOTE_URL}）")
         try:
@@ -8617,7 +8685,7 @@ class SurveyGUI:
             f"[Action Log] Starting run url={url_value} target={target} threads={threads_count}"
         )
 
-        global url, target_num, num_threads, fail_threshold, cur_num, cur_fail, stop_event, submit_interval_range_seconds, answer_duration_range_seconds, full_simulation_enabled, full_simulation_estimated_seconds, full_simulation_total_duration_seconds, full_simulation_schedule, random_proxy_ip_enabled, proxy_ip_pool, random_user_agent_enabled, user_agent_pool_keys
+        global url, target_num, num_threads, fail_threshold, cur_num, cur_fail, stop_event, submit_interval_range_seconds, answer_duration_range_seconds, full_simulation_enabled, full_simulation_estimated_seconds, full_simulation_total_duration_seconds, full_simulation_schedule, random_proxy_ip_enabled, proxy_ip_pool, random_user_agent_enabled, user_agent_pool_keys, wechat_login_bypass_enabled
         url = url_value
         target_num = target
         # 强制限制线程数不超过12，确保用户电脑流畅
@@ -8629,6 +8697,7 @@ class SurveyGUI:
         proxy_ip_pool = proxy_pool if random_proxy_flag else []
         random_user_agent_enabled = random_ua_flag
         user_agent_pool_keys = random_ua_keys_list
+        wechat_login_bypass_enabled = wechat_bypass_flag
         if full_sim_enabled:
             full_simulation_estimated_seconds = full_sim_est_seconds
             full_simulation_total_duration_seconds = full_sim_total_seconds
@@ -9120,6 +9189,7 @@ class SurveyGUI:
             "answer_duration_range": self._serialize_answer_duration_config(),
             "full_simulation": self._serialize_full_simulation_config(),
             "random_user_agent": self._serialize_random_ua_config(),
+            "wechat_login_bypass_enabled": bool(self.wechat_login_bypass_enabled_var.get()),
             "random_proxy_enabled": bool(self.random_ip_enabled_var.get()),
             "paned_position": paned_sash_pos,
             "questions": [
@@ -9395,8 +9465,9 @@ class SurveyGUI:
                     if count >= 20:
                         logging.warning(f"配置中启用了随机IP，但已达到20份限制，已禁用此选项")
                         random_proxy_enabled_in_config = False
-            
+
             self.random_ip_enabled_var.set(random_proxy_enabled_in_config)
+            self.wechat_login_bypass_enabled_var.set(bool(config.get("wechat_login_bypass_enabled", True)))
             self._apply_submit_interval_config(config.get("submit_interval"))
             self._apply_answer_duration_config(config.get("answer_duration_range"))
             self._apply_full_simulation_config(config.get("full_simulation"))

@@ -17,14 +17,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Thread
-from typing import List, Optional, Union, Dict, Any, Tuple, Callable, Set, Deque
+from typing import List, Optional, Union, Dict, Any, Tuple, Callable, Set, Deque, Literal
 from urllib.parse import urlparse
 import webbrowser
 
 import numpy
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
+from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
 from PIL import Image, ImageTk
 from pyzbar.pyzbar import decode as pyzbar_decode
 
@@ -241,8 +241,28 @@ class PlaywrightDriver:
             logging.debug("execute_script failed: %s", exc)
             return None
 
-    def get(self, url: str):
-        self._page.goto(url, wait_until="domcontentloaded")
+    def get(
+        self,
+        url: str,
+        timeout: int = 60000,
+        wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded",
+    ):
+        try:
+            self._page.set_default_navigation_timeout(timeout)
+            self._page.set_default_timeout(timeout)
+        except Exception:
+            pass
+
+        try:
+            self._page.goto(url, wait_until=wait_until, timeout=timeout)
+            return
+        except PlaywrightTimeoutError as exc:
+            logging.warning(
+                "Page.goto timeout after %d ms, retrying with longer wait: %s", timeout, exc
+            )
+
+        # Retry once with a longer timeout and stricter wait condition to handle slow pages.
+        self._page.goto(url, wait_until="load", timeout=timeout * 2)
 
     @property
     def current_url(self) -> str:
@@ -2252,7 +2272,7 @@ _KNOWN_NON_TEXT_QUESTION_TYPES = {"3", "4", "5", "6", "7", "8", "11"}
 
 def _count_text_inputs_in_soup(question_div) -> int:
     try:
-        candidates = question_div.find_all(["input", "textarea"])
+        candidates = question_div.find_all(["input", "textarea", "span", "div"])
     except Exception:
         return 0
     count = 0
@@ -2266,16 +2286,40 @@ def _count_text_inputs_in_soup(question_div) -> int:
             input_type = (cand.get("type") or "").lower()
         except Exception:
             input_type = ""
-        if input_type == "hidden":
+        style_text = ""
+        try:
+            style_text = (cand.get("style") or "").lower()
+        except Exception:
+            style_text = ""
+
+        # 跳过隐藏元素（type hidden 或 display:none）
+        if input_type == "hidden" or "display:none" in style_text or "visibility:hidden" in style_text:
             continue
+
+        # 若 input 紧跟着 textEdit 的 contenteditable，避免重复计数，交给 span/div 处理
+        if tag_name == "input":
+            try:
+                sibling = cand.find_next_sibling()
+                sibling_classes = sibling.get("class") if sibling else None
+                if sibling_classes and any("textedit" in cls.lower() for cls in sibling_classes):
+                    continue
+            except Exception:
+                pass
         if tag_name == "textarea" or (tag_name == "input" and input_type in _TEXT_INPUT_ALLOWED_TYPES):
+            count += 1
+            continue
+        try:
+            contenteditable = (cand.get("contenteditable") or "").lower() == "true"
+        except Exception:
+            contenteditable = False
+        if contenteditable and tag_name in {"span", "div"}:
             count += 1
     return count
 
 
 def _count_visible_text_inputs_driver(question_div) -> int:
     try:
-        candidates = question_div.find_elements(By.CSS_SELECTOR, "input, textarea")
+        candidates = question_div.find_elements(By.CSS_SELECTOR, "input, textarea, span[contenteditable='true'], div[contenteditable='true']")
     except Exception:
         candidates = []
     count = 0
@@ -2289,9 +2333,37 @@ def _count_visible_text_inputs_driver(question_div) -> int:
             input_type = (cand.get_attribute("type") or "").lower()
         except Exception:
             input_type = ""
-        if input_type == "hidden":
+        try:
+            style_text = (cand.get_attribute("style") or "").lower()
+        except Exception:
+            style_text = ""
+
+        # 跳过隐藏元素（type hidden 或 display:none / visibility:hidden）
+        if input_type == "hidden" or "display:none" in style_text or "visibility:hidden" in style_text:
             continue
+        # 若 input 后紧跟 textEdit 的 contenteditable，避免重复计数
+        if tag_name == "input":
+            try:
+                sibling = cand.find_element(By.XPATH, "following-sibling::*[1]")
+                sibling_tag = (sibling.tag_name or "").lower()
+                sibling_class = (sibling.get_attribute("class") or "").lower()
+                if sibling_tag in {"label", "div", "span"} and "textedit" in sibling_class:
+                    continue
+            except Exception:
+                pass
+
         if tag_name == "textarea" or (tag_name == "input" and input_type in _TEXT_INPUT_ALLOWED_TYPES):
+            try:
+                if cand.is_displayed():
+                    count += 1
+            except Exception:
+                count += 1
+            continue
+        try:
+            contenteditable = (cand.get_attribute("contenteditable") or "").lower() == "true"
+        except Exception:
+            contenteditable = False
+        if contenteditable and tag_name in {"span", "div"}:
             try:
                 if cand.is_displayed():
                     count += 1
@@ -2827,15 +2899,34 @@ def _fill_text_question_input(driver: BrowserDriver, element, value: Optional[An
 
 
 def vacant(driver: BrowserDriver, current, index):
-    answer_candidates = texts[index] if index < len(texts) else [""]
-    selection_probabilities = texts_prob[index] if index < len(texts_prob) else [1.0]
-    entry_kind = text_entry_types[index] if index < len(text_entry_types) else "text"
+    def _infer_text_entry(driver_obj: BrowserDriver, q_num: int) -> Tuple[str, List[str]]:
+        try:
+            q_div = driver_obj.find_element(By.CSS_SELECTOR, f"#div{q_num}")
+        except Exception:
+            q_div = None
+        text_input_count = _count_visible_text_inputs_driver(q_div) if q_div is not None else 0
+        is_location_question = _driver_question_is_location(q_div) if q_div is not None else False
+        is_multi = _should_mark_as_multi_text("1", 0, text_input_count, is_location_question) or text_input_count >= 2
+        if is_multi:
+            blanks = max(2, text_input_count or 2)
+            default_answer = MULTI_TEXT_DELIMITER.join([DEFAULT_FILL_TEXT] * blanks)
+            return "multi_text", [default_answer]
+        return "text", [DEFAULT_FILL_TEXT]
+
+    if index < len(texts):
+        answer_candidates = texts[index]
+        selection_probabilities = texts_prob[index] if index < len(texts_prob) else [1.0]
+        entry_kind = text_entry_types[index] if index < len(text_entry_types) else "text"
+    else:
+        entry_kind, answer_candidates = _infer_text_entry(driver, current)
+        selection_probabilities = normalize_probabilities([1.0] * len(answer_candidates)) if answer_candidates else [1.0]
+
     if not answer_candidates:
-        answer_candidates = [""]
+        answer_candidates = [DEFAULT_FILL_TEXT]
     if len(selection_probabilities) != len(answer_candidates):
         selection_probabilities = normalize_probabilities([1.0] * len(answer_candidates))
     selected_index = numpy.random.choice(a=numpy.arange(0, len(selection_probabilities)), p=selection_probabilities)
-    selected_answer = answer_candidates[selected_index] if answer_candidates else ""
+    selected_answer = answer_candidates[selected_index] if answer_candidates else DEFAULT_FILL_TEXT
 
     if entry_kind == "multi_text":
         raw_text = "" if selected_answer is None else str(selected_answer)
@@ -2846,6 +2937,10 @@ def vacant(driver: BrowserDriver, current, index):
         else:
             parts = [raw_text]
         values = [part.strip() for part in parts]
+
+        # 若答案为空，使用默认填充值避免必填题校验不通过
+        if not values or all(not v for v in values):
+            values = [DEFAULT_FILL_TEXT]
 
         input_elements: List[Any] = []
         question_div = None
@@ -2866,16 +2961,38 @@ def vacant(driver: BrowserDriver, current, index):
                     input_type = (candidate.get_attribute("type") or "").lower()
                 except Exception:
                     input_type = ""
-                if input_type == "hidden":
+
+                try:
+                    contenteditable = (candidate.get_attribute("contenteditable") or "").lower() == "true"
+                except Exception:
+                    contenteditable = False
+
+                # 兼容内容可编辑的 span/div（如问卷星 gapfill 的 textCont），不再依赖显示检测
+                if contenteditable and tag_name in {"span", "div"}:
+                    input_elements.append(candidate)
                     continue
-                if tag_name == "textarea" or (tag_name == "input" and input_type in ("", "text", "search", "tel", "number")):
+
+                # 优先收集可见的常规输入框，若可见性检测返回 False 也尝试保留一次
+                if input_type != "hidden" and (tag_name == "textarea" or (tag_name == "input" and input_type in ("", "text", "search", "tel", "number"))):
                     try:
-                        if candidate.is_displayed():
-                            input_elements.append(candidate)
+                        displayed = candidate.is_displayed()
                     except Exception:
+                        displayed = True
+                    if displayed:
                         input_elements.append(candidate)
+                        continue
+                    # 如果未检测为可见，但类型匹配，仍尝试加入，避免 bounding_box 返回 None 的场景
+                    input_elements.append(candidate)
 
         _collect_text_inputs(candidates)
+
+        # 兜底查找 contenteditable 的文本节点，并保持 DOM 顺序
+        if question_div:
+            try:
+                    editable_nodes = question_div.find_elements(By.CSS_SELECTOR, "span[contenteditable='true'], div[contenteditable='true'], .textCont")
+            except Exception:
+                editable_nodes = []
+            _collect_text_inputs(editable_nodes)
 
         # 兜底：部分多项填空的输入框不会出现在通用查询结果里，尝试按 id 前缀再找一遍
         if question_div and len(input_elements) < 2:
@@ -2891,11 +3008,77 @@ def vacant(driver: BrowserDriver, current, index):
             except Exception:
                 input_elements = []
 
+        # 若输入框数量多于答案数量，扩展默认值
+        if len(values) < len(input_elements):
+            values.extend([DEFAULT_FILL_TEXT] * (len(input_elements) - len(values)))
+
         for idx_input, element in enumerate(input_elements):
             value = values[idx_input] if idx_input < len(values) else DEFAULT_FILL_TEXT
             if not value:
                 value = DEFAULT_FILL_TEXT
-            _fill_text_question_input(driver, element, value)
+            try:
+                tag_name = (element.tag_name or "").lower()
+            except Exception:
+                tag_name = ""
+            if tag_name in {"span", "div"}:
+                # 直接写入 contenteditable 节点，并触发事件，同时同步其关联的隐藏 input
+                try:
+                    _smooth_scroll_to_element(driver, element, 'center')
+                except Exception:
+                    pass
+                try:
+                    element.click()
+                except Exception:
+                    pass
+                driver.execute_script(
+                    """
+                    const el = arguments[0];
+                    const value = arguments[1];
+                    if (!el) return;
+                    try { el.focus(); } catch (err) {}
+                    try { el.innerText = value; } catch (err) { el.textContent = value; }
+                    const opts = { bubbles: true };
+                    ['input','change','blur','keyup','keydown','keypress'].forEach(name => {
+                        try { el.dispatchEvent(new Event(name, opts)); } catch (err) {}
+                    });
+
+                    // 同步前置隐藏文本框（问卷星 gapfill 场景）
+                    const label = el.closest ? el.closest('.textEdit') : null;
+                    const hiddenInput = label ? label.previousElementSibling : null;
+                    if (hiddenInput && hiddenInput.tagName && hiddenInput.type === 'text') {
+                        try { hiddenInput.value = value; } catch (err) {}
+                        try { hiddenInput.setAttribute('value', value); } catch (err) {}
+                        ['input','change','blur','keyup','keydown','keypress'].forEach(name => {
+                            try { hiddenInput.dispatchEvent(new Event(name, opts)); } catch (err) {}
+                        });
+                    }
+                    """,
+                    element,
+                    value,
+                )
+            else:
+                _fill_text_question_input(driver, element, value)
+
+        # 再兜底：直接按顺序写入隐藏输入框 q{current}_n，避免验证遗漏
+        try:
+            for idx_value, val in enumerate(values, start=1):
+                driver.execute_script(
+                    """
+                    const id = arguments[0];
+                    const value = arguments[1];
+                    const el = document.getElementById(id);
+                    if (!el) return;
+                    try { el.value = value; } catch (e) {}
+                    try { el.setAttribute('value', value); } catch (e) {}
+                    ['input','change','blur','keyup','keydown','keypress'].forEach(name => {
+                        try { el.dispatchEvent(new Event(name, { bubbles: true })); } catch (e) {}
+                    });
+                    """,
+                    f"q{current}_{idx_value}",
+                    val or DEFAULT_FILL_TEXT,
+                )
+        except Exception:
+            pass
         return
 
     try:
@@ -3740,7 +3923,37 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
             elif question_type == "11":
                 reorder(driver, current_question_number)
             else:
-                print(f"第{current_question_number}题为不支持类型")
+                # 兜底：尝试把未知类型当成填空题/多项填空题处理，避免直接跳过
+                try:
+                    question_div = driver.find_element(By.CSS_SELECTOR, f"#div{current_question_number}")
+                except Exception:
+                    question_div = None
+
+                option_count = 0
+                if question_div is not None:
+                    try:
+                        option_elements = question_div.find_elements(By.CSS_SELECTOR, ".ui-controlgroup > div")
+                        option_count = len(option_elements)
+                    except Exception:
+                        option_count = 0
+                text_input_count = _count_visible_text_inputs_driver(question_div) if question_div is not None else 0
+                is_location_question = _driver_question_is_location(question_div) if question_div is not None else False
+                is_multi_text_question = _should_mark_as_multi_text(
+                    question_type, option_count, text_input_count, is_location_question
+                )
+                is_text_like_question = _should_treat_question_as_text_like(
+                    question_type, option_count, text_input_count
+                )
+
+                if is_text_like_question:
+                    vacant(driver, current_question_number, vacant_question_index)
+                    vacant_question_index += 1
+                    print(
+                        f"第{current_question_number}题识别为"
+                        f"{'多项填空' if is_multi_text_question else '填空'}，已按填空题处理"
+                    )
+                else:
+                    print(f"第{current_question_number}题为不支持类型(type={question_type})")
         if _full_simulation_active():
             _human_scroll_after_question(driver)
         if (

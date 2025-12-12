@@ -29,6 +29,32 @@ from random_ip import (
     _normalize_proxy_address,
 )
 
+from log_utils import (
+    StreamToLogger,
+    ORIGINAL_STDOUT,
+    ORIGINAL_STDERR,
+    ORIGINAL_EXCEPTHOOK,
+    LogBufferEntry,
+    LogBufferHandler,
+    LOG_BUFFER_HANDLER,
+    setup_logging,
+    LOG_LIGHT_THEME,
+    LOG_DARK_THEME,
+    save_log_records_to_file,
+    dump_threads_to_file,
+    log_popup_info,
+    log_popup_error,
+    log_popup_confirm,
+)
+
+from updater import (
+    UpdateManager,
+    check_updates_on_startup,
+    show_update_notification,
+    check_for_updates as _check_for_updates_impl,
+    perform_update as _perform_update_impl,
+)
+
 import numpy
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -397,7 +423,7 @@ def _resolve_dynamic_text_token_value(token: Any) -> str:
 
 
 class AliyunCaptchaBypassError(RuntimeError):
-    """在阿里云智能验证无法自动通过时抛出。"""
+    """检测到阿里云智能验证（需要人工交互）时抛出，用于快速放弃当前浏览器示例。"""
 
 
 class LoadingSplash:
@@ -459,45 +485,6 @@ class LoadingSplash:
         x = (screen_width - self.width) // 2
         y = (screen_height - self.height) // 2
         self.window.geometry(f"{self.width}x{self.height}+{x}+{y}")
-
-ORIGINAL_STDOUT = sys.stdout
-ORIGINAL_STDERR = sys.stderr
-ORIGINAL_EXCEPTHOOK = sys.excepthook
-
-
-class StreamToLogger:
-    def __init__(self, logger: logging.Logger, level: int, stream=None):
-        self.logger = logger
-        self.level = level
-        self.stream = stream
-        self._buffer = ""
-
-    def write(self, message: str):
-        if message is None:
-            return
-        text = str(message)
-        self._buffer += text.replace("\r", "")
-        if "\n" in self._buffer:
-            parts = self._buffer.split("\n")
-            self._buffer = parts.pop()
-            for line in parts:
-                self.logger.log(self.level, line)
-        if self.stream:
-            try:
-                self.stream.write(message)
-            except Exception:
-                pass
-
-    def flush(self):
-        if self._buffer:
-            self.logger.log(self.level, self._buffer)
-            self._buffer = ""
-        if self.stream:
-            try:
-                self.stream.flush()
-            except Exception:
-                pass
-
 
 def _get_runtime_directory() -> str:
     if getattr(sys, "frozen", False):
@@ -813,12 +800,16 @@ def create_playwright_driver(headless: bool = False, prefer_browsers: Optional[L
 def handle_aliyun_captcha(
     driver: BrowserDriver, timeout: int = 3, stop_signal: Optional[threading.Event] = None
 ) -> bool:
-    """检测到阿里云智能验证后尝试点击确认按钮，若成功返回 True，未出现返回 False。"""
+    """检测是否出现阿里云智能验证。
+
+    之前这里会尝试点击“智能验证/开始验证”等按钮做绕过；现在按需求改为：
+    - 未出现：返回 False
+    - 出现：直接抛出 AliyunCaptchaBypassError，让上层快速放弃该浏览器示例并计为失败
+    """
     popup_locator = (By.ID, "aliyunCaptcha-window-popup")
     checkbox_locator = (By.ID, "aliyunCaptcha-checkbox-icon")
     checkbox_left_locator = (By.ID, "aliyunCaptcha-checkbox-left")
     checkbox_text_locator = (By.ID, "aliyunCaptcha-checkbox-text")
-    page = getattr(driver, "page", None)
 
     def _probe_with_js(script: str) -> bool:
         """确保 JS 片段以 return 返回布尔值，避免 evaluate 丢失返回。"""
@@ -830,28 +821,42 @@ def handle_aliyun_captcha(
         except Exception:
             return False
 
-    def _ack_security_dialog() -> None:
-        """点击可能出现的“安全认证/确定”按钮以触发阿里云弹窗。"""
+    def _verification_button_text_visible() -> bool:
+        """检测页面/iframe 中是否出现可见的“智能验证/开始验证”按钮或文案。"""
         script = r"""
             (() => {
-                const candidates = ['button', 'a', '.layui-layer-btn0', '.sm-dialog .btn', '.dialog-footer button'];
-                const docList = [document, ...Array.from(document.querySelectorAll('iframe')).map(f => {
-                    try { return f.contentDocument || f.contentWindow?.document; } catch (e) { return null; }
-                }).filter(Boolean)];
-                const matchText = (txt) => /^(确\s*定|确\s*认|继续|我知道了|开始验证)$/i.test((txt || '').trim());
-                for (const doc of docList) {
-                    for (const sel of candidates) {
-                        const nodes = doc.querySelectorAll(sel);
-                        for (const node of nodes) {
-                            const text = (node.innerText || node.textContent || '').trim();
-                            if (matchText(text)) { try { node.click(); return true; } catch (e) {} }
+                const texts = ['智能验证', '开始验证', '点击开始智能验证'];
+                const visible = (el) => {
+                    if (!el) return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                };
+                const checkDoc = (doc) => {
+                    const nodes = doc.querySelectorAll('button, a, span, div');
+                    for (const el of nodes) {
+                        if (!visible(el)) continue;
+                        const txt = (el.innerText || el.textContent || '').trim();
+                        if (!txt) continue;
+                        for (const t of texts) {
+                            if (txt.includes(t)) return true;
                         }
                     }
+                    return false;
+                };
+                if (checkDoc(document)) return true;
+                const frames = Array.from(document.querySelectorAll('iframe'));
+                for (const frame of frames) {
+                    try {
+                        const doc = frame.contentDocument || frame.contentWindow?.document;
+                        if (doc && checkDoc(doc)) return true;
+                    } catch (e) {}
                 }
                 return false;
             })();
         """
-        _probe_with_js(script)
+        return _probe_with_js(script)
 
     def _challenge_visible() -> bool:
         script = r"""
@@ -896,11 +901,10 @@ def handle_aliyun_captcha(
         while time.time() < end_time:
             if stop_signal and stop_signal.is_set():
                 return False
-            _ack_security_dialog()
-            if _challenge_visible():
+            if _challenge_visible() or _verification_button_text_visible():
                 return True
             time.sleep(0.15)
-        return _challenge_visible()
+        return _challenge_visible() or _verification_button_text_visible()
 
     # 先用简单的元素存在性检测作为补充
     def _element_exists() -> bool:
@@ -920,224 +924,11 @@ def handle_aliyun_captcha(
     if stop_signal and stop_signal.is_set():
         return False
 
-    logging.info("检测到阿里云智能验证，尝试通过点击按钮绕过。")
-    checkbox = None
-    try:
-        checkbox = driver.find_element(*checkbox_locator)
-    except NoSuchElementException:
-        logging.debug("常规方式未找到阿里云验证按钮，尝试使用 JS 兜底。")
-    except Exception as exc:
-        logging.debug("获取阿里云验证按钮失败，尝试使用 JS 兜底: %s", exc)
-
-    # 兜底尝试获取父级或文字区域点击
-    if checkbox is None:
-        for locator in (checkbox_left_locator, checkbox_text_locator):
-            try:
-                checkbox = driver.find_element(*locator)
-                break
-            except Exception:
-                continue
-
-    def _click_checkbox_via_js() -> bool:
-        script = r"""
-            (() => {
-                const ids = [
-                    'aliyunCaptcha-checkbox',
-                    'aliyunCaptcha-checkbox-icon',
-                    'aliyunCaptcha-checkbox-left',
-                    'aliyunCaptcha-checkbox-text'
-                ];
-                const visible = (el) => {
-                    if (!el) return false;
-                    const style = window.getComputedStyle(el);
-                    if (style.display === 'none' || style.visibility === 'hidden') return false;
-                    const rect = el.getBoundingClientRect();
-                    return rect.width > 0 && rect.height > 0;
-                };
-                const clickDoc = (doc) => {
-                    for (const id of ids) {
-                        const el = doc.getElementById(id);
-                        if (visible(el)) { try { el.click(); return true; } catch (e) {} }
-                    }
-                    // 也尝试点击任何包含"智能验证"或"开始验证"文字的元素
-                    const allClickable = doc.querySelectorAll('span, div, button, a');
-                    for (const el of allClickable) {
-                        const txt = (el.innerText || el.textContent || '').trim();
-                        if (txt.includes('智能验证') || txt.includes('开始验证') || txt === '点击开始智能验证') {
-                            if (visible(el)) { try { el.click(); return true; } catch (e) {} }
-                        }
-                    }
-                    return false;
-                };
-                if (clickDoc(document)) return true;
-                const frames = Array.from(document.querySelectorAll('iframe'));
-                for (const frame of frames) {
-                    try {
-                        const doc = frame.contentDocument || frame.contentWindow?.document;
-                        if (doc && clickDoc(doc)) return true;
-                    } catch (e) {}
-                }
-                return false;
-            })();
-        """
-        return _probe_with_js(script)
-
-    def _human_like_click(target) -> bool:
-        """模拟人类微停顿和微偏移点击，降低“机器点击”特征。"""
-        if not target:
-            return False
-        local_page = page
-        for attempt in range(2):
-            if stop_signal and stop_signal.is_set():
-                return False
-            time.sleep(random.uniform(0.35, 0.9))
-            try:
-                if local_page:
-                    try:
-                        box = target._handle.bounding_box()  # type: ignore[attr-defined]
-                    except Exception:
-                        box = None
-                    if box:
-                        cx = box.get("x", 0) + (box.get("width", 0) * random.uniform(0.35, 0.65))
-                        cy = box.get("y", 0) + (box.get("height", 0) * random.uniform(0.35, 0.65))
-                        local_page.mouse.move(cx, cy, steps=5)
-                        local_page.mouse.click(cx, cy, delay=random.randint(70, 160))
-                    else:
-                        target.click()
-                else:
-                    target.click()
-            except Exception as exc:
-                logging.debug("第 %d 次点击阿里云按钮失败: %s", attempt + 1, exc)
-            else:
-                if not _challenge_visible():
-                    return True
-        return False
-
-    clicked = _human_like_click(checkbox) or _click_checkbox_via_js()
-    if not clicked or _challenge_visible():
-        logging.warning("点击阿里云验证按钮后弹窗仍存在，视为无法绕过。")
-        raise AliyunCaptchaBypassError("点击阿里云智能验证按钮后弹窗未关闭。")
-
-    # 检测是否出现"验证失败，请刷新重试"
-    time.sleep(0.5)  # 等待验证结果
-    
-    def _check_captcha_failed() -> bool:
-        """检测是否出现验证失败提示"""
-        script = r"""
-            (() => {
-                const texts = ['验证失败', '请刷新重试', '请刷新'];
-                const allElements = document.querySelectorAll('*');
-                for (const el of allElements) {
-                    const txt = (el.innerText || el.textContent || '').trim();
-                    for (const t of texts) {
-                        if (txt.includes(t)) return true;
-                    }
-                }
-                return false;
-            })();
-        """
-        return _probe_with_js(script)
-    
-    if _check_captcha_failed():
-        logging.warning("检测到阿里云验证失败，需要刷新重试")
-        raise AliyunCaptchaBypassError("阿里云验证失败，需要刷新重试")
-
-    logging.info("阿里云点击验证已处理，准备继续提交。")
-    return True
+    logging.warning("检测到阿里云智能验证（按钮/弹窗），将放弃当前浏览器示例并计为失败。")
+    raise AliyunCaptchaBypassError("检测到阿里云智能验证，按配置直接放弃")
 
 
 
-
-
-@dataclass
-class LogBufferEntry:
-    text: str
-    category: str
-
-
-class LogBufferHandler(logging.Handler):
-    def __init__(self, capacity: int = LOG_BUFFER_CAPACITY):
-        super().__init__()
-        self.capacity = capacity
-        self.records: List[LogBufferEntry] = []
-        self.setFormatter(logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))
-
-    def emit(self, record: logging.LogRecord):
-        try:
-            original_level = record.levelname
-            message = self.format(record)
-            category = self._determine_category(record, message)
-            display_text = self._apply_category_label(message, original_level, category)
-            self.records.append(LogBufferEntry(text=display_text, category=category))
-            if self.capacity and len(self.records) > self.capacity:
-                self.records.pop(0)
-        except Exception:
-            self.handleError(record)
-
-    def get_records(self) -> List[LogBufferEntry]:
-        return list(self.records)
-
-    @staticmethod
-    def _determine_category(record: logging.LogRecord, message: str) -> str:
-        custom_category = getattr(record, "log_category", None)
-        if isinstance(custom_category, str):
-            normalized = custom_category.strip().upper()
-            if normalized in {"INFO", "OK", "WARNING", "ERROR"}:
-                return normalized
-
-        level = record.levelname.upper()
-        if level in {"ERROR", "CRITICAL"}:
-            return "ERROR"
-        if level == "WARNING":
-            return "WARNING"
-        if level in {"OK", "SUCCESS"}:
-            return "OK"
-
-        normalized_message = message.upper()
-        ok_markers = ("[OK]", "[SUCCESS]", "✅", "✔")
-        ok_keywords = (
-            "成功",
-            "已完成",
-            "解析完成",
-            "填写完成",
-            "填写成功",
-            "提交成功",
-            "保存成功",
-            "恢复成功",
-            "加载上次配置",
-            "已加载上次配置",
-            "加载完成",
-        )
-        negative_keywords = ("未成功", "未完成", "失败", "错误", "异常")
-        if any(marker in message for marker in ok_markers):
-            return "OK"
-        if normalized_message.startswith("OK"):
-            return "OK"
-        if any(keyword in message for keyword in ok_keywords):
-            if not any(neg in message for neg in negative_keywords):
-                return "OK"
-
-        return "INFO"
-
-    @staticmethod
-    def _apply_category_label(message: str, original_level: str, category: str) -> str:
-        if not message or not original_level:
-            return message
-        original_label = f"[{original_level.upper()}]"
-        if category.upper() == original_level.upper():
-            return message
-        replacement_label = f"[{category.upper()}]"
-        if original_label in message:
-            return message.replace(original_label, replacement_label, 1)
-        return message
-
-
-LOG_BUFFER_HANDLER = LogBufferHandler()
-# 立即把缓冲处理器注册到根日志记录器，保证启动前的日志也能被收集
-_root_logger = logging.getLogger()
-if not any(isinstance(h, LogBufferHandler) for h in _root_logger.handlers):
-    _root_logger.addHandler(LOG_BUFFER_HANDLER)
-_root_logger.setLevel(logging.INFO)
 
 
 url = ""
@@ -1191,266 +982,6 @@ def _is_fast_mode() -> bool:
         and submit_interval_range_seconds == (0, 0)
         and answer_duration_range_seconds == (0, 0)
     )
-
-# 可选：设置 GitHub Token 以避免 API 速率限制
-# 优先从环境变量读取，如果没有则尝试从配置文件读取
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-if not GITHUB_TOKEN:
-    # 尝试从同目录下的 .github_token 文件读取
-    token_file = os.path.join(_get_runtime_directory(), ".github_token")
-    if os.path.exists(token_file):
-        try:
-            with open(token_file, 'r', encoding='utf-8') as f:
-                GITHUB_TOKEN = f.read().strip()
-        except:
-            pass
-
-
-class UpdateManager:
-    """GitHub 自动更新管理器"""
-    
-    @staticmethod
-    def check_updates() -> Optional[Dict[str, Any]]:
-        """
-        检查 GitHub 上是否有新版本
-        
-        返回:
-            如果有新版本，返回更新信息字典，包括:
-            - has_update: 是否有更新
-            - version: 新版本号
-            - download_url: 下载地址
-            - release_notes: 发布说明
-            - file_name: 文件名
-            
-            如果无新版本或检查失败，返回 None
-        """
-        if not requests or not version:
-            logging.warning("更新功能依赖 requests 和 packaging 模块")
-            return None
-        
-        try:
-            response = requests.get(GITHUB_API_URL, timeout=5)
-            response.raise_for_status()
-            latest_release = response.json()
-            
-            latest_version = latest_release['tag_name'].lstrip('v')
-            current_version = __VERSION__
-            
-            # 比较版本号
-            try:
-                if version.parse(latest_version) <= version.parse(current_version):
-                    return None
-            except:
-                logging.warning(f"版本比较失败: {latest_version} vs {current_version}")
-                return None
-            
-            # 查找 .exe 文件资源（Release中的最新exe文件）
-            download_url = None
-            file_name = None
-            for asset in latest_release.get('assets', []):
-                if asset['name'].endswith('.exe'):
-                    download_url = asset['browser_download_url']
-                    file_name = asset['name']
-                    break
-            
-            if not download_url:
-                logging.warning("Release 中没有找到 .exe 文件")
-                return None
-            
-            return {
-                'has_update': True,
-                'version': latest_version,
-                'download_url': download_url,
-                'release_notes': latest_release.get('body', ''),
-                'file_name': file_name,
-                'current_version': current_version
-            }
-            
-        except requests.exceptions.Timeout:
-            logging.warning("检查更新超时")
-            return None
-        except requests.exceptions.RequestException as e:
-            logging.warning(f"检查更新失败: {e}")
-            return None
-        except Exception as e:
-            logging.error(f"检查更新时发生错误: {e}")
-            return None
-    
-    @staticmethod
-    def download_update(download_url: str, file_name: str, progress_callback=None) -> Optional[str]:
-        """
-        下载更新文件
-        
-        参数:
-            download_url: 下载链接
-            file_name: 文件名（保留原始Release文件名）
-            progress_callback: 进度回调函数 (downloaded, total)
-            
-        返回:
-            下载的文件路径，失败返回 None
-        """
-        if not requests:
-            logging.error("下载更新需要 requests 模块")
-            return None
-        
-        try:
-            logging.info(f"正在下载更新文件: {download_url}")
-            response = requests.get(download_url, timeout=30, stream=True)
-            response.raise_for_status()
-            
-            # 获取文件大小
-            total_size = int(response.headers.get('content-length', 0))
-            
-            # 确定下载目录：统一使用运行时目录，保证与当前可执行文件同级
-            current_dir = _get_runtime_directory()
-            
-            target_file = os.path.join(current_dir, file_name)
-            temp_file = target_file + '.tmp'
-            downloaded_size = 0
-            
-            logging.info(f"下载目标目录: {current_dir}")
-            
-            with open(temp_file, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded_size += len(chunk)
-                        if progress_callback:
-                            progress_callback(downloaded_size, total_size)
-                        if total_size > 0:
-                            progress = (downloaded_size / total_size) * 100
-                            logging.debug(f"下载进度: {progress:.1f}%")
-            
-            # 移动临时文件到目标位置
-            if os.path.exists(target_file):
-                os.remove(target_file)
-            os.rename(temp_file, target_file)
-
-            logging.info(f"文件已成功下载到: {target_file}")
-
-            UpdateManager.cleanup_old_executables(target_file)
-
-            return target_file
-            
-        except Exception as e:
-            logging.error(f"下载文件失败: {e}")
-            # 清理临时文件
-            try:
-                current_dir = _get_runtime_directory()
-                target_file = os.path.join(current_dir, file_name)
-                temp_file = target_file + '.tmp'
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-            except:
-                pass
-            return None
-    
-    @staticmethod
-    def restart_application():
-        """重启应用程序"""
-        try:
-            python_exe = sys.executable
-            script_path = os.path.abspath(__file__)
-            subprocess.Popen([python_exe, script_path])
-            sys.exit(0)
-        except Exception as e:
-            logging.error(f"重启应用失败: {e}")
-
-    @staticmethod
-    def cleanup_old_executables(exclude_path: str):
-        """删除目录下旧版本的exe文件（保留exclude_path本体）"""
-        if not exclude_path:
-            return
-        directory = os.path.dirname(os.path.abspath(exclude_path))
-        if not os.path.isdir(directory):
-            return
-
-        try:
-            exclude_norm = os.path.normcase(os.path.abspath(exclude_path))
-            for file in os.listdir(directory):
-                if not file.lower().endswith('.exe'):
-                    continue
-                file_path = os.path.join(directory, file)
-                if os.path.normcase(os.path.abspath(file_path)) == exclude_norm:
-                    continue
-                lower_name = file.lower()
-                if 'fuck-wjx' not in lower_name and 'wjx' not in lower_name:
-                    continue
-                try:
-                    os.remove(file_path)
-                    logging.info(f"已删除旧版本: {file_path}")
-                except Exception as exc:
-                    logging.warning(f"无法删除旧版本 {file_path}: {exc}")
-        except Exception as exc:
-            logging.warning(f"清理旧版本时出错: {exc}")
-
-    @staticmethod
-    def schedule_running_executable_deletion(exclude_path: str):
-        """调度在当前进程退出后删除正在运行的 exe 文件"""
-        if not getattr(sys, "frozen", False):
-            return
-        current_executable = os.path.abspath(sys.executable)
-        if not current_executable.lower().endswith('.exe'):
-            return
-        exclude_norm = os.path.normcase(os.path.abspath(exclude_path)) if exclude_path else ""
-        if exclude_norm and os.path.normcase(current_executable) == exclude_norm:
-            return
-
-        safe_executable = current_executable.replace('%', '%%')
-        script_content = (
-            "@echo off\r\n"
-            f"set \"target={safe_executable}\"\r\n"
-            ":wait_loop\r\n"
-            "if exist \"%target%\" (\r\n"
-            "    del /f /q \"%target%\" >nul 2>&1\r\n"
-            "    if exist \"%target%\" (\r\n"
-            "        ping 127.0.0.1 -n 3 >nul\r\n"
-            "        goto wait_loop\r\n"
-            "    )\r\n"
-            ")\r\n"
-            "del /f /q \"%~f0\" >nul 2>&1\r\n"
-        )
-
-        try:
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".bat") as script_file:
-                script_file.write(script_content)
-                script_path = script_file.name
-            subprocess.Popen([
-                "cmd.exe",
-                "/c",
-                script_path,
-            ], creationflags=subprocess.CREATE_NO_WINDOW)
-            logging.info(f"已调度删除旧版本执行文件: {current_executable}")
-        except Exception as exc:
-            logging.warning(f"调度删除旧版本失败: {exc}")
-
-
-def setup_logging():
-    root_logger = logging.getLogger()
-    if not root_logger.handlers:
-        logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
-    root_logger.setLevel(logging.INFO)
-    if not any(isinstance(handler, LogBufferHandler) for handler in root_logger.handlers):
-        root_logger.addHandler(LOG_BUFFER_HANDLER)
-    
-    if not getattr(setup_logging, "_streams_hooked", False):
-        stdout_logger = StreamToLogger(root_logger, logging.INFO, stream=ORIGINAL_STDOUT)
-        stderr_logger = StreamToLogger(root_logger, logging.ERROR, stream=ORIGINAL_STDERR)
-        sys.stdout = stdout_logger
-        sys.stderr = stderr_logger
-
-        def _handle_unhandled_exception(exc_type, exc_value, exc_traceback):
-            if issubclass(exc_type, KeyboardInterrupt):
-                if ORIGINAL_EXCEPTHOOK:
-                    ORIGINAL_EXCEPTHOOK(exc_type, exc_value, exc_traceback)
-                return
-            root_logger.error("未处理的异常", exc_info=(exc_type, exc_value, exc_traceback))
-            if ORIGINAL_EXCEPTHOOK:
-                ORIGINAL_EXCEPTHOOK(exc_type, exc_value, exc_traceback)
-
-        sys.excepthook = _handle_unhandled_exception
-        setattr(setup_logging, "_streams_hooked", True)
-
 
 def normalize_probabilities(values: List[float]) -> List[float]:
     if not values:
@@ -4328,66 +3859,6 @@ def submit(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None)
         except Exception:
             return False
 
-    def _handle_captcha_failure_refresh():
-        """处理验证失败后的刷新流程：刷新页面 -> 点击'是'继续作答 -> 点击提交 -> 重新进行智能验证"""
-        logging.info("验证失败，正在刷新页面...")
-        driver.refresh()
-        if _sleep_with_stop(stop_signal, 1.5):
-            return  # 等待页面刷新完成
-        
-        # 点击"是"继续上次作答
-        script_click_continue = r"""
-            (() => {
-                const selectors = [
-                    '.layui-layer-btn0',
-                    '.layui-layer-btn a',
-                    '.layui-layer-dialog .layui-layer-btn0',
-                    '.layui-layer .layui-layer-btn a',
-                    'button',
-                    'a.layui-layer-btn0'
-                ];
-                const matchText = (txt) => /^(是|确\s*定|确\s*认|继续|OK)$/i.test((txt || '').trim());
-                for (const sel of selectors) {
-                    const nodes = document.querySelectorAll(sel);
-                    for (const node of nodes) {
-                        const text = (node.innerText || node.textContent || '').trim();
-                        if (matchText(text)) {
-                            try { node.click(); return true; } catch (e) {}
-                        }
-                    }
-                }
-                return false;
-            })();
-        """
-        # 等待并点击"是"按钮
-        for _ in range(10):  # 最多尝试 10 次，共 2 秒
-            if stop_signal and stop_signal.is_set():
-                return
-            try:
-                result = driver.execute_script(script_click_continue)
-                if result:
-                    logging.info("已点击'是'继续上次作答")
-                    if _sleep_with_stop(stop_signal, 0.5):
-                        return
-                    break
-            except Exception:
-                pass
-            if _sleep_with_stop(stop_signal, 0.2):
-                return
-        
-        if _sleep_with_stop(stop_signal, 0.5):
-            return
-        # 点击提交按钮，会触发新的智能验证
-        _click_submit_buttons()
-        # 点击安全校验确认弹窗（如果有）
-        for _ in range(5):
-            if stop_signal and stop_signal.is_set():
-                return
-            if _click_security_confirm_dialog():
-                break
-            if _sleep_with_stop(stop_signal, 0.3):
-                return
-        _click_security_confirm_dialog()
 
     if pre_submit_delay > 0 and _sleep_with_stop(stop_signal, pre_submit_delay):
         return
@@ -4403,62 +3874,8 @@ def submit(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None)
     if stop_signal and stop_signal.is_set():
         return
     
-    # 最多重试 3 次验证
-    max_captcha_retries = 3
-    for retry_count in range(max_captcha_retries):
-        if stop_signal and stop_signal.is_set():
-            return
-        try:
-            captcha_bypassed = handle_aliyun_captcha(driver, timeout=3, stop_signal=stop_signal)
-            if captcha_bypassed:
-                break  # 验证成功，跳出循环
-        except AliyunCaptchaBypassError as exc:
-            if "验证失败" in str(exc) or "刷新重试" in str(exc):
-                if retry_count < max_captcha_retries - 1:
-                    logging.warning(f"阿里云验证失败，正在进行第 {retry_count + 2} 次尝试...")
-                    _handle_captcha_failure_refresh()
-                    continue
-                else:
-                    logging.error("阿里云验证多次失败，本次提交将被标记为失败")
-                    raise
-            else:
-                logging.error("阿里云智能验证无法绕过，本次提交将被标记为失败: %s", exc)
-                raise
-    else:
-        # 没有验证弹窗出现，正常继续
-        captcha_bypassed = False
-
-    if captcha_bypassed:
-        last_submit_had_captcha = True
-        if stop_signal and stop_signal.is_set():
-            return
-        if settle_delay > 0:
-            if _sleep_with_stop(stop_signal, settle_delay):
-                return
-        _click_submit_buttons()
-        # 阿里云验证通过后，等待提交完成（URL 变化或超时）
-        if full_simulation_enabled:
-            captcha_submit_timeout = 2.2  # 全真模拟略放宽，避免二次验证
-            captcha_poll_interval = 0.07
-        else:
-            captcha_submit_timeout = 3.0
-            captcha_poll_interval = 0.1
-        initial_url = driver.current_url
-        wait_deadline = time.time() + captcha_submit_timeout
-        logging.debug("阿里云验证后等待提交完成，初始 URL: %s", initial_url)
-        while time.time() < wait_deadline:
-            if stop_signal and stop_signal.is_set():
-                return
-            try:
-                current_url = driver.current_url
-                if current_url != initial_url:
-                    logging.info("阿里云验证后提交成功，URL 已变化")
-                    break
-            except Exception:
-                pass
-            time.sleep(captcha_poll_interval)
-        else:
-            logging.debug("阿里云验证后等待超时，URL 未变化")
+    # 阿里云智能验证：仅检测，出现即放弃（抛出异常交给上层计失败并关闭实例）
+    handle_aliyun_captcha(driver, timeout=3, stop_signal=stop_signal)
     try:
         slider_text_element = driver.find_element(By.XPATH, '//*[@id="nc_1__scale_text"]/span')
         slider_handle = driver.find_element(By.XPATH, '//*[@id="nc_1_n1z"]')
@@ -4770,29 +4187,6 @@ TYPE_OPTIONS = [
 
 LABEL_TO_TYPE = {label: value for value, label in TYPE_OPTIONS}
 
-LOG_LIGHT_THEME = {
-    "background": "#ffffff",
-    "foreground": "#1e1e1e",
-    "insert": "#1e1e1e",
-    "select_bg": "#cfe8ff",
-    "select_fg": "#1e1e1e",
-    "highlight_bg": "#d9d9d9",
-    "highlight_color": "#a6a6a6",
-    "info_color": "#1e1e1e",
-}
-
-LOG_DARK_THEME = {
-    "background": "#292929",
-    "foreground": "#ffffff",
-    "insert": "#ffffff",
-    "select_bg": "#333333",
-    "select_fg": "#ffffff",
-    "highlight_bg": "#1e1e1e",
-    "highlight_color": "#3c3c3c",
-    "info_color": "#f0f0f0",
-}
-
-
 class SurveyGUI:
 
     def _save_logs_to_file(self):
@@ -4805,15 +4199,8 @@ class SurveyGUI:
             self._log_popup_info("保存日志文件", "当前尚无日志可保存。", parent=parent_window)
             return
 
-        logs_dir = os.path.join(_get_runtime_directory(), LOG_DIR_NAME)
-        os.makedirs(logs_dir, exist_ok=True)
-        file_name = datetime.now().strftime("log_%Y%m%d_%H%M%S.txt")
-        file_path = os.path.join(logs_dir, file_name)
-
         try:
-            text_records = [entry.text for entry in records]
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(text_records))
+            file_path = save_log_records_to_file(records, _get_runtime_directory())
             logging.info(f"已保存日志文件: {file_path}")
             self._log_popup_info("保存日志文件", f"日志已保存到:\n{file_path}", parent=parent_window)
         except Exception as exc:
@@ -4902,44 +4289,20 @@ class SurveyGUI:
         return None
 
     def _log_popup_info(self, title: str, message: str, **kwargs):
-        logging.info(f"[Popup Info] {title} | {message}")
-        return messagebox.showinfo(title, message, **kwargs)
+        return log_popup_info(title, message, **kwargs)
 
     def _log_popup_error(self, title: str, message: str, **kwargs):
-        logging.error(f"[Popup Error] {title} | {message}")
-        return messagebox.showerror(title, message, **kwargs)
+        return log_popup_error(title, message, **kwargs)
 
     def _log_popup_confirm(self, title: str, message: str, **kwargs) -> bool:
-        logging.info(f"[Popup Confirm] {title} | {message}")
-        return messagebox.askyesno(title, message, **kwargs)
+        return log_popup_confirm(title, message, **kwargs)
 
     def _dump_threads_to_file(self, tag: str = "stop") -> Optional[str]:
         """
         导出当前所有线程的堆栈，便于排查停止后卡顿。
         返回写入的文件路径。
         """
-        try:
-            import sys
-            import traceback
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            logs_dir = os.path.join(_get_runtime_directory(), LOG_DIR_NAME)
-            os.makedirs(logs_dir, exist_ok=True)
-            file_path = os.path.join(logs_dir, f"thread_dump_{tag}_{ts}.txt")
-            frames = sys._current_frames()
-            lines = []
-            for tid, frame in frames.items():
-                thr = next((t for t in threading.enumerate() if t.ident == tid), None)
-                name = thr.name if thr else "Unknown"
-                lines.append(f"### Thread {name} (id={tid}) ###")
-                lines.extend(traceback.format_stack(frame))
-                lines.append("")
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
-            logging.info(f"[Debug] 线程堆栈已导出：{file_path}")
-            return file_path
-        except Exception as exc:
-            logging.debug(f"导出线程堆栈失败: {exc}", exc_info=True)
-            return None
+        return dump_threads_to_file(tag, _get_runtime_directory())
 
     def _exit_app(self):
         """结束应用，优先销毁 Tk，再强制退出以避免残留卡顿。"""
@@ -10870,195 +10233,19 @@ class SurveyGUI:
 
     def _check_updates_on_startup(self):
         """在启动时后台检查更新"""
-        def check():
-            try:
-                update_info = UpdateManager.check_updates()
-                if update_info:
-                    self.update_info = update_info
-                    self.root.after(0, self._show_update_notification)
-            except Exception as e:
-                logging.debug(f"启动时检查更新失败: {e}")
-        
-        thread = Thread(target=check, daemon=True)
-        thread.start()
+        return check_updates_on_startup(self)
 
     def _show_update_notification(self):
         """显示更新通知"""
-        if not self.update_info:
-            return
-        
-        info = self.update_info
-        release_notes = info.get('release_notes', '')
-        # 限制发布说明长度，避免弹窗过大
-        release_notes_preview = release_notes[:300] if release_notes else "暂无更新说明"
-        if len(release_notes) > 300:
-            release_notes_preview += "\n..."
-        
-        msg = (
-            f"检测到新版本 v{info['version']}\n"
-            f"当前版本 v{info['current_version']}\n\n"
-            f"发布说明:\n{release_notes_preview}\n\n"
-            f"是否要立即下载更新？"
-        )
-        
-        if self._log_popup_confirm("检查到更新", msg):
-            logging.info("[Action Log] User accepted update notification")
-            self._perform_update()
-        else:
-            logging.info("[Action Log] User declined update notification")
+        return show_update_notification(self)
 
     def check_for_updates(self):
         """手动检查更新"""
-        self.root.config(cursor="wait")
-        self.root.update()
-        
-        try:
-            update_info = UpdateManager.check_updates()
-            if update_info:
-                self.update_info = update_info
-                msg = (
-                    f"检测到新版本！\n\n"
-                    f"当前版本: v{update_info['current_version']}\n"
-                    f"新版本: v{update_info['version']}\n\n"
-                    f"发布说明:\n{update_info['release_notes'][:200]}\n\n"
-                    f"立即更新？"
-                )
-                if self._log_popup_confirm("检查到更新", msg):
-                    logging.info("[Action Log] User triggered manual update")
-                    self._perform_update()
-                else:
-                    logging.info("[Action Log] User postponed manual update")
-            else:
-                self._log_popup_info("检查更新", f"当前已是最新版本 v{__VERSION__}")
-        except Exception as e:
-            self._log_popup_error("检查更新失败", f"错误: {str(e)}")
-        finally:
-            self.root.config(cursor="")
+        return _check_for_updates_impl(self)
 
     def _perform_update(self):
         """执行更新"""
-        if not self.update_info:
-            return
-        
-        update_info = self.update_info
-        
-        # 显示更新进度窗口
-        progress_win = tk.Toplevel(self.root)
-        progress_win.title("正在更新")
-        progress_win.geometry("500x200")
-        progress_win.resizable(False, False)
-        progress_win.transient(self.root)
-        progress_win.grab_set()
-        
-        # 居中显示进度窗口
-        progress_win.update_idletasks()
-        win_width = progress_win.winfo_width()
-        win_height = progress_win.winfo_height()
-        screen_width = progress_win.winfo_screenwidth()
-        screen_height = progress_win.winfo_screenheight()
-        
-        try:
-            import ctypes
-            from ctypes.wintypes import RECT
-            work_area = RECT()
-            ctypes.windll.user32.SystemParametersInfoA(48, 0, ctypes.byref(work_area), 0)
-            work_width = work_area.right - work_area.left
-            work_height = work_area.bottom - work_area.top
-            work_x = work_area.left
-            work_y = work_area.top
-            x = work_x + (work_width - win_width) // 2
-            y = work_y + (work_height - win_height) // 2
-        except:
-            x = (screen_width - win_width) // 2
-            y = (screen_height - win_height) // 2
-        
-        x = max(0, x)
-        y = max(0, y)
-        progress_win.geometry(f"+{x}+{y}")
-        
-        frame = ttk.Frame(progress_win, padding=20)
-        frame.pack(fill=tk.BOTH, expand=True)
-        
-        title_label = ttk.Label(frame, text="正在下载新版本...", font=('', 10, 'bold'))
-        title_label.pack(pady=(0, 10))
-        
-        # 文件名标签
-        file_label = ttk.Label(frame, text=f"文件: {update_info['file_name']}", foreground="gray")
-        file_label.pack(pady=(0, 5))
-        
-        # 进度条（确定模式）
-        progress = ttk.Progressbar(frame, mode='determinate', maximum=100)
-        progress.pack(fill=tk.X, pady=10)
-        
-        # 进度文字
-        progress_label = ttk.Label(frame, text="0%", foreground="gray")
-        progress_label.pack(pady=(0, 5))
-        
-        # 状态标签
-        status_label = ttk.Label(frame, text="准备下载...", foreground="gray", wraplength=450)
-        status_label.pack(pady=10)
-        
-        progress_win.update()
-        
-        def update_progress(downloaded, total):
-            """更新进度条"""
-            if total > 0:
-                percent = (downloaded / total) * 100
-                progress['value'] = percent
-                # 格式化文件大小
-                downloaded_mb = downloaded / (1024 * 1024)
-                total_mb = total / (1024 * 1024)
-                progress_label.config(text=f"{percent:.1f}% ({downloaded_mb:.1f}MB / {total_mb:.1f}MB)")
-                progress_win.update()
-        
-        def do_update():
-            try:
-                status_label.config(text="正在更新...")
-                progress_win.update()
-                
-                downloaded_file = UpdateManager.download_update(
-                    update_info['download_url'],
-                    update_info['file_name'],
-                    progress_callback=update_progress
-                )
-                
-                if downloaded_file:
-                    status_label.config(text="新版本下载成功！合并文件中...")
-                    progress_label.config(text="100%")
-                    progress['value'] = 100
-                    progress_win.update()
-                    time.sleep(2)
-                    progress_win.destroy()
-                    
-                    # 询问是否立即运行新版本
-                    should_launch = self._log_popup_confirm("更新完成", 
-                        f"新版本已下载到:\n{downloaded_file}\n\n是否立即运行新版本？")
-                    UpdateManager.schedule_running_executable_deletion(downloaded_file)
-                    if should_launch:
-                        try:
-                            subprocess.Popen([downloaded_file])
-                            self.on_close()
-                        except Exception as e:
-                            logging.error("[Action Log] Failed to launch downloaded update")
-                            self._log_popup_error("启动失败", f"无法启动新版本: {e}")
-                    else:
-                        logging.info("[Action Log] Deferred launching downloaded update")
-                else:
-                    status_label.config(text="下载失败", foreground="red")
-                    progress_win.update()
-                    time.sleep(2)
-                    progress_win.destroy()
-                    self._log_popup_error("更新失败", "下载文件失败，请稍后重试")
-            except Exception as e:
-                logging.error(f"更新过程中出错: {e}")
-                status_label.config(text=f"错误: {str(e)}", foreground="red")
-                progress_win.update()
-                time.sleep(2)
-                progress_win.destroy()
-                self._log_popup_error("更新失败", f"更新过程出错: {str(e)}")
-        
-        thread = Thread(target=do_update, daemon=True)
-        thread.start()
+        return _perform_update_impl(self)
 
     def show_about(self):
         """显示关于对话框"""

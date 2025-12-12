@@ -1255,6 +1255,10 @@ matrix_prob: List[Union[List[float], int]] = []
 scale_prob: List[Union[List[float], int]] = []
 texts: List[List[str]] = []
 texts_prob: List[List[float]] = []
+# 多项填空题：同一题含多个输入框，内部使用 "||" 分隔每个填空项
+MULTI_TEXT_DELIMITER = "||"
+# 与 texts/texts_prob 对齐，记录每道填空题的具体类型（text / multi_text）
+text_entry_types: List[str] = []
 single_option_fill_texts: List[Optional[List[Optional[str]]]] = []
 droplist_option_fill_texts: List[Optional[List[Optional[str]]]] = []
 multiple_option_fill_texts: List[Optional[List[Optional[str]]]] = []
@@ -1585,12 +1589,33 @@ class QuestionEntry:
                 "custom": "自定义配比",
             }.get(mode or "", "平均分配")
 
-        if self.question_type == "text":
-            samples = " | ".join(filter(None, self.texts or []))
+        if self.question_type in ("text", "multi_text"):
+            raw_samples = self.texts or []
+            if self.question_type == "multi_text":
+                formatted_samples: List[str] = []
+                for sample in raw_samples:
+                    try:
+                        text_value = str(sample).strip()
+                    except Exception:
+                        text_value = ""
+                    if not text_value:
+                        continue
+                    if MULTI_TEXT_DELIMITER in text_value:
+                        parts = [part.strip() for part in text_value.split(MULTI_TEXT_DELIMITER)]
+                        parts = [part for part in parts if part]
+                        formatted_samples.append(" / ".join(parts) if parts else text_value)
+                    else:
+                        formatted_samples.append(text_value)
+                samples = " | ".join(formatted_samples)
+            else:
+                samples = " | ".join(filter(None, raw_samples))
             preview = samples if samples else "未设置示例内容"
             if len(preview) > 60:
                 preview = preview[:57] + "..."
-            label = "位置题" if self.is_location else "填空题"
+            if self.is_location:
+                label = "位置题"
+            else:
+                label = "多项填空题" if self.question_type == "multi_text" else "填空题"
             return f"{label}: {preview}"
 
         if self.question_type == "matrix":
@@ -1720,7 +1745,7 @@ def _fill_option_additional_text(driver: BrowserDriver, question_number: int, op
             continue
 
 def configure_probabilities(entries: List[QuestionEntry]):
-    global single_prob, droplist_prob, multiple_prob, matrix_prob, scale_prob, texts, texts_prob
+    global single_prob, droplist_prob, multiple_prob, matrix_prob, scale_prob, texts, texts_prob, text_entry_types
     global single_option_fill_texts, droplist_option_fill_texts, multiple_option_fill_texts
     single_prob = []
     droplist_prob = []
@@ -1729,6 +1754,7 @@ def configure_probabilities(entries: List[QuestionEntry]):
     scale_prob = []
     texts = []
     texts_prob = []
+    text_entry_types = []
     single_option_fill_texts = []
     droplist_option_fill_texts = []
     multiple_option_fill_texts = []
@@ -1757,18 +1783,25 @@ def configure_probabilities(entries: List[QuestionEntry]):
                     matrix_prob.append(-1)
         elif entry.question_type == "scale":
             scale_prob.append(normalize_probabilities(probs) if isinstance(probs, list) else -1)
-        elif entry.question_type == "text":
-            values = entry.texts or []
-            if not values:
+        elif entry.question_type in ("text", "multi_text"):
+            raw_values = entry.texts or []
+            normalized_values: List[str] = []
+            for item in raw_values:
+                try:
+                    text_value = str(item).strip()
+                except Exception:
+                    text_value = ""
+                if text_value:
+                    normalized_values.append(text_value)
+            if not normalized_values:
                 raise ValueError("填空题至少需要一个候选答案")
-            if isinstance(probs, list):
-                if len(probs) != len(values):
-                    raise ValueError("填空题概率数量需与答案数量一致")
-                normalized = normalize_probabilities(probs)
+            if isinstance(probs, list) and len(probs) == len(normalized_values):
+                normalized = normalize_probabilities([float(value) for value in probs])
             else:
-                normalized = normalize_probabilities([1.0] * len(values))
-            texts.append(values)
+                normalized = normalize_probabilities([1.0] * len(normalized_values))
+            texts.append(normalized_values)
             texts_prob.append(normalized)
+            text_entry_types.append(entry.question_type)
 
 
 def decode_qrcode(image_source: Union[str, Image.Image]) -> Optional[str]:
@@ -2213,6 +2246,89 @@ def _extract_jump_rules_from_html(question_div, question_number: int, option_tex
     return has_jump_attr or bool(jump_rules), jump_rules
 
 
+_TEXT_INPUT_ALLOWED_TYPES = {"", "text", "search", "tel", "number"}
+_KNOWN_NON_TEXT_QUESTION_TYPES = {"3", "4", "5", "6", "7", "8", "11"}
+
+
+def _count_text_inputs_in_soup(question_div) -> int:
+    try:
+        candidates = question_div.find_all(["input", "textarea"])
+    except Exception:
+        return 0
+    count = 0
+    for cand in candidates:
+        try:
+            tag_name = (cand.name or "").lower()
+        except Exception:
+            tag_name = ""
+        input_type = ""
+        try:
+            input_type = (cand.get("type") or "").lower()
+        except Exception:
+            input_type = ""
+        if input_type == "hidden":
+            continue
+        if tag_name == "textarea" or (tag_name == "input" and input_type in _TEXT_INPUT_ALLOWED_TYPES):
+            count += 1
+    return count
+
+
+def _count_visible_text_inputs_driver(question_div) -> int:
+    try:
+        candidates = question_div.find_elements(By.CSS_SELECTOR, "input, textarea")
+    except Exception:
+        candidates = []
+    count = 0
+    for cand in candidates:
+        try:
+            tag_name = (cand.tag_name or "").lower()
+        except Exception:
+            tag_name = ""
+        input_type = ""
+        try:
+            input_type = (cand.get_attribute("type") or "").lower()
+        except Exception:
+            input_type = ""
+        if input_type == "hidden":
+            continue
+        if tag_name == "textarea" or (tag_name == "input" and input_type in _TEXT_INPUT_ALLOWED_TYPES):
+            try:
+                if cand.is_displayed():
+                    count += 1
+            except Exception:
+                count += 1
+    return count
+
+
+def _normalize_question_type_code(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        return str(value).strip()
+    except Exception:
+        return ""
+
+
+def _should_treat_question_as_text_like(type_code: Any, option_count: int, text_input_count: int) -> bool:
+    normalized = _normalize_question_type_code(type_code)
+    if normalized in ("1", "2"):
+        return text_input_count > 0
+    if normalized in _KNOWN_NON_TEXT_QUESTION_TYPES:
+        return False
+    return (option_count or 0) == 0 and text_input_count > 0
+
+
+def _should_mark_as_multi_text(type_code: Any, option_count: int, text_input_count: int, is_location: bool) -> bool:
+    if is_location or text_input_count < 2:
+        return False
+    normalized = _normalize_question_type_code(type_code)
+    if normalized in ("1", "2"):
+        return True
+    if normalized in _KNOWN_NON_TEXT_QUESTION_TYPES:
+        return False
+    return (option_count or 0) == 0
+
+
 def parse_survey_questions_from_html(html: str) -> List[Dict[str, Any]]:
     if not BeautifulSoup:
         raise RuntimeError("BeautifulSoup is required for HTML parsing")
@@ -2239,6 +2355,9 @@ def parse_survey_questions_from_html(html: str) -> List[Dict[str, Any]]:
                 soup, question_div, question_number, type_code
             )
             has_jump, jump_rules = _extract_jump_rules_from_html(question_div, question_number, option_texts)
+            text_input_count = _count_text_inputs_in_soup(question_div)
+            is_text_like_question = _should_treat_question_as_text_like(type_code, option_count, text_input_count)
+            is_multi_text = _should_mark_as_multi_text(type_code, option_count, text_input_count, is_location)
             questions_info.append({
                 "num": question_number,
                 "title": title_text,
@@ -2249,6 +2368,9 @@ def parse_survey_questions_from_html(html: str) -> List[Dict[str, Any]]:
                 "option_texts": option_texts,
                 "fillable_options": fillable_indices,
                 "is_location": is_location,
+                "text_inputs": text_input_count,
+                "is_multi_text": is_multi_text,
+                "is_text_like": is_text_like_question,
                 "has_jump": has_jump,
                 "jump_rules": jump_rules,
             })
@@ -2707,13 +2829,87 @@ def _fill_text_question_input(driver: BrowserDriver, element, value: Optional[An
 def vacant(driver: BrowserDriver, current, index):
     answer_candidates = texts[index] if index < len(texts) else [""]
     selection_probabilities = texts_prob[index] if index < len(texts_prob) else [1.0]
+    entry_kind = text_entry_types[index] if index < len(text_entry_types) else "text"
     if not answer_candidates:
         answer_candidates = [""]
     if len(selection_probabilities) != len(answer_candidates):
         selection_probabilities = normalize_probabilities([1.0] * len(answer_candidates))
     selected_index = numpy.random.choice(a=numpy.arange(0, len(selection_probabilities)), p=selection_probabilities)
-    input_element = driver.find_element(By.CSS_SELECTOR, f"#q{current}")
-    _fill_text_question_input(driver, input_element, answer_candidates[selected_index])
+    selected_answer = answer_candidates[selected_index] if answer_candidates else ""
+
+    if entry_kind == "multi_text":
+        raw_text = "" if selected_answer is None else str(selected_answer)
+        if MULTI_TEXT_DELIMITER in raw_text:
+            parts = raw_text.split(MULTI_TEXT_DELIMITER)
+        elif "|" in raw_text:
+            parts = raw_text.split("|")
+        else:
+            parts = [raw_text]
+        values = [part.strip() for part in parts]
+
+        input_elements: List[Any] = []
+        try:
+            question_div = driver.find_element(By.CSS_SELECTOR, f"#div{current}")
+            candidates = question_div.find_elements(By.CSS_SELECTOR, "input, textarea")
+        except Exception:
+            candidates = []
+
+        for candidate in candidates:
+            try:
+                tag_name = (candidate.tag_name or "").lower()
+            except Exception:
+                tag_name = ""
+            input_type = ""
+            try:
+                input_type = (candidate.get_attribute("type") or "").lower()
+            except Exception:
+                input_type = ""
+            if input_type == "hidden":
+                continue
+            if tag_name == "textarea" or (tag_name == "input" and input_type in ("", "text", "search", "tel", "number")):
+                try:
+                    if candidate.is_displayed():
+                        input_elements.append(candidate)
+                except Exception:
+                    input_elements.append(candidate)
+
+        if not input_elements:
+            try:
+                input_elements = [driver.find_element(By.CSS_SELECTOR, f"#q{current}")]
+            except Exception:
+                input_elements = []
+
+        for idx_input, element in enumerate(input_elements):
+            value = values[idx_input] if idx_input < len(values) else DEFAULT_FILL_TEXT
+            if not value:
+                value = DEFAULT_FILL_TEXT
+            _fill_text_question_input(driver, element, value)
+        return
+
+    try:
+        input_element = driver.find_element(By.CSS_SELECTOR, f"#q{current}")
+        _fill_text_question_input(driver, input_element, selected_answer)
+    except Exception:
+        try:
+            question_div = driver.find_element(By.CSS_SELECTOR, f"#div{current}")
+            candidates = question_div.find_elements(By.CSS_SELECTOR, "input, textarea")
+        except Exception:
+            candidates = []
+        for candidate in candidates:
+            try:
+                tag_name = (candidate.tag_name or "").lower()
+            except Exception:
+                tag_name = ""
+            input_type = ""
+            try:
+                input_type = (candidate.get_attribute("type") or "").lower()
+            except Exception:
+                input_type = ""
+            if input_type == "hidden":
+                continue
+            if tag_name == "textarea" or (tag_name == "input" and input_type in ("", "text", "search", "tel", "number")):
+                _fill_text_question_input(driver, candidate, selected_answer)
+                break
 
 
 def single(driver: BrowserDriver, current, index):
@@ -4091,6 +4287,7 @@ TYPE_OPTIONS = [
     ("matrix", "矩阵题"),
     ("scale", "量表题"),
     ("text", "填空题"),
+    ("multi_text", "多项填空题"),
     ("location", "位置题"),
 ]
 
@@ -6152,16 +6349,18 @@ class SurveyGUI:
         
         # 保存状态变量
         state: Dict[str, Any] = {
-            'option_count_var': None,
-            'matrix_rows_var': None,
-            'distribution_var': None,
-            'weights_var': None,
-            'multiple_random_var': None,
-            'answer_vars': None,
-            'weight_frame': None,
-            'current_sliders': None,
-            'is_location': False,
-        }
+             'option_count_var': None,
+             'matrix_rows_var': None,
+             'distribution_var': None,
+             'weights_var': None,
+             'multiple_random_var': None,
+             'answer_vars': None,
+             'weight_frame': None,
+             'current_sliders': None,
+             'is_location': False,
+             'multi_blank_count_var': None,
+             'multi_group_vars': None,
+         }
         
         def refresh_dynamic_content(*args):
             """根据选择的题型刷新动态内容"""
@@ -6193,15 +6392,14 @@ class SurveyGUI:
                     
                     var = tk.StringVar(value=initial_value)
                     entry_widget = ttk.Entry(row_frame, textvariable=var, width=35)
-                    entry_widget.pack(side=tk.LEFT, padx=5)
+                    entry_widget.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
                     
                     def remove_field():
                         row_frame.destroy()
                         state['answer_vars'].remove(var)  # type: ignore
                         update_labels()
                     
-                    if len(state['answer_vars']) > 0:  # type: ignore
-                        ttk.Button(row_frame, text="✖", width=3, command=remove_field).pack(side=tk.LEFT)
+                    ttk.Button(row_frame, text="✖", width=3, command=remove_field).pack(side=tk.RIGHT)
                     
                     state['answer_vars'].append(var)  # type: ignore
                     return var
@@ -6218,7 +6416,7 @@ class SurveyGUI:
                 
                 add_btn_frame = ttk.Frame(dynamic_frame)
                 add_btn_frame.pack(fill=tk.X, pady=(5, 0))
-                ttk.Button(add_btn_frame, text="➕ 添加答案", command=lambda: add_answer_field()).pack(anchor="w")
+                ttk.Button(add_btn_frame, text="+ 添加答案", command=lambda: add_answer_field()).pack(anchor="w")
                 if location_mode:
                     ttk.Label(
                         dynamic_frame,
@@ -6227,6 +6425,116 @@ class SurveyGUI:
                         wraplength=540,
                     ).pack(anchor="w", pady=(6, 0), fill=tk.X)
                 
+            elif q_type == "multi_text":
+                # ===== 多项填空题 =====
+                control_frame = ttk.Frame(dynamic_frame)
+                control_frame.pack(fill=tk.X, pady=5)
+
+                ttk.Label(control_frame, text="填空项数量：", font=("TkDefaultFont", 10, "bold")).pack(side=tk.LEFT, padx=(0, 5))
+                state['multi_blank_count_var'] = tk.StringVar(value="2")  # type: ignore
+
+                def _get_blank_count() -> int:
+                    try:
+                        count = int(state['multi_blank_count_var'].get())  # type: ignore
+                        return max(2, count)
+                    except Exception:
+                        return 2
+
+                def update_blank_count(delta: int):
+                    current_count = _get_blank_count()
+                    new_count = max(2, current_count + delta)
+                    state['multi_blank_count_var'].set(str(new_count))  # type: ignore
+                    refresh_groups()
+
+                ttk.Button(control_frame, text="−", width=3, command=lambda: update_blank_count(-1)).pack(side=tk.LEFT, padx=2)
+                ttk.Entry(control_frame, textvariable=state['multi_blank_count_var'], width=5).pack(side=tk.LEFT, padx=2)  # type: ignore
+                ttk.Button(control_frame, text="+", width=3, command=lambda: update_blank_count(1)).pack(side=tk.LEFT, padx=2)
+
+                ttk.Label(
+                    dynamic_frame,
+                    text="每一行代表一组完整答案，保存后会随机选择一组填写到多个输入框。",
+                    foreground="gray",
+                    wraplength=540,
+                ).pack(anchor="w", pady=(5, 6), fill=tk.X)
+
+                groups_frame = ttk.Frame(dynamic_frame)
+                groups_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+                group_vars: List[List[tk.StringVar]] = []
+                state['multi_group_vars'] = group_vars  # type: ignore
+
+                def add_group(initial_values: Optional[List[str]] = None):
+                    row_frame = ttk.Frame(groups_frame)
+                    row_frame.pack(fill=tk.X, pady=3, padx=5)
+                    row_frame.grid_columnconfigure(1, weight=1)
+
+                    label = ttk.Label(row_frame, text=f"组{len(group_vars)+1}:", width=6)
+                    label.grid(row=0, column=0, sticky="nw")
+
+                    # 创建输入框容器，使用 grid，并为删除按钮保留独立列避免溢出
+                    inputs_frame = ttk.Frame(row_frame)
+                    inputs_frame.grid(row=0, column=1, sticky="ew")
+
+                    # 删除按钮放在右边，确保不被输入框挤出
+                    def remove_group():
+                        row_frame.destroy()
+                        try:
+                            group_vars.remove(vars_row)
+                        except ValueError:
+                            pass
+                        update_group_labels()
+
+                    delete_btn = ttk.Button(row_frame, text="删除", width=5, command=remove_group)
+                    delete_btn.grid(row=0, column=2, padx=(6, 0), sticky="ne")
+
+                    vars_row: List[tk.StringVar] = []
+                    blank_count = _get_blank_count()
+                    max_per_row = 4
+                    for col in range(max_per_row):
+                        inputs_frame.grid_columnconfigure(col, weight=1)
+                    for j in range(blank_count):
+                        init_val = ""
+                        if initial_values and j < len(initial_values):
+                            init_val = initial_values[j]
+                        var = tk.StringVar(value=init_val)
+                        entry_widget = ttk.Entry(inputs_frame, textvariable=var, width=10)
+                        grid_row = j // max_per_row
+                        grid_col = j % max_per_row
+                        entry_widget.grid(row=grid_row, column=grid_col, padx=(0, 4), pady=2, sticky="ew")
+                        vars_row.append(var)
+
+                    group_vars.append(vars_row)
+                    return vars_row
+
+                def update_group_labels():
+                    for i, child in enumerate(groups_frame.winfo_children()):
+                        if child.winfo_children():
+                            label_widget = child.winfo_children()[0]
+                            if isinstance(label_widget, ttk.Label):
+                                label_widget.config(text=f"组{i+1}:")
+
+                def refresh_groups():
+                    blank_count = _get_blank_count()
+                    existing_values: List[List[str]] = []
+                    for vars_row in group_vars:
+                        existing_values.append([v.get() for v in vars_row])
+                    for child in groups_frame.winfo_children():
+                        child.destroy()
+                    group_vars.clear()
+                    if existing_values:
+                        for values in existing_values:
+                            padded = list(values) + [""] * max(0, blank_count - len(values))
+                            add_group(padded[:blank_count])
+                    else:
+                        add_group()
+
+                refresh_groups()
+                state['multi_blank_count_var'].trace_add("write", lambda *args: refresh_groups())  # type: ignore
+
+                add_btn_frame = ttk.Frame(dynamic_frame)
+                add_btn_frame.pack(fill=tk.X, pady=(5, 0))
+                ttk.Button(add_btn_frame, text="+ 添加答案组", command=lambda: add_group()).pack(anchor="w")
+
             elif q_type == "multiple":
                 # ===== 多选题 =====
                 option_control_frame = ttk.Frame(dynamic_frame)
@@ -6245,9 +6553,9 @@ class SurveyGUI:
                     except ValueError:
                         pass
                 
-                ttk.Button(option_control_frame, text="➖", width=3, command=lambda: update_option_count(-1)).pack(side=tk.LEFT, padx=2)
+                ttk.Button(option_control_frame, text="-", width=3, command=lambda: update_option_count(-1)).pack(side=tk.LEFT, padx=2)
                 ttk.Entry(option_control_frame, textvariable=state['option_count_var'], width=5).pack(side=tk.LEFT, padx=2)
-                ttk.Button(option_control_frame, text="➕", width=3, command=lambda: update_option_count(1)).pack(side=tk.LEFT, padx=2)
+                ttk.Button(option_control_frame, text="+", width=3, command=lambda: update_option_count(1)).pack(side=tk.LEFT, padx=2)
                 
                 # 多选方式
                 ttk.Label(dynamic_frame, text="多选方式：", font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=(10, 5), fill=tk.X)
@@ -6317,9 +6625,9 @@ class SurveyGUI:
                     except ValueError:
                         pass
                 
-                ttk.Button(option_control_frame, text="➖", width=3, command=lambda: update_option_count(-1)).pack(side=tk.LEFT, padx=2)
+                ttk.Button(option_control_frame, text="-", width=3, command=lambda: update_option_count(-1)).pack(side=tk.LEFT, padx=2)
                 ttk.Entry(option_control_frame, textvariable=state['option_count_var'], width=5).pack(side=tk.LEFT, padx=2)  # type: ignore
-                ttk.Button(option_control_frame, text="➕", width=3, command=lambda: update_option_count(1)).pack(side=tk.LEFT, padx=2)
+                ttk.Button(option_control_frame, text="+", width=3, command=lambda: update_option_count(1)).pack(side=tk.LEFT, padx=2)
                 
                 # 矩阵行数
                 matrix_row_frame = ttk.Frame(dynamic_frame)
@@ -6337,9 +6645,9 @@ class SurveyGUI:
                     except ValueError:
                         pass
                 
-                ttk.Button(matrix_row_frame, text="➖", width=3, command=lambda: update_matrix_rows(-1)).pack(side=tk.LEFT, padx=2)
+                ttk.Button(matrix_row_frame, text="-", width=3, command=lambda: update_matrix_rows(-1)).pack(side=tk.LEFT, padx=2)
                 ttk.Entry(matrix_row_frame, textvariable=state['matrix_rows_var'], width=5).pack(side=tk.LEFT, padx=2)  # type: ignore
-                ttk.Button(matrix_row_frame, text="➕", width=3, command=lambda: update_matrix_rows(1)).pack(side=tk.LEFT, padx=2)
+                ttk.Button(matrix_row_frame, text="+", width=3, command=lambda: update_matrix_rows(1)).pack(side=tk.LEFT, padx=2)
                 
                 # 分布方式
                 ttk.Label(dynamic_frame, text="选择分布方式：", font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=(10, 5), fill=tk.X)
@@ -6386,9 +6694,9 @@ class SurveyGUI:
                     except ValueError:
                         pass
                 
-                ttk.Button(option_control_frame, text="➖", width=3, command=lambda: update_option_count(-1)).pack(side=tk.LEFT, padx=2)
+                ttk.Button(option_control_frame, text="-", width=3, command=lambda: update_option_count(-1)).pack(side=tk.LEFT, padx=2)
                 ttk.Entry(option_control_frame, textvariable=state['option_count_var'], width=5).pack(side=tk.LEFT, padx=2)  # type: ignore
-                ttk.Button(option_control_frame, text="➕", width=3, command=lambda: update_option_count(1)).pack(side=tk.LEFT, padx=2)
+                ttk.Button(option_control_frame, text="+", width=3, command=lambda: update_option_count(1)).pack(side=tk.LEFT, padx=2)
                 
                 # 分布方式
                 ttk.Label(dynamic_frame, text="选择分布方式：", font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=(10, 5), fill=tk.X)
@@ -6480,6 +6788,23 @@ class SurveyGUI:
                         self._log_popup_error("错误", "请填写至少一个答案")
                         return
                     option_count = len(texts_values)
+                    probabilities = normalize_probabilities([1.0] * option_count)
+                elif q_type == "multi_text":
+                    group_vars = state.get('multi_group_vars') or []
+                    groups: List[str] = []
+                    for vars_row in group_vars:
+                        if not vars_row:
+                            continue
+                        parts = [var.get().strip() for var in vars_row]
+                        if all(not part for part in parts):
+                            continue
+                        normalized_parts = [part if part else DEFAULT_FILL_TEXT for part in parts]
+                        groups.append(MULTI_TEXT_DELIMITER.join(normalized_parts))
+                    if not groups:
+                        self._log_popup_error("错误", "请至少填写一组答案")
+                        return
+                    texts_values = groups
+                    option_count = len(groups)
                     probabilities = normalize_probabilities([1.0] * option_count)
                 elif q_type == "multiple":
                     option_count = int(state['option_count_var'].get())  # type: ignore
@@ -6907,7 +7232,7 @@ class SurveyGUI:
             
             add_btn_frame = ttk.Frame(frame)
             add_btn_frame.pack(fill=tk.X, pady=(5, 0))
-            ttk.Button(add_btn_frame, text="➕ 添加答案", command=lambda: add_answer_field()).pack(anchor="w", fill=tk.X)
+            ttk.Button(add_btn_frame, text="+ 添加答案", command=lambda: add_answer_field()).pack(anchor="w", fill=tk.X)
             
             def save_text():
                 values = [var.get().strip() for var in answer_vars if var.get().strip()]
@@ -6923,6 +7248,154 @@ class SurveyGUI:
             
             _set_save_command(save_text)
             
+        elif entry.question_type == "multi_text":
+            inferred_count = 2
+            existing_groups = entry.texts or []
+            for sample in existing_groups:
+                try:
+                    text_value = str(sample)
+                except Exception:
+                    text_value = ""
+                if MULTI_TEXT_DELIMITER in text_value:
+                    parts_len = len([p for p in text_value.split(MULTI_TEXT_DELIMITER)])
+                    inferred_count = max(inferred_count, parts_len)
+                elif text_value.strip():
+                    inferred_count = max(inferred_count, 1)
+            inferred_count = max(2, inferred_count)
+
+            control_frame = ttk.Frame(frame)
+            control_frame.pack(fill=tk.X, pady=5)
+            ttk.Label(control_frame, text="填空项数量：", font=("TkDefaultFont", 10, "bold")).pack(side=tk.LEFT, padx=(0, 5))
+            blank_count_var = tk.StringVar(value=str(inferred_count))
+
+            def _get_blank_count() -> int:
+                try:
+                    return max(2, int(blank_count_var.get()))
+                except Exception:
+                    return 2
+
+            def _set_blank_count(delta: int):
+                count = _get_blank_count()
+                blank_count_var.set(str(max(2, count + delta)))
+
+            ttk.Button(control_frame, text="−", width=3, command=lambda: _set_blank_count(-1)).pack(side=tk.LEFT, padx=2)
+            ttk.Entry(control_frame, textvariable=blank_count_var, width=5).pack(side=tk.LEFT, padx=2)
+            ttk.Button(control_frame, text="+", width=3, command=lambda: _set_blank_count(1)).pack(side=tk.LEFT, padx=2)
+
+            ttk.Label(
+                frame,
+                text="请按填空顺序填写答案，保存后会随机选择一组填写到输入框。",
+                foreground="gray",
+                wraplength=420,
+            ).pack(anchor="w", pady=(6, 6), fill=tk.X)
+
+            groups_frame = ttk.Frame(frame)
+            groups_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+            group_vars: List[List[tk.StringVar]] = []
+
+            def add_group(initial_values: Optional[List[str]] = None):
+                row_frame = ttk.Frame(groups_frame)
+                row_frame.pack(fill=tk.X, pady=3, padx=5)
+                row_frame.grid_columnconfigure(1, weight=1)
+
+                ttk.Label(row_frame, text=f"组{len(group_vars)+1}:", width=6).grid(row=0, column=0, sticky="nw")
+
+                # 创建输入框容器，使用 grid 布局让输入框自动换行，并为删除按钮预留空间
+                inputs_frame = ttk.Frame(row_frame)
+                inputs_frame.grid(row=0, column=1, sticky="ew")
+
+                vars_row: List[tk.StringVar] = []
+                blank_count = _get_blank_count()
+                max_per_row = 4  # 每行最多显示4个输入框
+                for col in range(max_per_row):
+                    inputs_frame.grid_columnconfigure(col, weight=1)
+                for j in range(blank_count):
+                    init_val = ""
+                    if initial_values and j < len(initial_values):
+                        init_val = initial_values[j]
+                    var = tk.StringVar(value=init_val)
+                    entry_widget = ttk.Entry(inputs_frame, textvariable=var, width=12)
+                    grid_row = j // max_per_row
+                    grid_col = j % max_per_row
+                    entry_widget.grid(row=grid_row, column=grid_col, padx=(0, 6), pady=2, sticky="ew")
+                    vars_row.append(var)
+
+                def remove_group():
+                    row_frame.destroy()
+                    try:
+                        group_vars.remove(vars_row)
+                    except ValueError:
+                        pass
+                    update_group_labels()
+
+                if len(group_vars) > 0:
+                    ttk.Button(row_frame, text="删除", width=5, command=remove_group).grid(row=0, column=2, padx=(6, 0), sticky="ne")
+
+                group_vars.append(vars_row)
+                return vars_row
+
+            def update_group_labels():
+                for i, child in enumerate(groups_frame.winfo_children()):
+                    if child.winfo_children():
+                        label_widget = child.winfo_children()[0]
+                        if isinstance(label_widget, ttk.Label):
+                            label_widget.config(text=f"组{i+1}:")
+
+            def refresh_groups():
+                blank_count = _get_blank_count()
+                existing_values: List[List[str]] = []
+                for vars_row in group_vars:
+                    existing_values.append([v.get() for v in vars_row])
+                for child in groups_frame.winfo_children():
+                    child.destroy()
+                group_vars.clear()
+                if existing_values:
+                    for values in existing_values:
+                        padded = list(values) + [""] * max(0, blank_count - len(values))
+                        add_group(padded[:blank_count])
+                else:
+                    add_group()
+
+            if existing_groups:
+                for text_value in existing_groups:
+                    try:
+                        raw = str(text_value)
+                    except Exception:
+                        raw = ""
+                    parts = [p.strip() for p in raw.split(MULTI_TEXT_DELIMITER)] if raw else []
+                    if not parts:
+                        parts = ["" for _ in range(_get_blank_count())]
+                    add_group(parts)
+            else:
+                add_group()
+
+            blank_count_var.trace_add("write", lambda *args: refresh_groups())
+
+            add_btn_frame = ttk.Frame(frame)
+            add_btn_frame.pack(fill=tk.X, pady=(5, 0))
+            ttk.Button(add_btn_frame, text="+ 添加答案组", command=lambda: add_group()).pack(anchor="w")
+
+            def save_multi_text():
+                groups: List[str] = []
+                for vars_row in group_vars:
+                    parts = [var.get().strip() for var in vars_row]
+                    if all(not part for part in parts):
+                        continue
+                    normalized_parts = [part if part else DEFAULT_FILL_TEXT for part in parts]
+                    groups.append(MULTI_TEXT_DELIMITER.join(normalized_parts))
+                if not groups:
+                    self._log_popup_error("错误", "请至少填写一组答案")
+                    return
+                entry.texts = groups
+                entry.probabilities = normalize_probabilities([1.0] * len(groups))
+                entry.option_count = len(groups)
+                entry.is_location = False
+                self._refresh_tree()
+                _close_edit_window()
+                logging.info(f"[Action Log] Saved multi text answers for question #{index+1}")
+
+            _set_save_command(save_multi_text)
+
         elif entry.question_type == "multiple":
             ttk.Label(frame, text=f"多选题（{entry.option_count}个选项）").pack(anchor="w", pady=5, fill=tk.X)
             ttk.Label(frame, text="设置每个选项的选中概率（0-100%）：",
@@ -7079,6 +7552,7 @@ class SurveyGUI:
             return "可直接列出多个地名，格式为“地名”或“地名|经度,纬度”；未提供经纬度时，系统会自动尝试解析。"
         hints = {
             "text": "可输入多个候选答案，执行时会在这些答案中轮换填写；建议保留能覆盖不同语气的内容。",
+            "multi_text": "多项填空题每一行是一组完整答案，系统会按顺序填入多个输入框。",
             "multiple": "右侧滑块控制每个选项的命中率，百分比越高越常被勾选；可结合下方“选项填写”设置附加文本。",
             "single": "可在“完全随机”和“自定义权重”之间切换，想突出热门选项时直接把滑块调高即可。",
             "dropdown": "与单选题相同，若问卷含“其他”选项，可在底部“附加填空”区写入默认内容。",
@@ -7381,7 +7855,6 @@ class SurveyGUI:
                             title_text = f"第{current_question_num}题"
                         
                         is_location_question = question_type in ("1", "2") and _driver_question_is_location(question_div)
-                        type_name = self._get_question_type_name(question_type, is_location=is_location_question)
                         option_count = 0
                         matrix_rows = 0
                         option_texts = []  # 存储选项文本
@@ -7446,6 +7919,20 @@ class SurveyGUI:
                             if inputs and option_count > 0:
                                 option_fillable_indices.append(option_count - 1)
 
+                        text_input_count = _count_visible_text_inputs_driver(question_div)
+                        is_multi_text_question = _should_mark_as_multi_text(
+                            question_type, option_count, text_input_count, is_location_question
+                        )
+                        is_text_like_question = _should_treat_question_as_text_like(
+                            question_type, option_count, text_input_count
+                        )
+                        type_name = self._get_question_type_name(
+                            question_type,
+                            is_location=is_location_question,
+                            is_multi_text=is_multi_text_question,
+                            is_text_like=is_text_like_question,
+                        )
+
                         has_jump_attr = False
                         try:
                             has_jump_attr = str(question_div.get_attribute("hasjump") or "").strip() == "1"
@@ -7496,6 +7983,9 @@ class SurveyGUI:
                             "option_texts": option_texts,
                             "fillable_options": option_fillable_indices,
                             "is_location": is_location_question,
+                            "text_inputs": text_input_count,
+                            "is_multi_text": is_multi_text_question,
+                            "is_text_like": is_text_like_question,
                             "has_jump": has_jump,
                             "jump_rules": jump_rules,
                         })
@@ -7604,7 +8094,14 @@ class SurveyGUI:
                 return None
             for question in questions_info:
                 is_location = bool(question.get("is_location"))
-                question["type"] = self._get_question_type_name(question.get("type_code"), is_location=is_location)
+                is_multi_text = bool(question.get("is_multi_text"))
+                is_text_like = bool(question.get("is_text_like"))
+                question["type"] = self._get_question_type_name(
+                    question.get("type_code"),
+                    is_location=is_location,
+                    is_multi_text=is_multi_text,
+                    is_text_like=is_text_like,
+                )
             return questions_info
         except Exception as exc:
             logging.debug(f"HTTP 解析问卷失败: {exc}")
@@ -7693,9 +8190,19 @@ class SurveyGUI:
     def _get_preview_button_label(self) -> str:
         return "预览 / 继续配置" if self.question_entries else "⚡ 自动配置问卷"
 
-    def _get_question_type_name(self, type_code, *, is_location: bool = False):
+    def _get_question_type_name(
+        self,
+        type_code,
+        *,
+        is_location: bool = False,
+        is_multi_text: bool = False,
+        is_text_like: bool = False,
+    ):
+        normalized_type = _normalize_question_type_code(type_code)
         if is_location:
             return LOCATION_QUESTION_LABEL
+        if is_multi_text:
+            return "多项填空题"
         type_map = {
             "1": "填空题(单行)",
             "2": "填空题(多行)",
@@ -7707,7 +8214,11 @@ class SurveyGUI:
             "8": "滑块题",
             "11": "排序题"
         }
-        return type_map.get(type_code, f"未知类型({type_code})")
+        if normalized_type in type_map:
+            return type_map[normalized_type]
+        if is_text_like:
+            return "填空题"
+        return f"未知类型({type_code})"
 
     def _show_preview_window(self, questions_info, preserve_existing: bool = False):
         preview_win = tk.Toplevel(self.root)
@@ -7898,10 +8409,12 @@ class SurveyGUI:
             logging.debug("annotate jump impacts failed: %s", exc)
         self._show_wizard_for_question(questions_info, 0)
 
-    def _get_wizard_hint_text(self, type_code: str, *, is_location: bool = False) -> str:
+    def _get_wizard_hint_text(self, type_code: str, *, is_location: bool = False, is_multi_text: bool = False) -> str:
         """为不同题型提供面向用户的操作提示文本。"""
         if is_location:
             return "建议准备多个真实地名，可选用“地名|经度,纬度”格式显式指定坐标；若只填地名，系统会自动尝试地理编码。"
+        if is_multi_text:
+            return "多项填空题会按“答案组”逐项填写到同题的多个输入框中；可添加多组用于随机选择。"
         hints = {
             "1": "填空题建议准备 2~5 个真实可用的答案，点击“添加答案”即可增加内容，后续执行会在这些答案中随机选择。",
             "2": "多行填空通常用于意见反馈，可输入若干句式或话术，系统会自动随机抽取并填写。",
@@ -7929,6 +8442,13 @@ class SurveyGUI:
         q = questions_info[current_index]
         type_code = q["type_code"]
         is_location_question = bool(q.get("is_location"))
+        normalized_type_code = _normalize_question_type_code(type_code)
+        is_multi_text_question = bool(q.get("is_multi_text")) and not is_location_question
+        is_text_like_question = (
+            bool(q.get("is_text_like"))
+            or normalized_type_code in ("1", "2")
+            or is_location_question
+        )
         detected_fillable_indices = q.get('fillable_options') or []
         jump_rules = q.get("jump_rules") or []
         has_jump_logic = bool(q.get("has_jump") or jump_rules)
@@ -8135,7 +8655,11 @@ class SurveyGUI:
                 pady=2
             ).pack(side=tk.LEFT)
 
-        helper_text = self._get_wizard_hint_text(type_code, is_location=is_location_question)
+        helper_text = self._get_wizard_hint_text(
+            type_code,
+            is_location=is_location_question,
+            is_multi_text=is_multi_text_question,
+        )
         if helper_text:
             helper_box = tk.Frame(frame, bg="#fff8e1", highlightbackground="#ffe082", highlightthickness=1)
             helper_box.pack(fill=tk.X, pady=(0, 12))
@@ -8209,7 +8733,101 @@ class SurveyGUI:
             _cleanup_wizard()
             self._show_wizard_for_question(questions_info, current_index + 1)
         
-        if type_code in ("1", "2"):
+        if is_multi_text_question:
+            blank_count = int(q.get("text_inputs") or 0)
+            if blank_count < 2:
+                blank_count = 2
+
+            ttk.Label(config_frame, text="多项填空答案组：", font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=5, fill=tk.X)
+            ttk.Label(
+                config_frame,
+                text=f"本题包含 {blank_count} 个填空项，每一行代表一组完整答案。",
+                foreground="gray",
+                wraplength=700,
+            ).pack(anchor="w", pady=(0, 6), fill=tk.X)
+
+            groups_frame = ttk.Frame(config_frame)
+            groups_frame.pack(fill=tk.BOTH, expand=True, pady=6)
+
+            group_vars: List[List[tk.StringVar]] = []
+
+            def add_group(initial_values: Optional[List[str]] = None):
+                row_frame = ttk.Frame(groups_frame)
+                row_frame.pack(fill=tk.X, pady=3, padx=5)
+
+                # 先添加删除按钮到右边，确保它不被挤出
+                def remove_group():
+                    row_frame.destroy()
+                    try:
+                        group_vars.remove(vars_row)
+                    except ValueError:
+                        pass
+                    update_group_labels()
+
+                delete_btn = ttk.Button(row_frame, text="删除", width=5, command=remove_group)
+                delete_btn.pack(side=tk.RIGHT, padx=(6, 0), anchor="n")
+
+                label = ttk.Label(row_frame, text=f"组{len(group_vars)+1}:", width=6)
+                label.pack(side=tk.LEFT, anchor="n")
+
+                inputs_frame = ttk.Frame(row_frame)
+                inputs_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+                vars_row: List[tk.StringVar] = []
+                max_per_row = 4
+                for j in range(blank_count):
+                    init_val = ""
+                    if initial_values and j < len(initial_values):
+                        init_val = initial_values[j]
+                    var = tk.StringVar(value=init_val)
+                    entry_widget = ttk.Entry(inputs_frame, textvariable=var, width=10)
+                    grid_row = j // max_per_row
+                    grid_col = j % max_per_row
+                    entry_widget.grid(row=grid_row, column=grid_col, padx=(0, 4), pady=2, sticky="ew")
+                    vars_row.append(var)
+
+                group_vars.append(vars_row)
+                return vars_row
+
+            def update_group_labels():
+                for i, child in enumerate(groups_frame.winfo_children()):
+                    if child.winfo_children():
+                        label_widget = child.winfo_children()[0]
+                        if isinstance(label_widget, ttk.Label):
+                            label_widget.config(text=f"组{i+1}:")
+
+            add_group()
+
+            add_btn_frame = ttk.Frame(config_frame)
+            add_btn_frame.pack(fill=tk.X, pady=(5, 0))
+            ttk.Button(add_btn_frame, text="添加答案组", command=lambda: add_group()).pack(anchor="w")
+
+            def save_and_next():
+                groups: List[str] = []
+                for vars_row in group_vars:
+                    parts = [var.get().strip() for var in vars_row]
+                    if all(not part for part in parts):
+                        continue
+                    normalized_parts = [part if part else DEFAULT_FILL_TEXT for part in parts]
+                    groups.append(MULTI_TEXT_DELIMITER.join(normalized_parts))
+                if not groups:
+                    self._log_popup_error("错误", "请至少填写一组答案")
+                    return
+                entry = QuestionEntry(
+                    question_type="multi_text",
+                    probabilities=normalize_probabilities([1.0] * len(groups)),
+                    texts=groups,
+                    rows=1,
+                    option_count=len(groups),
+                    distribution_mode="equal",
+                    custom_weights=None,
+                    is_location=False,
+                )
+                self._handle_auto_config_entry(entry, q)
+                _cleanup_wizard()
+                self._show_wizard_for_question(questions_info, current_index + 1)
+
+        elif is_text_like_question:
             answer_header = "位置候选列表：" if is_location_question else "填空答案列表："
             ttk.Label(config_frame, text=answer_header, font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=5, fill=tk.X)
             
@@ -8249,7 +8867,7 @@ class SurveyGUI:
             
             add_btn_frame = ttk.Frame(config_frame)
             add_btn_frame.pack(fill=tk.X, pady=(5, 0))
-            ttk.Button(add_btn_frame, text="➕ 添加答案", command=lambda: add_answer_field()).pack(anchor="w")
+            ttk.Button(add_btn_frame, text="+ 添加答案", command=lambda: add_answer_field()).pack(anchor="w")
             if is_location_question:
                 ttk.Label(
                     config_frame,

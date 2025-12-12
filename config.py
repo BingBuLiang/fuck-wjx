@@ -198,6 +198,7 @@ QUESTION_TYPE_LABELS = {
     "matrix": "矩阵题",
     "scale": "量表题",
     "text": "填空题",
+    "multi_text": "多项填空题",
 }
 LOCATION_QUESTION_LABEL = "位置题"
 DEFAULT_FILL_TEXT = "无"  # 填空选项留空时的默认文本

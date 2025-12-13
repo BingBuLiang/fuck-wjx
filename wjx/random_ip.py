@@ -1,6 +1,9 @@
+import json
 import logging
+import os
 import random
 import re
+import sys
 import threading
 import time
 from typing import List, Optional, Dict, Any, Set, Callable
@@ -28,6 +31,7 @@ RANDOM_IP_FREE_LIMIT = 20
 CARD_VALIDATION_ENDPOINT = "https://hungrym0.top/password.txt"
 _quota_limit_dialog_shown = False
 _proxy_api_url_override: Optional[str] = None
+_CUSTOM_PROXY_CONFIG_FILENAME = "custom_ip.json"
 
 
 def get_effective_proxy_api_url() -> str:
@@ -49,6 +53,77 @@ def set_proxy_api_override(api_url: Optional[str]) -> str:
     previous = _proxy_api_url_override
     _proxy_api_url_override = cleaned or None
     effective = get_effective_proxy_api_url()
+    return effective
+
+
+def _get_runtime_directory(base_dir: Optional[str] = None) -> str:
+    """
+    获取运行目录，支持 PyInstaller 打包后的运行环境。
+    """
+    if base_dir:
+        return os.fspath(base_dir)
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    return parent_dir or current_dir
+
+
+def get_custom_proxy_api_config_path(base_dir: Optional[str] = None) -> str:
+    """返回保存自定义随机 IP 接口配置的文件路径。"""
+    runtime_dir = _get_runtime_directory(base_dir)
+    return os.path.join(runtime_dir, _CUSTOM_PROXY_CONFIG_FILENAME)
+
+
+def _extract_custom_proxy_api(data: Any) -> str:
+    if isinstance(data, dict):
+        raw = data.get("random_proxy_api") or data.get("api") or data.get("url")
+    else:
+        raw = data
+    try:
+        return str(raw).strip()
+    except Exception:
+        return ""
+
+
+def load_custom_proxy_api_config(
+    config_path: Optional[str] = None,
+    base_dir: Optional[str] = None,
+) -> str:
+    """
+    读取本地自定义随机 IP 接口配置，返回解析后的接口地址字符串（可能为空）。
+    读取成功会同步更新当前生效的接口覆盖值；文件不存在时返回空字符串。
+    """
+    path = os.fspath(config_path) if config_path else get_custom_proxy_api_config_path(base_dir)
+    try:
+        with open(path, "r", encoding="utf-8") as fp:
+            data = json.load(fp)
+    except FileNotFoundError:
+        return ""
+    except Exception as exc:
+        logging.error(f"加载自定义随机IP接口失败: {exc}")
+        return ""
+    api_value = _extract_custom_proxy_api(data)
+    try:
+        set_proxy_api_override(api_value)
+    except Exception:
+        pass
+    return api_value
+
+
+def save_custom_proxy_api_config(
+    api_url: Optional[str],
+    config_path: Optional[str] = None,
+    base_dir: Optional[str] = None,
+) -> str:
+    """
+    保存自定义随机 IP 接口配置到本地文件，并返回最终生效的接口地址。
+    """
+    path = os.fspath(config_path) if config_path else get_custom_proxy_api_config_path(base_dir)
+    effective = set_proxy_api_override(api_url)
+    payload = {"random_proxy_api": api_url}
+    with open(path, "w", encoding="utf-8") as fp:
+        json.dump(payload, fp, ensure_ascii=False, indent=2)
     return effective
 
 

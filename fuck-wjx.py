@@ -195,6 +195,9 @@ from wjx.random_ip import (
     reset_quota_limit_dialog_flag,
     set_proxy_api_override,
     get_effective_proxy_api_url,
+    get_custom_proxy_api_config_path,
+    load_custom_proxy_api_config,
+    save_custom_proxy_api_config,
 )
 
 from wjx.log_utils import (
@@ -5200,7 +5203,10 @@ class SurveyGUI(ConfigPersistenceMixin):
         self.log_dark_mode_var = tk.BooleanVar(value=False)
         self._full_simulation_control_widgets: List[tk.Widget] = []
         self.preview_button: Optional[ttk.Button] = None
-        self._load_custom_ip_config()
+        self._custom_ip_config_path = get_custom_proxy_api_config_path(_get_runtime_directory())
+        loaded_random_ip_api = load_custom_proxy_api_config(config_path=self._custom_ip_config_path)
+        if isinstance(loaded_random_ip_api, str):
+            self.random_ip_api_var.set(loaded_random_ip_api)
         self._build_ui()
         if self._loading_splash:
             self._loading_splash.update_progress(90, "主界面加载完成，即将显示...")
@@ -5814,54 +5820,20 @@ class SurveyGUI(ConfigPersistenceMixin):
         except Exception:
             return ""
 
-    def _get_custom_ip_config_path(self) -> str:
-        return os.path.join(_get_runtime_directory(), "custom_ip.json")
-
-    def _load_custom_ip_config(self) -> str:
-        path = self._get_custom_ip_config_path()
-        try:
-            with open(path, "r", encoding="utf-8") as fp:
-                data = json.load(fp)
-        except FileNotFoundError:
-            return ""
-        except Exception as exc:
-            logging.error(f"加载自定义随机IP接口失败: {exc}")
-            return ""
-        try:
-            if isinstance(data, dict):
-                raw = data.get("random_proxy_api") or data.get("api") or data.get("url")
-                api_value = str(raw).strip() if raw is not None else ""
-            else:
-                api_value = str(data).strip()
-        except Exception:
-            api_value = ""
-        self.random_ip_api_var.set(api_value)
-        try:
-            set_proxy_api_override(api_value)
-        except Exception:
-            pass
-        return api_value
-
-    def _sync_random_ip_api_override(self) -> str:
-        api_value = self._get_random_ip_api_text()
-        try:
-            return set_proxy_api_override(api_value)
-        except Exception:
-            return get_effective_proxy_api_url()
-
     def _save_random_ip_api_setting(self):
-        effective = self._sync_random_ip_api_override()
+        api_value = self._get_random_ip_api_text()
+        config_path = getattr(self, "_custom_ip_config_path", None) or get_custom_proxy_api_config_path(
+            _get_runtime_directory()
+        )
         try:
-            payload = {"random_proxy_api": self._get_random_ip_api_text()}
-            with open(self._get_custom_ip_config_path(), "w", encoding="utf-8") as fp:
-                json.dump(payload, fp, ensure_ascii=False, indent=2)
+            save_custom_proxy_api_config(api_value, config_path=config_path)
             self._log_popup_info(
                 "已保存",
                 (
                     "自定义随机 IP 提取接口已保存并生效。\n"
                     "出于隐私不展示具体地址。\n\n"
                     "提示：修改后需点击“保存”按钮才会生效；留空则继续使用 .env 中的接口配置。\n"
-                    f"保存位置：{self._get_custom_ip_config_path()}"
+                    f"保存位置：{config_path}"
                 ),
             )
         except Exception as exc:

@@ -246,6 +246,44 @@ _MULTI_LIMIT_VALUE_KEYS = (
 
 _MULTI_LIMIT_VALUE_KEYSET = {name.lower() for name in _MULTI_LIMIT_VALUE_KEYS}
 
+_MULTI_MIN_LIMIT_ATTRIBUTE_NAMES = (
+    "min",
+    "minvalue",
+    "minValue",
+    "mincount",
+    "minCount",
+    "minchoice",
+    "minChoice",
+    "minselect",
+    "minSelect",
+    "selectmin",
+    "selectMin",
+    "minsel",
+    "minSel",
+    "minnum",
+    "minNum",
+    "minlimit",
+    "minLimit",
+    "data-min",
+    "data-minvalue",
+    "data-mincount",
+    "data-minchoice",
+    "data-minselect",
+    "data-selectmin",
+)
+
+_MULTI_MIN_LIMIT_VALUE_KEYS = (
+    "min",
+    "minvalue",
+    "mincount",
+    "minchoice",
+    "minselect",
+    "selectmin",
+    "minlimit",
+)
+
+_MULTI_MIN_LIMIT_VALUE_KEYSET = {name.lower() for name in _MULTI_MIN_LIMIT_VALUE_KEYS}
+
 _SELECTION_KEYWORDS_CN = ("选", "選", "选择", "多选", "复选")
 _SELECTION_KEYWORDS_EN = ("option", "options", "choice", "choices", "select", "choose")
 
@@ -254,8 +292,27 @@ _CHINESE_MULTI_LIMIT_PATTERNS = (
     re.compile(r"[选選]\s*(\d+)\s*[个項项]"),
 )
 
+_CHINESE_MULTI_RANGE_PATTERNS = (
+    re.compile(r"(?:请[选選择擇]?[^0-9]{0,4})?(\d+)\s*(?:-|－|—|–|~|～|至|到)\s*(\d+)\s*[个項项条]"),
+    re.compile(r"至少\s*(\d+)\s*[个項项条]?(?:[^0-9]{0,6})(?:最多|至多|不超过|不超過)\s*(\d+)\s*[个項项条]?"),
+    re.compile(r"(?:请[选選择擇]?[^0-9]{0,6})?(\d+)\s*(?:-|－|—|–|~|～|至|到)\s*(\d+)\b"),
+)
+
+_CHINESE_MULTI_MIN_PATTERNS = (
+    re.compile(r"(?:至少|最少|不少于)\s*(\d+)\s*[个項项条]"),
+)
+
 _ENGLISH_MULTI_LIMIT_PATTERNS = (
     re.compile(r"select\s+(?:up\s+to\s+)?(\d+)", re.IGNORECASE),
     re.compile(r"choose\s+(?:up\s+to\s+)?(\d+)", re.IGNORECASE),
     re.compile(r"pick\s+(?:up\s+to\s+)?(\d+)", re.IGNORECASE),
+)
+
+_ENGLISH_MULTI_RANGE_PATTERNS = (
+    re.compile(r"(?:select|choose|pick)\s*(\d+)\s*(?:-|–|—|~|～|to)\s*(\d+)", re.IGNORECASE),
+    re.compile(r"(?:select|choose)\s+between\s+(\d+)\s+and\s+(\d+)", re.IGNORECASE),
+)
+
+_ENGLISH_MULTI_MIN_PATTERNS = (
+    re.compile(r"(?:at\s+least|min(?:imum)?\s*)\s*(\d+)", re.IGNORECASE),
 )

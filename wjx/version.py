@@ -6,7 +6,7 @@
 """
 
 # 版本号
-__VERSION__ = "1.0.6"
+__VERSION__ = "1.1.0-pre1"
 
 # GitHub 仓库配置
 GITHUB_OWNER = "hungryM0"

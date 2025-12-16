@@ -300,10 +300,17 @@ from wjx.config import (
     _MULTI_LIMIT_ATTRIBUTE_NAMES,
     _MULTI_LIMIT_VALUE_KEYS,
     _MULTI_LIMIT_VALUE_KEYSET,
+    _MULTI_MIN_LIMIT_ATTRIBUTE_NAMES,
+    _MULTI_MIN_LIMIT_VALUE_KEYS,
+    _MULTI_MIN_LIMIT_VALUE_KEYSET,
     _SELECTION_KEYWORDS_CN,
     _SELECTION_KEYWORDS_EN,
     _CHINESE_MULTI_LIMIT_PATTERNS,
+    _CHINESE_MULTI_RANGE_PATTERNS,
+    _CHINESE_MULTI_MIN_PATTERNS,
     _ENGLISH_MULTI_LIMIT_PATTERNS,
+    _ENGLISH_MULTI_RANGE_PATTERNS,
+    _ENGLISH_MULTI_MIN_PATTERNS,
 )
 
 _update_boot_splash(55, "正在准备界面配置...")
@@ -556,6 +563,7 @@ BrowserDriver = PlaywrightDriver
 _LOCATION_GEOCODE_CACHE: Dict[str, str] = {}
 _LOCATION_GEOCODE_FAILURES: Set[str] = set()
 _DETECTED_MULTI_LIMITS: Dict[Tuple[str, int], Optional[int]] = {}
+_DETECTED_MULTI_LIMIT_RANGES: Dict[Tuple[str, int], Tuple[Optional[int], Optional[int]]] = {}
 _REPORTED_MULTI_LIMITS: Set[Tuple[str, int]] = set()
 
 
@@ -1903,13 +1911,43 @@ def _count_visible_text_inputs_driver(question_div) -> int:
             contenteditable = (cand.get_attribute("contenteditable") or "").lower() == "true"
         except Exception:
             contenteditable = False
-        if (contenteditable or is_textcont) and tag_name in {"span", "div"}:
-            try:
-                if cand.is_displayed():
+            if (contenteditable or is_textcont) and tag_name in {"span", "div"}:
+                try:
+                    if cand.is_displayed():
+                        count += 1
+                except Exception:
                     count += 1
-            except Exception:
-                count += 1
     return count
+
+
+def _count_choice_inputs_driver(question_div) -> Tuple[int, int]:
+    try:
+        inputs = question_div.find_elements(By.CSS_SELECTOR, "input[type='checkbox'], input[type='radio']")
+    except Exception:
+        inputs = []
+    checkbox_count = 0
+    radio_count = 0
+    for ipt in inputs:
+        try:
+            input_type = (ipt.get_attribute("type") or "").lower()
+        except Exception:
+            input_type = ""
+        try:
+            style_text = (ipt.get_attribute("style") or "").lower()
+        except Exception:
+            style_text = ""
+        if input_type == "hidden" or "display:none" in style_text or "visibility:hidden" in style_text:
+            continue
+        try:
+            if not ipt.is_displayed():
+                continue
+        except Exception:
+            pass
+        if input_type == "checkbox":
+            checkbox_count += 1
+        elif input_type == "radio":
+            radio_count += 1
+    return checkbox_count, radio_count
 
 
 def _normalize_question_type_code(value: Any) -> str:
@@ -2030,31 +2068,52 @@ def _safe_positive_int(value: Any) -> Optional[int]:
     return None
 
 
-def _extract_limit_from_json_obj(obj: Any) -> Optional[int]:
+def _extract_range_from_json_obj(obj: Any) -> Tuple[Optional[int], Optional[int]]:
+    min_limit: Optional[int] = None
+    max_limit: Optional[int] = None
     if isinstance(obj, dict):
         for key, value in obj.items():
             normalized_key = str(key).lower()
+            if normalized_key in _MULTI_MIN_LIMIT_VALUE_KEYSET:
+                candidate = _safe_positive_int(value)
+                if candidate:
+                    min_limit = min_limit or candidate
             if normalized_key in _MULTI_LIMIT_VALUE_KEYSET:
-                limit = _safe_positive_int(value)
-                if limit:
-                    return limit
-            nested = _extract_limit_from_json_obj(value)
-            if nested:
-                return nested
+                candidate = _safe_positive_int(value)
+                if candidate:
+                    max_limit = max_limit or candidate
+            nested_min, nested_max = _extract_range_from_json_obj(value)
+            if min_limit is None and nested_min is not None:
+                min_limit = nested_min
+            if max_limit is None and nested_max is not None:
+                max_limit = nested_max
+            if min_limit is not None and max_limit is not None:
+                break
     elif isinstance(obj, list):
         for item in obj:
-            nested = _extract_limit_from_json_obj(item)
-            if nested:
-                return nested
-    return None
+            nested_min, nested_max = _extract_range_from_json_obj(item)
+            if min_limit is None and nested_min is not None:
+                min_limit = nested_min
+            if max_limit is None and nested_max is not None:
+                max_limit = nested_max
+            if min_limit is not None and max_limit is not None:
+                break
+    return min_limit, max_limit
 
 
-def _extract_limit_from_possible_json(text: Optional[str]) -> Optional[int]:
+def _extract_limit_from_json_obj(obj: Any) -> Optional[int]:
+    _, max_limit = _extract_range_from_json_obj(obj)
+    return max_limit
+
+
+def _extract_range_from_possible_json(text: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
+    min_limit: Optional[int] = None
+    max_limit: Optional[int] = None
     if not text:
-        return None
+        return min_limit, max_limit
     normalized = text.strip()
     if not normalized:
-        return None
+        return min_limit, max_limit
     candidates = [normalized]
     if normalized.startswith("{") and "'" in normalized and '"' not in normalized:
         candidates.append(normalized.replace("'", '"'))
@@ -2063,55 +2122,139 @@ def _extract_limit_from_possible_json(text: Optional[str]) -> Optional[int]:
             parsed = json.loads(candidate)
         except Exception:
             continue
-        limit = _extract_limit_from_json_obj(parsed)
-        if limit:
-            return limit
+        cand_min, cand_max = _extract_range_from_json_obj(parsed)
+        if min_limit is None and cand_min is not None:
+            min_limit = cand_min
+        if max_limit is None and cand_max is not None:
+            max_limit = cand_max
+        if min_limit is not None and max_limit is not None:
+            return min_limit, max_limit
+    for key in _MULTI_MIN_LIMIT_VALUE_KEYSET:
+        pattern = re.compile(rf"{re.escape(key)}\s*[:=]\s*(\d+)", re.IGNORECASE)
+        match = pattern.search(normalized)
+        if match:
+            candidate = _safe_positive_int(match.group(1))
+            if candidate:
+                min_limit = min_limit or candidate
+                if max_limit is not None:
+                    return min_limit, max_limit
     for key in _MULTI_LIMIT_VALUE_KEYSET:
         pattern = re.compile(rf"{re.escape(key)}\s*[:=]\s*(\d+)", re.IGNORECASE)
         match = pattern.search(normalized)
         if match:
-            limit = _safe_positive_int(match.group(1))
-            if limit:
-                return limit
-    return None
+            candidate = _safe_positive_int(match.group(1))
+            if candidate:
+                max_limit = max_limit or candidate
+                if min_limit is not None:
+                    return min_limit, max_limit
+    return min_limit, max_limit
 
 
-def _extract_limit_from_attributes(element) -> Optional[int]:
+def _extract_limit_from_possible_json(text: Optional[str]) -> Optional[int]:
+    _, max_limit = _extract_range_from_possible_json(text)
+    return max_limit
+
+
+def _extract_min_max_from_attributes(element) -> Tuple[Optional[int], Optional[int]]:
+    min_limit = None
+    max_limit = None
+    for attr in _MULTI_MIN_LIMIT_ATTRIBUTE_NAMES:
+        try:
+            raw_value = element.get_attribute(attr)
+        except Exception:
+            continue
+        candidate = _safe_positive_int(raw_value)
+        if candidate:
+            min_limit = candidate
+            break
     for attr in _MULTI_LIMIT_ATTRIBUTE_NAMES:
         try:
             raw_value = element.get_attribute(attr)
         except Exception:
             continue
-        limit = _safe_positive_int(raw_value)
-        if limit:
-            return limit
-    return None
+        candidate = _safe_positive_int(raw_value)
+        if candidate:
+            max_limit = candidate
+            break
+    return min_limit, max_limit
 
 
-def _extract_multi_limit_from_text(text: Optional[str]) -> Optional[int]:
+def _extract_limit_from_attributes(element) -> Optional[int]:
+    _, max_limit = _extract_min_max_from_attributes(element)
+    return max_limit
+
+
+def _extract_multi_limit_range_from_text(text: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
     if not text:
-        return None
+        return None, None
     normalized = text.strip()
     if not normalized:
-        return None
+        return None, None
     normalized_lower = normalized.lower()
+    min_limit: Optional[int] = None
+    max_limit: Optional[int] = None
     contains_cn_keyword = any(keyword in normalized for keyword in _SELECTION_KEYWORDS_CN)
     contains_en_keyword = any(keyword in normalized_lower for keyword in _SELECTION_KEYWORDS_EN)
     if contains_cn_keyword:
+        for pattern in _CHINESE_MULTI_RANGE_PATTERNS:
+            match = pattern.search(normalized)
+            if match:
+                first = _safe_positive_int(match.group(1))
+                second = _safe_positive_int(match.group(2))
+                if first and second:
+                    min_limit = min(first, second)
+                    max_limit = max(first, second)
+                    break
+    if min_limit is None and max_limit is None and contains_en_keyword:
+        for pattern in _ENGLISH_MULTI_RANGE_PATTERNS:
+            match = pattern.search(normalized)
+            if match:
+                first = _safe_positive_int(match.group(1))
+                second = _safe_positive_int(match.group(2))
+                if first and second:
+                    min_limit = min(first, second)
+                    max_limit = max(first, second)
+                    break
+    if min_limit is None and contains_cn_keyword:
+        for pattern in _CHINESE_MULTI_MIN_PATTERNS:
+            match = pattern.search(normalized)
+            if match:
+                candidate = _safe_positive_int(match.group(1))
+                if candidate:
+                    min_limit = candidate
+                    break
+    if max_limit is None and contains_cn_keyword:
         for pattern in _CHINESE_MULTI_LIMIT_PATTERNS:
             match = pattern.search(normalized)
             if match:
-                limit = _safe_positive_int(match.group(1))
-                if limit:
-                    return limit
-    if contains_en_keyword:
-        for pattern in _ENGLISH_MULTI_LIMIT_PATTERNS:
-            match = pattern.search(normalized)
+                candidate = _safe_positive_int(match.group(1))
+                if candidate:
+                    max_limit = candidate
+                    break
+    if min_limit is None and contains_en_keyword:
+        for pattern in _ENGLISH_MULTI_MIN_PATTERNS:
+            match = pattern.search(normalized_lower)
             if match:
-                limit = _safe_positive_int(match.group(1))
-                if limit:
-                    return limit
-    return None
+                candidate = _safe_positive_int(match.group(1))
+                if candidate:
+                    min_limit = candidate
+                    break
+    if max_limit is None and contains_en_keyword:
+        for pattern in _ENGLISH_MULTI_LIMIT_PATTERNS:
+            match = pattern.search(normalized_lower)
+            if match:
+                candidate = _safe_positive_int(match.group(1))
+                if candidate:
+                    max_limit = candidate
+                    break
+    if min_limit is not None and max_limit is not None and min_limit > max_limit:
+        min_limit, max_limit = max_limit, min_limit
+    return min_limit, max_limit
+
+
+def _extract_multi_limit_from_text(text: Optional[str]) -> Optional[int]:
+    _, max_limit = _extract_multi_limit_range_from_text(text)
+    return max_limit
 
 
 def _get_driver_session_key(driver: BrowserDriver) -> str:
@@ -2121,23 +2264,32 @@ def _get_driver_session_key(driver: BrowserDriver) -> str:
     return f"id-{id(driver)}"
 
 
-def detect_multiple_choice_limit(driver: BrowserDriver, question_number: int) -> Optional[int]:
+def detect_multiple_choice_limit_range(driver: BrowserDriver, question_number: int) -> Tuple[Optional[int], Optional[int]]:
     cache_key = (_get_driver_session_key(driver), question_number)
-    if cache_key in _DETECTED_MULTI_LIMITS:
-        return _DETECTED_MULTI_LIMITS[cache_key]
-    limit: Optional[int] = None
+    if cache_key in _DETECTED_MULTI_LIMIT_RANGES:
+        return _DETECTED_MULTI_LIMIT_RANGES[cache_key]
+    min_limit: Optional[int] = None
+    max_limit: Optional[int] = None
     try:
         container = driver.find_element(By.CSS_SELECTOR, f"#div{question_number}")
     except NoSuchElementException:
         container = None
     if container is not None:
-        limit = _extract_limit_from_attributes(container)
-        if limit is None:
+        attr_min, attr_max = _extract_min_max_from_attributes(container)
+        if attr_min is not None:
+            min_limit = attr_min
+        if attr_max is not None:
+            max_limit = attr_max
+        if min_limit is None or max_limit is None:
             for attr_name in ("data", "data-setting", "data-validate"):
-                limit = _extract_limit_from_possible_json(container.get_attribute(attr_name))
-                if limit:
+                cand_min, cand_max = _extract_range_from_possible_json(container.get_attribute(attr_name))
+                if min_limit is None and cand_min is not None:
+                    min_limit = cand_min
+                if max_limit is None and cand_max is not None:
+                    max_limit = cand_max
+                if min_limit is not None and max_limit is not None:
                     break
-        if limit is None:
+        if min_limit is None or max_limit is None:
             fragments: List[str] = []
             for selector in (".qtypetip", ".topichtml", ".field-label"):
                 try:
@@ -2146,25 +2298,52 @@ def detect_multiple_choice_limit(driver: BrowserDriver, question_number: int) ->
                     continue
             fragments.append(container.text)
             for fragment in fragments:
-                limit = _extract_multi_limit_from_text(fragment)
-                if limit:
+                cand_min, cand_max = _extract_multi_limit_range_from_text(fragment)
+                if min_limit is None and cand_min is not None:
+                    min_limit = cand_min
+                if max_limit is None and cand_max is not None:
+                    max_limit = cand_max
+                if min_limit is not None and max_limit is not None:
                     break
-        if limit is None:
+        if min_limit is None or max_limit is None:
             html = container.get_attribute("outerHTML")
-            limit = _extract_limit_from_possible_json(html)
-            if limit is None:
-                limit = _extract_multi_limit_from_text(html)
-    _DETECTED_MULTI_LIMITS[cache_key] = limit
-    return limit
+            cand_min, cand_max = _extract_range_from_possible_json(html)
+            if min_limit is None and cand_min is not None:
+                min_limit = cand_min
+            if max_limit is None and cand_max is not None:
+                max_limit = cand_max
+            if min_limit is None or max_limit is None:
+                cand_min, cand_max = _extract_multi_limit_range_from_text(html)
+                if min_limit is None and cand_min is not None:
+                    min_limit = cand_min
+                if max_limit is None and cand_max is not None:
+                    max_limit = cand_max
+    if min_limit is not None and max_limit is not None and min_limit > max_limit:
+        min_limit, max_limit = max_limit, min_limit
+    _DETECTED_MULTI_LIMIT_RANGES[cache_key] = (min_limit, max_limit)
+    _DETECTED_MULTI_LIMITS[cache_key] = max_limit
+    return min_limit, max_limit
 
 
-def _log_multi_limit_once(driver: BrowserDriver, question_number: int, limit: Optional[int]) -> None:
-    if not limit:
+def detect_multiple_choice_limit(driver: BrowserDriver, question_number: int) -> Optional[int]:
+    _, max_limit = detect_multiple_choice_limit_range(driver, question_number)
+    return max_limit
+
+
+def _log_multi_limit_once(
+    driver: BrowserDriver, question_number: int, min_limit: Optional[int], max_limit: Optional[int]
+) -> None:
+    if min_limit is None and max_limit is None:
         return
     cache_key = (_get_driver_session_key(driver), question_number)
     if cache_key in _REPORTED_MULTI_LIMITS:
         return
-    print(f"第{question_number}题检测到最多可选 {limit} 项，自动限制选择数量。")
+    if min_limit is not None and max_limit is not None:
+        print(f"第{question_number}题检测到需要选择 {min_limit}-{max_limit} 项，自动限制选择数量。")
+    elif max_limit is not None:
+        print(f"第{question_number}题检测到最多可选 {max_limit} 项，自动限制选择数量。")
+    else:
+        print(f"第{question_number}题检测到至少需选择 {min_limit} 项，自动限制选择数量。")
     _REPORTED_MULTI_LIMITS.add(cache_key)
 
 
@@ -3058,17 +3237,19 @@ def multiple(driver: BrowserDriver, current, index):
     option_elements = driver.find_elements(By.XPATH, options_xpath)
     if not option_elements:
         return
-    max_select_limit = detect_multiple_choice_limit(driver, current)
-    if max_select_limit is not None:
-        effective_limit = max(1, min(max_select_limit, len(option_elements)))
-        _log_multi_limit_once(driver, current, max_select_limit)
-    else:
-        effective_limit = len(option_elements)
+    min_select_limit, max_select_limit = detect_multiple_choice_limit_range(driver, current)
+    max_allowed = max_select_limit if max_select_limit is not None else len(option_elements)
+    max_allowed = max(1, min(max_allowed, len(option_elements)))
+    min_required = min_select_limit if min_select_limit is not None else 1
+    min_required = max(1, min(min_required, len(option_elements)))
+    if min_required > max_allowed:
+        min_required = max_allowed
+    _log_multi_limit_once(driver, current, min_select_limit, max_select_limit)
     selection_probabilities = multiple_prob[index] if index < len(multiple_prob) else [50.0] * len(option_elements)
     fill_entries = multiple_option_fill_texts[index] if index < len(multiple_option_fill_texts) else None
 
     if selection_probabilities == -1 or (isinstance(selection_probabilities, list) and len(selection_probabilities) == 1 and selection_probabilities[0] == -1):
-        num_to_select = random.randint(1, max(1, effective_limit))
+        num_to_select = random.randint(min_required, max_allowed)
         selected_indices = random.sample(range(len(option_elements)), num_to_select)
         for option_idx in selected_indices:
             selector = f"#div{current} > div.ui-controlgroup > div:nth-child({option_idx + 1})"
@@ -3076,18 +3257,53 @@ def multiple(driver: BrowserDriver, current, index):
             fill_value = _get_fill_text_from_config(fill_entries, option_idx)
             _fill_option_additional_text(driver, current, option_idx, fill_value)
         return
-    
-    assert len(option_elements) == len(selection_probabilities), f"第{current}题概率值和选项值不一致"
+
+    if len(option_elements) != len(selection_probabilities):
+        logging.warning("第%d题多选概率数量(%d)与选项数量(%d)不一致，自动矫正", current, len(selection_probabilities), len(option_elements))
+        if len(selection_probabilities) > len(option_elements):
+            selection_probabilities = selection_probabilities[: len(option_elements)]
+        else:
+            try:
+                base_prob = max(1.0, max(float(p) for p in selection_probabilities if p is not None))
+            except Exception:
+                base_prob = 100.0
+            padding = [base_prob] * (len(option_elements) - len(selection_probabilities))
+            selection_probabilities = list(selection_probabilities) + padding
+    sanitized_probabilities: List[float] = []
+    for raw_prob in selection_probabilities:
+        try:
+            prob_value = float(raw_prob)
+        except Exception:
+            prob_value = 0.0
+        if math.isnan(prob_value) or math.isinf(prob_value):
+            prob_value = 0.0
+        prob_value = max(0.0, min(100.0, prob_value))
+        sanitized_probabilities.append(prob_value)
+    if not any(value > 0 for value in sanitized_probabilities):
+        sanitized_probabilities = [100.0] * len(option_elements)
+    selection_probabilities = sanitized_probabilities
+
     selection_mask: List[int] = []
-    while sum(selection_mask) == 0:
+    attempts = 0
+    max_attempts = 32
+    while sum(selection_mask) == 0 and attempts < max_attempts:
         selection_mask = [
             numpy.random.choice(a=numpy.arange(0, 2), p=[1 - (prob / 100), prob / 100])
             for prob in selection_probabilities
         ]
+        attempts += 1
+    if sum(selection_mask) == 0:
+        selection_mask = [0] * len(option_elements)
+        selection_mask[random.randrange(len(option_elements))] = 1
     selected_indices = [idx for idx, selected in enumerate(selection_mask) if selected == 1]
-    if max_select_limit is not None and len(selected_indices) > effective_limit:
+    if max_select_limit is not None and len(selected_indices) > max_allowed:
         random.shuffle(selected_indices)
-        selected_indices = selected_indices[:effective_limit]
+        selected_indices = selected_indices[:max_allowed]
+    if len(selected_indices) < min_required:
+        remaining = [i for i in range(len(option_elements)) if i not in selected_indices]
+        random.shuffle(remaining)
+        needed = min_required - len(selected_indices)
+        selected_indices.extend(remaining[:needed])
     if not selected_indices:
         selected_indices = [random.randrange(len(option_elements))]
     for option_idx in selected_indices:
@@ -3150,9 +3366,9 @@ def reorder(driver: BrowserDriver, current):
         container = None
 
     required_count = detect_reorder_required_count(driver, current)
-    max_select_limit = detect_multiple_choice_limit(driver, current)
-    if max_select_limit is not None:
-        _log_multi_limit_once(driver, current, max_select_limit)
+    min_select_limit, max_select_limit = detect_multiple_choice_limit_range(driver, current)
+    if min_select_limit is not None or max_select_limit is not None:
+        _log_multi_limit_once(driver, current, min_select_limit, max_select_limit)
     # 优先使用题目要求数量，其次用最大限制，最后兜底为全部选项
     if required_count is None:
         effective_limit = max_select_limit if max_select_limit is not None else len(order_items)
@@ -3160,6 +3376,8 @@ def reorder(driver: BrowserDriver, current):
         effective_limit = required_count
         if max_select_limit is not None:
             effective_limit = min(effective_limit, max_select_limit)
+    if min_select_limit is not None:
+        effective_limit = max(effective_limit, min_select_limit)
     effective_limit = max(1, min(effective_limit, len(order_items)))
 
     candidate_indices = list(range(len(order_items)))
@@ -3777,9 +3995,27 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
             if _full_simulation_active():
                 if _sleep_with_stop(active_stop, random.uniform(0.8, 1.5)):
                     return False
-            question_type = driver.find_element(
-                By.CSS_SELECTOR, f"#div{current_question_number}"
-            ).get_attribute("type")
+            question_selector = f"#div{current_question_number}"
+            try:
+                question_div = driver.find_element(By.CSS_SELECTOR, question_selector)
+            except Exception:
+                question_div = None
+            if question_div is None:
+                continue
+            question_visible = False
+            for attempt in range(5):
+                try:
+                    if question_div.is_displayed():
+                        question_visible = True
+                        break
+                except Exception:
+                    break
+                if attempt < 4:
+                    time.sleep(0.1)
+            if not question_visible:
+                logging.debug("跳过第%d题（未显示）", current_question_number)
+                continue
+            question_type = question_div.get_attribute("type")
 
             if question_type in ("1", "2"):
                 vacant(driver, current_question_number, vacant_question_index)
@@ -3805,36 +4041,44 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                 reorder(driver, current_question_number)
             else:
                 # 兜底：尝试把未知类型当成填空题/多项填空题处理，避免直接跳过
-                try:
-                    question_div = driver.find_element(By.CSS_SELECTOR, f"#div{current_question_number}")
-                except Exception:
-                    question_div = None
-
-                option_count = 0
+                handled = False
                 if question_div is not None:
-                    try:
-                        option_elements = question_div.find_elements(By.CSS_SELECTOR, ".ui-controlgroup > div")
-                        option_count = len(option_elements)
-                    except Exception:
-                        option_count = 0
-                text_input_count = _count_visible_text_inputs_driver(question_div) if question_div is not None else 0
-                is_location_question = _driver_question_is_location(question_div) if question_div is not None else False
-                is_multi_text_question = _should_mark_as_multi_text(
-                    question_type, option_count, text_input_count, is_location_question
-                )
-                is_text_like_question = _should_treat_question_as_text_like(
-                    question_type, option_count, text_input_count
-                )
+                    checkbox_count, radio_count = _count_choice_inputs_driver(question_div)
+                    if checkbox_count or radio_count:
+                        if checkbox_count >= radio_count:
+                            multiple(driver, current_question_number, multiple_question_index)
+                            multiple_question_index += 1
+                        else:
+                            single(driver, current_question_number, single_question_index)
+                            single_question_index += 1
+                        handled = True
 
-                if is_text_like_question:
-                    vacant(driver, current_question_number, vacant_question_index)
-                    vacant_question_index += 1
-                    print(
-                        f"第{current_question_number}题识别为"
-                        f"{'多项填空' if is_multi_text_question else '填空'}，已按填空题处理"
+                if not handled:
+                    option_count = 0
+                    if question_div is not None:
+                        try:
+                            option_elements = question_div.find_elements(By.CSS_SELECTOR, ".ui-controlgroup > div")
+                            option_count = len(option_elements)
+                        except Exception:
+                            option_count = 0
+                    text_input_count = _count_visible_text_inputs_driver(question_div) if question_div is not None else 0
+                    is_location_question = _driver_question_is_location(question_div) if question_div is not None else False
+                    is_multi_text_question = _should_mark_as_multi_text(
+                        question_type, option_count, text_input_count, is_location_question
                     )
-                else:
-                    print(f"第{current_question_number}题为不支持类型(type={question_type})")
+                    is_text_like_question = _should_treat_question_as_text_like(
+                        question_type, option_count, text_input_count
+                    )
+
+                    if is_text_like_question:
+                        vacant(driver, current_question_number, vacant_question_index)
+                        vacant_question_index += 1
+                        print(
+                            f"第{current_question_number}题识别为"
+                            f"{'多项填空' if is_multi_text_question else '填空'}，已按填空题处理"
+                        )
+                    else:
+                        print(f"第{current_question_number}题为不支持类型(type={question_type})")
         if _full_simulation_active():
             _human_scroll_after_question(driver)
         if (

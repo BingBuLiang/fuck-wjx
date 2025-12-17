@@ -193,7 +193,6 @@ from wjx.random_ip import (
     handle_random_ip_submission,
     normalize_random_ip_enabled_value,
     reset_quota_limit_dialog_flag,
-    set_proxy_api_override,
     get_effective_proxy_api_url,
     get_custom_proxy_api_config_path,
     load_custom_proxy_api_config,
@@ -3042,17 +3041,85 @@ def vacant(driver: BrowserDriver, current, index):
 
 
 def single(driver: BrowserDriver, current, index):
-    options_xpath = f'//*[@id="div{current}"]/div[2]/div'
-    option_elements = driver.find_elements(By.XPATH, options_xpath)
+    # 兼容不同模板下的单选题 DOM 结构，按优先级收集可点击的选项节点
+    option_elements: List[Any] = []
+    probe_xpaths = [
+        f'//*[@id="div{current}"]/div[2]/div',
+        f'//*[@id="div{current}"]//div[contains(@class,"ui-radio")]',
+        f'//*[@id="div{current}"]//div[contains(@class,"jqradio")]',
+        f'//*[@id="div{current}"]//li[contains(@class,"option") or contains(@class,"radio")]/label',
+        f'//*[@id="div{current}"]//label[contains(@class,"radio") or contains(@class,"option")]',
+    ]
+    seen: Set[Any] = set()
+    for xpath in probe_xpaths:
+        try:
+            found = driver.find_elements(By.XPATH, xpath)
+        except Exception:
+            found = []
+        for elem in found:
+            try:
+                if not elem.is_displayed():
+                    continue
+            except Exception:
+                pass
+            if elem not in seen:
+                seen.add(elem)
+                option_elements.append(elem)
+    if not option_elements:
+        try:
+            radios = driver.find_elements(By.XPATH, f'//*[@id="div{current}"]//input[@type="radio"]')
+        except Exception:
+            radios = []
+        for radio in radios:
+            try:
+                if not radio.is_displayed():
+                    continue
+            except Exception:
+                pass
+            if radio not in seen:
+                seen.add(radio)
+                option_elements.append(radio)
+    if not option_elements:
+        logging.warning(f"第{current}题未找到任何单选选项，已跳过该题。")
+        return
     probabilities = single_prob[index] if index < len(single_prob) else -1
     if probabilities == -1:
         selected_option = random.randint(1, len(option_elements))
     else:
-        assert len(probabilities) == len(option_elements), f"第{current}题参数长度：{len(probabilities)},选项长度{len(option_elements)},不一致！"
-        selected_option = numpy.random.choice(a=numpy.arange(1, len(option_elements) + 1), p=probabilities)
-    driver.find_element(
-        By.CSS_SELECTOR, f"#div{current} > div.ui-controlgroup > div:nth-child({selected_option})"
-    ).click()
+        if len(probabilities) != len(option_elements):
+            logging.warning(
+                "单选题概率配置与选项数不一致（题号%s，概率数%s，选项数%s），已改为平均随机选择。",
+                current,
+                len(probabilities),
+                len(option_elements),
+            )
+            selected_option = random.randint(1, len(option_elements))
+        else:
+            selected_option = numpy.random.choice(a=numpy.arange(1, len(option_elements) + 1), p=probabilities)
+    target_index = selected_option - 1
+    target_elem = option_elements[target_index] if target_index < len(option_elements) else None
+    clicked = False
+    if target_elem:
+        try:
+            target_elem.click()
+            clicked = True
+        except Exception as exc:
+            logging.debug("单选题直接点击失败（题号%s，索引%s）：%s", current, selected_option, exc)
+            try:
+                inner_radio = target_elem.find_element(By.XPATH, ".//input[@type='radio']")
+                inner_radio.click()
+                clicked = True
+            except Exception:
+                pass
+    if not clicked:
+        try:
+            driver.find_element(
+                By.CSS_SELECTOR, f"#div{current} > div.ui-controlgroup > div:nth-child({selected_option})"
+            ).click()
+            clicked = True
+        except Exception as exc:
+            logging.warning("单选题默认选择器点击失败（题号%s，索引%s）：%s", current, selected_option, exc)
+            return
     fill_entries = single_option_fill_texts[index] if index < len(single_option_fill_texts) else None
     fill_value = _get_fill_text_from_config(fill_entries, selected_option - 1)
     _fill_option_additional_text(driver, current, selected_option - 1, fill_value)
@@ -9140,8 +9207,6 @@ class SurveyGUI(ConfigPersistenceMixin):
                 need_count = 1
             need_count = max(1, need_count)
             proxy_api = ctx.get("random_proxy_api")
-            if proxy_api is not None:
-                set_proxy_api_override(proxy_api)
             proxy_pool = _fetch_new_proxy_batch(expected_count=need_count, proxy_url=proxy_api)
         except (OSError, ValueError, RuntimeError) as exc:
             self.root.after(0, lambda: self._on_proxy_load_failed(str(exc)))

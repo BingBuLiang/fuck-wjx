@@ -8940,6 +8940,7 @@ class SurveyGUI(ConfigPersistenceMixin):
             phone_keywords = ("手机号", "手机号码", "电话", "联系电话", "联系方式", "mobile", "phone")
             has_name_hint = any(keyword in normalized_title for keyword in name_keywords)
             has_phone_hint = any(keyword in normalized_title for keyword in phone_keywords)
+            allow_random_fill = has_name_hint or has_phone_hint
 
             mode_var = tk.StringVar(value="custom")
 
@@ -8985,14 +8986,14 @@ class SurveyGUI(ConfigPersistenceMixin):
                     return "__RANDOM_NAME__"
                 if has_phone_hint:
                     return "__RANDOM_MOBILE__"
-                return "__RANDOM_TEXT__"
+                return DEFAULT_FILL_TEXT
 
             mode_frame = ttk.Frame(config_frame)
             mode_frame.pack(fill=tk.X, pady=(0, 6))
 
             ttk.Radiobutton(
                 mode_frame,
-                text="每次随机填入",
+                text="每次随机填入" if allow_random_fill else f"填入“{DEFAULT_FILL_TEXT}”",
                 variable=mode_var,
                 value="random",
                 command=ensure_custom_frame_visibility,

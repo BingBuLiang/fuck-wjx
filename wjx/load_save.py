@@ -5,48 +5,26 @@ import logging
 import os
 import random
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple
 
 import tkinter as tk
 from tkinter import filedialog
 
 from wjx.config import DEFAULT_RANDOM_UA_KEYS, USER_AGENT_PRESETS
 from wjx.random_ip import normalize_random_ip_enabled_value
+from wjx.runtime import get_runtime_directory
 
 __all__ = [
     "_sanitize_filename",
     "_filter_valid_user_agent_keys",
     "_select_user_agent_from_keys",
     "ConfigPersistenceMixin",
-    "set_question_entry_class",
-    "set_runtime_directory_getter",
 ]
-
-QuestionEntry = None  # 运行时由主程序注入
-
-
-def _missing_runtime_directory() -> str:
-    raise RuntimeError("runtime helper '_get_runtime_directory' 未注入")
-
-
-_get_runtime_directory = _missing_runtime_directory
-
-
-def set_question_entry_class(cls: Type[Any]) -> None:
-    """由外部注入 QuestionEntry dataclass。"""
-    global QuestionEntry
-    QuestionEntry = cls
-
-
-def set_runtime_directory_getter(func: Callable[[], str]) -> None:
-    """由外部注入运行目录解析函数。"""
-    global _get_runtime_directory
-    _get_runtime_directory = func
 
 
 def _ensure_question_entry_class():
-    if QuestionEntry is None:
-        raise RuntimeError("QuestionEntry 类尚未注入")
+    from wjx.engine import QuestionEntry
+
     return QuestionEntry
 
 
@@ -79,11 +57,11 @@ class ConfigPersistenceMixin:
     """封装配置加载与保存的通用逻辑，供 GUI 复用。"""
 
     def _get_config_path(self) -> str:
-        return os.path.join(_get_runtime_directory(), "config.json")
+        return os.path.join(get_runtime_directory(), "config.json")
 
     def _get_configs_directory(self) -> str:
         """返回多配置保存目录，并在需要时创建。"""
-        configs_dir = os.path.join(_get_runtime_directory(), "configs")
+        configs_dir = os.path.join(get_runtime_directory(), "configs")
         os.makedirs(configs_dir, exist_ok=True)
         return configs_dir
 

@@ -599,6 +599,7 @@ fail_threshold = 1
 num_threads = 1
 cur_num = 0
 cur_fail = 0
+stop_on_fail_enabled = True
 submit_interval_range_seconds: Tuple[int, int] = (0, 0)
 answer_duration_range_seconds: Tuple[int, int] = (0, 0)
 lock = threading.Lock()
@@ -626,6 +627,26 @@ def _is_fast_mode() -> bool:
         and submit_interval_range_seconds == (0, 0)
         and answer_duration_range_seconds == (0, 0)
     )
+
+
+def _handle_submission_failure(stop_signal: Optional[threading.Event]) -> bool:
+    """
+    递增失败计数；当开启失败止损时超过阈值会触发停止。
+    返回 True 表示已触发强制停止。
+    """
+    global cur_fail
+    with lock:
+        cur_fail += 1
+        if stop_on_fail_enabled:
+            print(f"已失败{cur_fail}次, 失败次数达到{int(fail_threshold)}次将强制停止")
+        else:
+            print(f"已失败{cur_fail}次（失败止损已关闭）")
+    if stop_on_fail_enabled and cur_fail >= fail_threshold:
+        logging.critical("失败次数过多，强制停止，请检查配置是否正确")
+        if stop_signal:
+            stop_signal.set()
+        return True
+    return False
 
 
 def _trigger_aliyun_captcha_stop(
@@ -4109,35 +4130,20 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 continue
 
             driver_had_error = True
-            with lock:
-                cur_fail += 1
-                print(f"已失败{cur_fail}次, 失败次数达到{int(fail_threshold)}次将强制停止")
-            if cur_fail >= fail_threshold:
-                logging.critical("失败次数过多，强制停止，请检查配置是否正确")
-                stop_signal.set()
+            if _handle_submission_failure(stop_signal):
                 break
         except EmptySurveySubmissionError:
             driver_had_error = True
             if stop_signal.is_set():
                 break
-            with lock:
-                cur_fail += 1
-                print(f"已失败{cur_fail}次, 失败次数达到{int(fail_threshold)}次将强制停止")
-            if cur_fail >= fail_threshold:
-                logging.critical("失败次数过多，强制停止，请检查配置是否正确")
-                stop_signal.set()
+            if _handle_submission_failure(stop_signal):
                 break
         except Exception:
             driver_had_error = True
             if stop_signal.is_set():
                 break
             traceback.print_exc()
-            with lock:
-                cur_fail += 1
-                print(f"已失败{cur_fail}次, 失败次数达到{int(fail_threshold)}次将强制停止")
-            if cur_fail >= fail_threshold:
-                logging.critical("失败次数过多，强制停止，请检查配置是否正确")
-                stop_signal.set()
+            if _handle_submission_failure(stop_signal):
                 break
         finally:
             if driver_had_error:

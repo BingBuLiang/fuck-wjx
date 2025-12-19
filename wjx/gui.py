@@ -194,7 +194,8 @@ class SurveyGUI(ConfigPersistenceMixin):
         """启动 UI 任务队列的轮询，确保在关闭前始终运行。"""
         if getattr(self, "_ui_task_job", None):
             try:
-                self.root.after_cancel(self._ui_task_job)
+                if self._ui_task_job is not None:
+                    self.root.after_cancel(self._ui_task_job)
             except Exception:
                 pass
         try:
@@ -817,6 +818,7 @@ class SurveyGUI(ConfigPersistenceMixin):
         self.random_ua_windows_wechat_var = tk.BooleanVar(value=False)
         self.random_ua_mac_web_var = tk.BooleanVar(value=False)
         self.random_ip_enabled_var = tk.BooleanVar(value=False)
+        self.fail_stop_enabled_var = tk.BooleanVar(value=True)
         self.random_ip_api_var = tk.StringVar(value="")
         self.full_simulation_enabled_var = tk.BooleanVar(value=False)
         self.full_sim_target_var = tk.StringVar(value="")
@@ -1082,6 +1084,7 @@ class SurveyGUI(ConfigPersistenceMixin):
         ):
             _ua_var.trace_add("write", lambda *args: self._mark_config_changed())
         self.random_ip_enabled_var.trace_add("write", lambda *args: self._mark_config_changed())
+        self.fail_stop_enabled_var.trace_add("write", lambda *args: self._mark_config_changed())
         self.full_sim_target_var.trace_add("write", lambda *args: self._on_full_sim_target_changed())
         self.full_sim_estimated_minutes_var.trace("w", lambda *args: self._mark_config_changed())
         self.full_sim_estimated_seconds_var.trace("w", lambda *args: self._mark_config_changed())
@@ -1133,7 +1136,14 @@ class SurveyGUI(ConfigPersistenceMixin):
         )
         random_ip_toggle.pack(side=tk.LEFT)
         self._random_ip_toggle_widget = random_ip_toggle
-        self._main_parameter_widgets.extend([random_ip_toggle])
+        fail_stop_toggle = ttk.Checkbutton(
+            random_ip_frame,
+            text="失败过多自动停止",
+            variable=self.fail_stop_enabled_var,
+        )
+        fail_stop_toggle.pack(side=tk.LEFT, padx=(12, 0))
+        self._fail_stop_toggle_widget = fail_stop_toggle
+        self._main_parameter_widgets.extend([random_ip_toggle, fail_stop_toggle])
 
         # 随机IP计数显示和管理
         ip_counter_frame = ttk.Frame(step3_frame)
@@ -1381,6 +1391,7 @@ class SurveyGUI(ConfigPersistenceMixin):
             allowed_when_locked.extend(
                 [
                     getattr(self, "_random_ip_toggle_widget", None),
+                    getattr(self, "_fail_stop_toggle_widget", None),
                 ]
             )
             allowed_when_locked.extend(getattr(self, "_random_ua_option_widgets", []))
@@ -4839,6 +4850,7 @@ class SurveyGUI(ConfigPersistenceMixin):
             "random_proxy_flag": random_proxy_flag,
             "random_ua_flag": random_ua_flag,
             "random_ua_keys_list": random_ua_keys_list,
+            "fail_stop_enabled": bool(self.fail_stop_enabled_var.get()),
             "random_proxy_api": effective_proxy_api,
         }
         if random_proxy_flag:
@@ -4884,6 +4896,7 @@ class SurveyGUI(ConfigPersistenceMixin):
             self._schedule_log_refresh()
         random_proxy_flag = bool(ctx.get("random_proxy_flag"))
         random_ua_flag = bool(ctx.get("random_ua_flag"))
+        fail_stop_enabled = bool(ctx.get("fail_stop_enabled", True))
         random_ua_keys_list = ctx.get("random_ua_keys_list", [])
         if random_proxy_flag:
             logging.info(f"[Action Log] 启用随机代理 IP（每个浏览器独立分配），已预取 {len(proxy_pool)} 条（{PROXY_REMOTE_URL}）")
@@ -4920,7 +4933,7 @@ class SurveyGUI(ConfigPersistenceMixin):
             f"[Action Log] Starting run url={url_value} target={target} threads={threads_count}"
         )
 
-        global url, target_num, num_threads, fail_threshold, cur_num, cur_fail, stop_event, submit_interval_range_seconds, answer_duration_range_seconds, full_simulation_enabled, full_simulation_estimated_seconds, full_simulation_total_duration_seconds, random_proxy_ip_enabled, proxy_ip_pool, random_user_agent_enabled, user_agent_pool_keys, _aliyun_captcha_stop_triggered, _target_reached_stop_triggered, _resume_after_aliyun_captcha_stop, _resume_snapshot
+        global url, target_num, num_threads, fail_threshold, cur_num, cur_fail, stop_event, submit_interval_range_seconds, answer_duration_range_seconds, full_simulation_enabled, full_simulation_estimated_seconds, full_simulation_total_duration_seconds, random_proxy_ip_enabled, proxy_ip_pool, random_user_agent_enabled, user_agent_pool_keys, stop_on_fail_enabled, _aliyun_captcha_stop_triggered, _target_reached_stop_triggered, _resume_after_aliyun_captcha_stop, _resume_snapshot
         url = url_value
         target_num = target
         # 强制限制线程数不超过12，确保用户电脑流畅
@@ -4932,6 +4945,7 @@ class SurveyGUI(ConfigPersistenceMixin):
         proxy_ip_pool = proxy_pool if random_proxy_flag else []
         random_user_agent_enabled = random_ua_flag
         user_agent_pool_keys = random_ua_keys_list
+        stop_on_fail_enabled = fail_stop_enabled
         # 从 engine 模块获取当前值，或初始化为 0
         cur_num = getattr(engine, 'cur_num', 0)
         cur_fail = getattr(engine, 'cur_fail', 0)
@@ -4952,6 +4966,7 @@ class SurveyGUI(ConfigPersistenceMixin):
         engine.proxy_ip_pool = proxy_ip_pool
         engine.random_user_agent_enabled = random_user_agent_enabled
         engine.user_agent_pool_keys = user_agent_pool_keys
+        engine.stop_on_fail_enabled = stop_on_fail_enabled
         engine._aliyun_captcha_stop_triggered = _aliyun_captcha_stop_triggered
         engine._target_reached_stop_triggered = _target_reached_stop_triggered
         engine._resume_after_aliyun_captcha_stop = _resume_after_aliyun_captcha_stop
@@ -5339,7 +5354,8 @@ class SurveyGUI(ConfigPersistenceMixin):
         self._closing = True
         if getattr(self, "_ui_task_job", None):
             try:
-                self.root.after_cancel(self._ui_task_job)
+                if self._ui_task_job is not None:
+                    self.root.after_cancel(self._ui_task_job)
             except Exception:
                 pass
             self._ui_task_job = None

@@ -73,6 +73,7 @@ class ConfigPersistenceMixin:
         target_var: tk.StringVar
         thread_var: tk.StringVar
         random_ip_enabled_var: tk.BooleanVar
+        fail_stop_enabled_var: tk.BooleanVar
         interval_minutes_var: tk.StringVar
         interval_seconds_var: tk.StringVar
         interval_max_minutes_var: tk.StringVar
@@ -153,6 +154,7 @@ class ConfigPersistenceMixin:
             "random_user_agent": self._serialize_random_ua_config(),
             "wechat_login_bypass_enabled": wechat_login_bypass_enabled,
             "random_proxy_enabled": bool(self.random_ip_enabled_var.get()),
+            "fail_stop_enabled": bool(self.fail_stop_enabled_var.get()),
             "paned_position": paned_sash_pos,
             "questions": [
                 {
@@ -423,6 +425,10 @@ class ConfigPersistenceMixin:
             )
 
             self.random_ip_enabled_var.set(random_proxy_enabled_in_config)
+            try:
+                self.fail_stop_enabled_var.set(bool(config.get("fail_stop_enabled", True)))
+            except Exception:
+                self.fail_stop_enabled_var.set(True)
             wechat_login_bypass_var = getattr(self, "wechat_login_bypass_enabled_var", None)
             if wechat_login_bypass_var is not None:
                 try:
@@ -613,6 +619,7 @@ class ConfigPersistenceMixin:
             "full_simulation": self._serialize_full_simulation_config(),
             "random_user_agent": self._serialize_random_ua_config(),
             "random_proxy_enabled": bool(self.random_ip_enabled_var.get()),
+            "fail_stop_enabled": bool(self.fail_stop_enabled_var.get()),
             "questions": [
                 {
                     "question_type": entry.question_type,
@@ -646,6 +653,7 @@ class ConfigPersistenceMixin:
             "full_simulation": self._serialize_full_simulation_config(),
             "random_user_agent": self._serialize_random_ua_config(),
             "random_proxy_enabled": bool(self.random_ip_enabled_var.get()),
+            "fail_stop_enabled": bool(self.fail_stop_enabled_var.get()),
             "questions": [
                 {
                     "question_type": entry.question_type,

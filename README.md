@@ -17,7 +17,9 @@ This project is a fun extension with new features, providing a GUI for configuri
 - 😄 Free and unlimited - no need to beg friends or groups
 - 🧑‍🤝‍🧑 Auto-parse question content and preset answers through configuration wizard, adjust option probabilities and ratios
 - 🚀 Reduced waiting time after submission, faster survey filling
-- 🌐 Simulates browser UA to bypass WeChat-only submission restrictions
+- 🎭 Full simulation mode: simulate real human behavior with typing delays and mouse movements for more natural submissions
+- 🌍 Random IP submission: bypass IP restrictions、Captcher
+- ⏸️ Stop anytime: gracefully stop execution at any time without losing progress
 - 📁 Save survey configurations for reusing answer strategies on the same survey
 
 <img width="600" height="505" alt="QQ20251207-110703" src="https://github.com/user-attachments/assets/9e376c4f-43bc-4e97-b9b2-55f44d6d8c3f" />
@@ -126,10 +128,23 @@ Before tweaking these controls make sure the survey has been parsed via the conf
   - Click this button anytime you change the survey link; the tool will visit the page, detect question types, and apply an initial strategy.
   - Some surveys require login or additional verification; if parsing fails, verify the link, cookies, or whether the survey is private.
 
+- `Full Simulation Settings`
+  - Enable "Full Simulation Mode" to mimic real human filling behavior with natural typing speed and mouse movements.
+  - Set the total time duration (hours:minutes:seconds) for completing all submissions to distribute them evenly over time.
+  - This mode significantly reduces detection risk but takes longer to complete.
+
+- `Random IP Submission`
+  - Check "Enable Random IP Submission" to bypass IP-based restrictions.
+  - Useful when surveys have strict IP limits, but comes with additional costs.
+
+- `Auto-Stop on Failures`
+  - Enable "Auto-stop on too many failures" to automatically halt execution if consecutive failures exceed a threshold.
+  - Prevents wasting resources when surveys become inaccessible or change their structure.
+
 - `Start Execution`
   - After checking all inputs, hit "Start Execution" to let the bot auto-fill submissions according to your target count and strategy.
   - The log area on the right shows progress, success count, and any errors during runtime.
-  - Use the built-in "Stop" button or close the window to halt the process immediately if needed.
+  - Use the "Stop" button to gracefully halt execution at any time - the system will wait for active threads to finish safely.
 
 ---
 

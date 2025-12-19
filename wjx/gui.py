@@ -4123,7 +4123,9 @@ class SurveyGUI(ConfigPersistenceMixin):
                 inline_row.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(2, 4))
                 ttk.Label(inline_row, text="附加填空：").pack(side=tk.LEFT)
                 var = tk.StringVar(value='')
-                ttk.Entry(inline_row, textvariable=var, width=32).pack(side=tk.LEFT, padx=(6, 6), fill=tk.X, expand=True)
+                entry_widget = ttk.Entry(inline_row, textvariable=var, width=32)
+                entry_widget.pack(side=tk.LEFT, padx=(6, 6), fill=tk.X, expand=True)
+                self._bind_ime_candidate_position(entry_widget)
                 ttk.Label(inline_row, text='留空将自动填“无”', foreground='gray').pack(side=tk.LEFT)
                 fill_vars[opt_index] = var
 
@@ -4207,6 +4209,7 @@ class SurveyGUI(ConfigPersistenceMixin):
                     grid_row = j // max_per_row
                     grid_col = j % max_per_row
                     entry_widget.grid(row=grid_row, column=grid_col, padx=(0, 4), pady=2, sticky="ew")
+                    self._bind_ime_candidate_position(entry_widget)
                     vars_row.append(var)
 
                 group_vars.append(vars_row)
@@ -4273,6 +4276,7 @@ class SurveyGUI(ConfigPersistenceMixin):
                 var = tk.StringVar(value=initial_value)
                 entry_widget = ttk.Entry(row_frame, textvariable=var, width=35)
                 entry_widget.pack(side=tk.LEFT, padx=5)
+                self._bind_ime_candidate_position(entry_widget)
 
                 def remove_field():
                     row_frame.destroy()
@@ -5331,6 +5335,169 @@ class SurveyGUI(ConfigPersistenceMixin):
             except Exception:
                 pass
         self.root.destroy()
+
+    def _bind_ime_candidate_position(self, widget: tk.Widget) -> None:
+        """
+        尽量让 Windows 输入法的候选/组合窗口贴近插入光标。
+
+        说明：部分新式输入法（TSF）会忽略 ImmSetCandidateWindow，这里改用“系统 caret 位置”驱动，
+        再辅以 ImmSetCompositionWindow 作为兼容兜底。
+        """
+        if getattr(widget, "_wjx_ime_bound", False):
+            return
+        setattr(widget, "_wjx_ime_bound", True)
+
+        try:
+            import sys
+            import ctypes
+            from ctypes import wintypes
+        except Exception:
+            return
+        if not sys.platform.startswith("win"):
+            return
+
+        windll = getattr(ctypes, "windll", None)
+        if not windll:
+            return
+        user32 = getattr(windll, "user32", None)
+        imm32 = getattr(windll, "imm32", None)
+        if not user32:
+            return
+
+        CFS_POINT = 0x0002
+        CFS_FORCE_POSITION = 0x0020
+        CFS_CANDIDATEPOS = 0x0040
+
+        class COMPOSITIONFORM(ctypes.Structure):
+            _fields_ = [
+                ("dwStyle", wintypes.DWORD),
+                ("ptCurrentPos", wintypes.POINT),
+                ("rcArea", wintypes.RECT),
+            ]
+
+        class CANDIDATEFORM(ctypes.Structure):
+            _fields_ = [
+                ("dwIndex", wintypes.DWORD),
+                ("dwStyle", wintypes.DWORD),
+                ("ptCurrentPos", wintypes.POINT),
+                ("rcArea", wintypes.RECT),
+            ]
+
+        state = {"caret_owner": 0, "caret_created": False}
+
+        def _destroy_caret():
+            if not state["caret_created"]:
+                return
+            try:
+                user32.DestroyCaret()
+            except Exception:
+                pass
+            state["caret_created"] = False
+            state["caret_owner"] = 0
+
+        def _ensure_caret(owner_hwnd: int, height: int) -> None:
+            if owner_hwnd <= 0:
+                return
+            if state["caret_owner"] != owner_hwnd:
+                _destroy_caret()
+                state["caret_owner"] = owner_hwnd
+            if state["caret_created"]:
+                return
+            try:
+                ok = bool(user32.CreateCaret(wintypes.HWND(owner_hwnd), None, 1, max(2, int(height))))
+            except Exception:
+                ok = False
+            state["caret_created"] = ok
+            if ok:
+                try:
+                    user32.HideCaret(wintypes.HWND(owner_hwnd))
+                except Exception:
+                    pass
+
+        def _set_imm_position(owner_hwnd: int, client_x: int, client_y: int) -> None:
+            if not imm32 or owner_hwnd <= 0:
+                return
+            try:
+                himc = imm32.ImmGetContext(wintypes.HWND(owner_hwnd))
+            except Exception:
+                himc = 0
+            if not himc:
+                return
+            try:
+                comp = COMPOSITIONFORM()
+                comp.dwStyle = CFS_POINT | CFS_FORCE_POSITION
+                comp.ptCurrentPos.x = int(client_x)
+                comp.ptCurrentPos.y = int(client_y)
+                comp.rcArea = wintypes.RECT(int(client_x), int(client_y), int(client_x) + 1, int(client_y) + 1)
+                try:
+                    imm32.ImmSetCompositionWindow(himc, ctypes.byref(comp))
+                except Exception:
+                    pass
+
+                cand = CANDIDATEFORM()
+                cand.dwIndex = 0
+                cand.dwStyle = CFS_CANDIDATEPOS
+                cand.ptCurrentPos.x = int(client_x)
+                cand.ptCurrentPos.y = int(client_y)
+                cand.rcArea = wintypes.RECT(int(client_x), int(client_y), int(client_x) + 1, int(client_y) + 1)
+                try:
+                    imm32.ImmSetCandidateWindow(himc, ctypes.byref(cand))
+                except Exception:
+                    pass
+            finally:
+                try:
+                    imm32.ImmReleaseContext(wintypes.HWND(owner_hwnd), himc)
+                except Exception:
+                    pass
+
+        def _update_ime_pos(event=None):
+            try:
+                bbox = widget.bbox("insert")
+            except Exception:
+                bbox = None
+            if not bbox:
+                return
+            x, y, _, h = bbox
+            screen_x = int(widget.winfo_rootx() + x)
+            screen_y = int(widget.winfo_rooty() + y + h)
+
+            try:
+                focus_hwnd = int(user32.GetFocus() or 0)
+            except Exception:
+                focus_hwnd = 0
+            if focus_hwnd <= 0:
+                # 退化使用顶层窗口句柄
+                try:
+                    focus_hwnd = int(widget.winfo_toplevel().winfo_id() or 0)
+                except Exception:
+                    focus_hwnd = 0
+            if focus_hwnd <= 0:
+                return
+
+            # 将屏幕坐标转换为焦点窗口客户区坐标（适配 DPI、多层嵌套窗口）
+            pt = wintypes.POINT(screen_x, screen_y)
+            try:
+                user32.ScreenToClient(wintypes.HWND(focus_hwnd), ctypes.byref(pt))
+            except Exception:
+                return
+
+            _ensure_caret(focus_hwnd, int(h) if h else 18)
+            try:
+                user32.SetCaretPos(int(pt.x), int(pt.y))
+            except Exception:
+                pass
+            _set_imm_position(focus_hwnd, int(pt.x), int(pt.y))
+
+        def _on_focus_out(event=None):
+            _destroy_caret()
+
+        for seq in ("<FocusIn>", "<KeyPress>", "<KeyRelease>", "<ButtonRelease-1>", "<ButtonRelease-3>"):
+            widget.bind(seq, _update_ime_pos, add="+")
+        widget.bind("<FocusOut>", _on_focus_out, add="+")
+        try:
+            widget.after_idle(_update_ime_pos)
+        except Exception:
+            pass
 
     def _get_display_scale(self) -> float:
         """获取显示缩放比例。"""

@@ -1136,14 +1136,7 @@ class SurveyGUI(ConfigPersistenceMixin):
         )
         random_ip_toggle.pack(side=tk.LEFT)
         self._random_ip_toggle_widget = random_ip_toggle
-        fail_stop_toggle = ttk.Checkbutton(
-            random_ip_frame,
-            text="失败过多自动停止",
-            variable=self.fail_stop_enabled_var,
-        )
-        fail_stop_toggle.pack(side=tk.LEFT, padx=(12, 0))
-        self._fail_stop_toggle_widget = fail_stop_toggle
-        self._main_parameter_widgets.extend([random_ip_toggle, fail_stop_toggle])
+        self._main_parameter_widgets.append(random_ip_toggle)
 
         # 随机IP计数显示和管理
         ip_counter_frame = ttk.Frame(step3_frame)
@@ -1586,6 +1579,7 @@ class SurveyGUI(ConfigPersistenceMixin):
         self._settings_window_widgets = []
         self._random_ua_option_widgets = []
         self._random_ua_toggle_widget = None
+        self._fail_stop_toggle_widget = None
         self._full_sim_status_label = None
 
         def _on_close():
@@ -1594,6 +1588,7 @@ class SurveyGUI(ConfigPersistenceMixin):
                 self._settings_window_widgets = []
                 self._random_ua_option_widgets = []
                 self._random_ua_toggle_widget = None
+                self._fail_stop_toggle_widget = None
                 self._full_sim_status_label = None
             try:
                 window.destroy()
@@ -1618,25 +1613,50 @@ class SurveyGUI(ConfigPersistenceMixin):
         self._full_sim_status_label = status_label
         self._refresh_full_simulation_status_label()
 
-        proxy_frame = ttk.LabelFrame(content, text="高级设置", padding=15)
-        proxy_frame.pack(fill=tk.X, pady=(15, 0))
-        ua_toggle_row = ttk.Frame(proxy_frame)
-        ua_toggle_row.pack(fill=tk.X, pady=(0, 6))
+        advanced_frame = ttk.LabelFrame(content, text="高级设置", padding=15)
+        advanced_frame.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
+
+        advanced_grid = ttk.Frame(advanced_frame)
+        advanced_grid.pack(fill=tk.X)
+        advanced_grid.columnconfigure(0, weight=1)
+        advanced_grid.columnconfigure(1, weight=1)
+
+        safety_card = ttk.LabelFrame(advanced_grid, text="安全与控制", padding=10)
+        safety_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        fail_stop_toggle = ttk.Checkbutton(
+            safety_card,
+            text="失败过多自动停止",
+            variable=self.fail_stop_enabled_var,
+        )
+        fail_stop_toggle.pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            safety_card,
+            text="避免无限重试造成资源浪费。",
+            foreground="#6b6b6b",
+        ).pack(anchor="w", padx=(22, 0), pady=(0, 6))
+        self._fail_stop_toggle_widget = fail_stop_toggle
+        self._settings_window_widgets.append(fail_stop_toggle)
+
         ua_toggle = ttk.Checkbutton(
-            ua_toggle_row,
+            safety_card,
             text="启用随机 UA",
             variable=self.random_ua_enabled_var,
             command=self._on_random_ua_toggle,
         )
-        ua_toggle.pack(anchor="w")
+        ua_toggle.pack(anchor="w", pady=(0, 2))
+        ttk.Label(
+            safety_card,
+            text="勾选后按照右侧的范围随机模拟设备。",
+            foreground="#6b6b6b",
+        ).pack(anchor="w", padx=(22, 0))
         self._random_ua_toggle_widget = ua_toggle
         self._settings_window_widgets.append(ua_toggle)
 
-        ua_options_frame = ttk.Frame(proxy_frame)
-        ua_options_frame.pack(fill=tk.X, pady=(0, 6))
-        ttk.Label(ua_options_frame, text="随机范围：").grid(row=0, column=0, sticky="nw", padx=(0, 8))
+        ua_options_frame = ttk.LabelFrame(advanced_grid, text="随机 UA 范围", padding=10)
+        ua_options_frame.grid(row=0, column=1, sticky="nsew")
+        ttk.Label(ua_options_frame, text="选择程序模拟的浏览器类型：").pack(anchor="w", pady=(0, 6))
         ua_options_inner = ttk.Frame(ua_options_frame)
-        ua_options_inner.grid(row=0, column=1, sticky="w")
+        ua_options_inner.pack(anchor="w")
         ua_option_widgets: List[tk.Widget] = []
         ua_options_list = [
             ("Windows网页端", self.random_ua_pc_web_var),
@@ -1659,11 +1679,21 @@ class SurveyGUI(ConfigPersistenceMixin):
         self._random_ua_option_widgets.extend(ua_option_widgets)
         self._settings_window_widgets.extend(ua_option_widgets)
 
-        ip_api_frame = ttk.LabelFrame(proxy_frame, text="随机 IP 接口", padding=10)
-        ip_api_frame.pack(fill=tk.X, pady=(6, 0))
-        ttk.Label(ip_api_frame, text="自定义随机 IP 提取 API：").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ip_api_entry = ttk.Entry(ip_api_frame, textvariable=self.random_ip_api_var, width=50)
-        ip_api_entry.grid(row=0, column=1, sticky="we")
+        ttk.Separator(advanced_frame, orient="horizontal").pack(fill=tk.X, pady=(12, 10))
+
+        ip_api_frame = ttk.LabelFrame(advanced_frame, text="随机 IP 接口", padding=12)
+        ip_api_frame.pack(fill=tk.X)
+        ttk.Label(ip_api_frame, text="自定义随机 IP 提取 API：").grid(row=0, column=0, sticky="nw", padx=(0, 8))
+        ip_api_entry = ttk.Entry(ip_api_frame, textvariable=self.random_ip_api_var, width=52)
+        ip_api_entry.grid(row=0, column=1, sticky="we", pady=(0, 4))
+        ttk.Label(
+            ip_api_frame,
+            text="API 仅支持 json 类型的数据格式。如果你不知道这是什么，请留空。",
+            foreground="#6b6b6b",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ip_buttons = ttk.Frame(ip_api_frame)
+        ip_buttons.grid(row=0, column=2, rowspan=2, sticky="ne", padx=(10, 0))
+        ip_api_frame.columnconfigure(1, weight=1)
 
         placeholder_text = str(getattr(self, "_random_ip_api_placeholder_text", "") or "").strip() or "API地址（不是卡密）"
         placeholder_style_name = "RandomIpApi.Placeholder.TEntry"
@@ -1745,11 +1775,10 @@ class SurveyGUI(ConfigPersistenceMixin):
             self._reset_random_ip_api_setting()
             _sync_ip_api_placeholder_from_value()
 
-        ip_api_save_btn = ttk.Button(ip_api_frame, text="保存", command=_on_ip_api_save, width=10)
-        ip_api_save_btn.grid(row=0, column=2, padx=(10, 0))
-        ip_api_reset_btn = ttk.Button(ip_api_frame, text="重置", command=_on_ip_api_reset, width=10)
-        ip_api_reset_btn.grid(row=1, column=2, padx=(10, 0), pady=(6, 0), sticky="w")
-        ip_api_frame.columnconfigure(1, weight=1)
+        ip_api_save_btn = ttk.Button(ip_buttons, text="保存", command=_on_ip_api_save, width=10)
+        ip_api_save_btn.pack(fill=tk.X)
+        ip_api_reset_btn = ttk.Button(ip_buttons, text="重置", command=_on_ip_api_reset, width=10)
+        ip_api_reset_btn.pack(fill=tk.X, pady=(6, 0))
         self._settings_window_widgets.extend([ip_api_entry, ip_api_save_btn, ip_api_reset_btn])
 
         button_frame = ttk.Frame(content)

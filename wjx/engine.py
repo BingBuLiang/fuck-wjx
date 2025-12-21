@@ -58,6 +58,7 @@ from wjx.updater import (
 import wjx.full_simulation_mode as full_simulation_mode
 from wjx.full_simulation_mode import FULL_SIM_STATE as _FULL_SIM_STATE
 import wjx.full_simulation_ui as full_simulation_ui
+import wjx.timed_mode as timed_mode
 
 import numpy
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
@@ -607,6 +608,8 @@ stop_event = threading.Event()
 full_simulation_enabled = False
 full_simulation_estimated_seconds = 0
 full_simulation_total_duration_seconds = 0
+timed_mode_enabled = False
+timed_mode_refresh_interval = timed_mode.DEFAULT_REFRESH_INTERVAL
 random_proxy_ip_enabled = False
 proxy_ip_pool: List[str] = []
 random_user_agent_enabled = False
@@ -627,6 +630,10 @@ def _is_fast_mode() -> bool:
         and submit_interval_range_seconds == (0, 0)
         and answer_duration_range_seconds == (0, 0)
     )
+
+
+def _timed_mode_active() -> bool:
+    return bool(timed_mode_enabled)
 
 
 def _handle_submission_failure(stop_signal: Optional[threading.Event]) -> bool:
@@ -3822,6 +3829,13 @@ def _discard_unresponsive_proxy(proxy_address: str) -> None:
 def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=None):
     global cur_num, cur_fail
     fast_mode = _is_fast_mode()
+    timed_mode_active = _timed_mode_active()
+    try:
+        timed_refresh_interval = float(timed_mode_refresh_interval or timed_mode.DEFAULT_REFRESH_INTERVAL)
+    except Exception:
+        timed_refresh_interval = timed_mode.DEFAULT_REFRESH_INTERVAL
+    if timed_refresh_interval <= 0:
+        timed_refresh_interval = timed_mode.DEFAULT_REFRESH_INTERVAL
     preferred_browsers = list(BROWSER_PREFERENCE)
     driver: Optional[BrowserDriver] = None
 
@@ -3970,9 +3984,23 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 logging.error("无法启动：问卷链接为空")
                 driver_had_error = True
                 break
-            driver.get(url)
-            if stop_signal.is_set():
-                break
+            if timed_mode_active:
+                logging.info("[Action Log] 定时模式：开始刷新等待问卷开放")
+                ready = timed_mode.wait_until_open(
+                    driver,
+                    url,
+                    stop_signal,
+                    refresh_interval=timed_refresh_interval,
+                    logger=logging.info,
+                )
+                if not ready:
+                    if not stop_signal.is_set():
+                        stop_signal.set()
+                    break
+            else:
+                driver.get(url)
+                if stop_signal.is_set():
+                    break
             if _is_device_quota_limit_page(driver):
                 logging.warning("检测到“设备已达到最大填写次数”提示页，直接放弃当前浏览器实例并标记为成功。")
                 with lock:

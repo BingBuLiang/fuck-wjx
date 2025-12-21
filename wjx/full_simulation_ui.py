@@ -173,6 +173,12 @@ def on_main_target_changed(gui: Any, *_: Any) -> None:
 
 
 def on_full_simulation_toggle(gui: Any, *_: Any) -> None:
+    if getattr(gui, "timed_mode_enabled_var", None) is not None:
+        try:
+            if gui.timed_mode_enabled_var.get():
+                gui.timed_mode_enabled_var.set(False)
+        except Exception:
+            pass
     if gui.full_simulation_enabled_var.get() and not gui.full_sim_target_var.get().strip():
         current_target = gui.target_var.get().strip()
         if current_target:

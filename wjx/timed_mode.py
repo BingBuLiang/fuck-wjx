@@ -1,0 +1,157 @@
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import dataclass
+from typing import Callable, Optional
+
+from wjx.browser_driver import BrowserDriver
+
+DEFAULT_REFRESH_INTERVAL = 0.5
+_MIN_REFRESH_INTERVAL = 0.2
+_MAX_REFRESH_INTERVAL = 10.0
+_LOG_INTERVAL_SECONDS = 10.0
+
+_NOT_STARTED_KEYWORDS = (
+    "未开始",
+    "尚未开始",
+    "未到开始时间",
+    "还未开始",
+    "未开放",
+    "开放时间",
+    "开始时间",
+)
+_ENDED_KEYWORDS = (
+    "已结束",
+    "结束填写",
+    "停止填写",
+    "暂停填写",
+    "已关闭",
+    "已暂停",
+    "本次答题已结束",
+)
+
+
+@dataclass
+class TimedModeState:
+    enabled: bool = False
+    refresh_interval: float = DEFAULT_REFRESH_INTERVAL
+
+
+def _extract_body_text(driver: BrowserDriver) -> str:
+    try:
+        return driver.execute_script("return (document.body && document.body.innerText) || '';") or ""
+    except Exception:
+        return ""
+
+
+def _normalize_interval(value: float) -> float:
+    try:
+        interval = float(value)
+    except Exception:
+        interval = DEFAULT_REFRESH_INTERVAL
+    if interval <= 0:
+        interval = DEFAULT_REFRESH_INTERVAL
+    return max(_MIN_REFRESH_INTERVAL, min(interval, _MAX_REFRESH_INTERVAL))
+
+
+def _page_status(driver: BrowserDriver) -> tuple[bool, bool, bool, str]:
+    """
+    返回 (ready, not_started, ended, normalized_text)
+    - ready: 页面已有题目/提交按钮可填写
+    - not_started: 检测到未开始/未开放提示
+    - ended: 检测到结束/暂停提示
+    """
+    ready = False
+    try:
+        ready = bool(
+            driver.execute_script(
+                """
+                return (() => {
+                    const hasQuestionBlock = !!document.querySelector('#divQuestion fieldset, #divQuestion [topic]');
+                    const hasInputs = !!document.querySelector('#divQuestion input, #divQuestion textarea, #divQuestion select');
+                    const hasSubmit = !!document.querySelector('#submit_button, #divSubmit, #ctlNext, #SM_BTN_1, .submitDiv a');
+                    return hasQuestionBlock || hasInputs || hasSubmit;
+                })();
+                """
+            )
+        )
+    except Exception:
+        ready = False
+
+    text = _extract_body_text(driver)
+    normalized = "".join(text.split())
+    lowered = normalized.lower()
+    not_started = any(keyword in normalized for keyword in _NOT_STARTED_KEYWORDS)
+    ended = any(keyword in normalized for keyword in _ENDED_KEYWORDS)
+
+    # 某些提示仅有英文，简单兜底
+    if "notstart" in lowered or "not start" in lowered:
+        not_started = True
+    if "finished" in lowered or "closed" in lowered:
+        ended = True
+
+    return ready, not_started, ended, normalized
+
+
+def wait_until_open(
+    driver: BrowserDriver,
+    url: str,
+    stop_signal: Optional[object] = None,
+    *,
+    refresh_interval: float = DEFAULT_REFRESH_INTERVAL,
+    logger: Optional[Callable[[str], None]] = None,
+) -> bool:
+    """
+    在同一浏览器实例中持续刷新，直到问卷开放或停止信号触发。
+
+    返回 True 表示检测到问卷已开放；False 表示收到停止信号或页面提示已关闭。
+    """
+    interval = _normalize_interval(refresh_interval)
+    first_load = True
+    last_reason = ""
+    last_log_ts = 0.0
+
+    def _log(message: str) -> None:
+        if logger:
+            try:
+                logger(message)
+            except Exception:
+                logging.debug("Timed mode logger failed", exc_info=True)
+
+    while True:
+        if stop_signal is not None and getattr(stop_signal, "is_set", lambda: False)():
+            return False
+
+        try:
+            if first_load:
+                driver.get(url)
+                first_load = False
+            else:
+                driver.refresh()
+        except Exception as exc:  # pragma: no cover - 容错
+            _log(f"[Timed Mode] 刷新失败，将继续重试：{exc}")
+
+        ready, not_started, ended, normalized_text = _page_status(driver)
+        if ready:
+            _log("[Timed Mode] 检测到问卷已开放，开始填写...")
+            return True
+
+        if ended:
+            _log("[Timed Mode] 页面提示问卷已结束/关闭，停止等待。")
+            return False
+
+        reason = ""
+        if not_started:
+            reason = "检测到“未开始/未开放”提示，继续快速刷新等待..."
+        elif normalized_text:
+            reason = "尚未开放，继续刷新等待..."
+        now = time.time()
+        if reason and (reason != last_reason or now - last_log_ts >= _LOG_INTERVAL_SECONDS):
+            _log(f"[Timed Mode] {reason}")
+            last_reason = reason
+            last_log_ts = now
+
+        if stop_signal is not None and getattr(stop_signal, "wait", lambda *_: False)(interval):
+            return False
+

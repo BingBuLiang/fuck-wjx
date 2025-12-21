@@ -9,6 +9,7 @@ from wjx.config import APP_ICON_RELATIVE_PATH
 from wjx.runtime import get_runtime_directory as _get_runtime_directory, get_resource_path as _get_resource_path
 import wjx.engine as engine
 from wjx.engine import *  # noqa: F401,F403
+import wjx.timed_mode as timed_mode
 from wjx.updater import check_for_updates as _check_for_updates_impl, perform_update as _perform_update_impl
 from wjx.version import __VERSION__, GITHUB_OWNER, GITHUB_REPO, ISSUE_FEEDBACK_URL
 
@@ -793,9 +794,12 @@ class SurveyGUI(ConfigPersistenceMixin):
         self._suspend_full_sim_autofill = False
         self._last_survey_title: Optional[str] = None
         self._threads_value_before_full_sim: Optional[str] = None
+        self._timed_mode_prev_target: Optional[str] = None
+        self._timed_mode_prev_threads: Optional[str] = None
         self._main_parameter_widgets: List[tk.Widget] = []
         self._settings_window_widgets: List[tk.Widget] = []
         self._random_ua_option_widgets: List[tk.Widget] = []
+        self._timed_mode_locked_widgets: List[tk.Widget] = []
         self._full_simulation_window: Optional[tk.Toplevel] = None
         self._full_sim_status_label: Optional[ttk.Label] = None
 
@@ -1052,16 +1056,19 @@ class SurveyGUI(ConfigPersistenceMixin):
 
         auto_config_frame = ttk.Frame(step2_frame)
         auto_config_frame.pack(fill=tk.X, pady=(0, 5))
-
-        button_row = ttk.Frame(auto_config_frame)
-        button_row.pack(fill=tk.X)
+        ttk.Label(
+            auto_config_frame,
+            text="快速生成：自动抓取问卷并预填配置",
+            foreground="#0f3d7a",
+            justify="left",
+        ).pack(side=tk.LEFT, padx=(0, 10))
         self.preview_button = ttk.Button(
-            button_row,
+            auto_config_frame,
             text="⚡ 自动配置问卷",
             command=self.preview_survey,
             style="Accent.TButton"
         )
-        self.preview_button.pack(side=tk.LEFT, padx=5)
+        self.preview_button.pack(side=tk.RIGHT, padx=5)
 
         # 执行设置区域（放在配置题目下方）
         step3_frame = ttk.LabelFrame(self.scrollable_content, text="💣 执行设置", padding=10)
@@ -1090,6 +1097,8 @@ class SurveyGUI(ConfigPersistenceMixin):
         self.interval_max_seconds_var.trace("w", lambda *args: self._mark_config_changed())
         self.answer_duration_min_var.trace("w", lambda *args: self._mark_config_changed())
         self.answer_duration_max_var.trace("w", lambda *args: self._mark_config_changed())
+        self.timed_mode_enabled_var = tk.BooleanVar(value=False)
+        self.timed_mode_enabled_var.trace_add("write", lambda *args: self._on_timed_mode_toggle())
         self.random_ua_enabled_var.trace_add("write", lambda *args: self._on_random_ua_toggle())
         for _ua_var in (
             self.random_ua_pc_web_var,
@@ -1143,9 +1152,18 @@ class SurveyGUI(ConfigPersistenceMixin):
         )
         thread_inc_button.grid(row=0, column=2, padx=(2, 0))
         self._main_parameter_widgets.extend([thread_dec_button, thread_entry, thread_inc_button])
+        self._timed_mode_locked_widgets.extend([target_entry, thread_dec_button, thread_entry, thread_inc_button])
 
-        proxy_control_frame = ttk.Frame(step3_frame)
-        proxy_control_frame.pack(fill=tk.X, padx=4, pady=(6, 2))
+        timed_mode_frame = ttk.LabelFrame(step3_frame, text="⏱️ 定时模式", padding=10)
+        timed_mode_frame.pack(fill=tk.X, padx=4, pady=(6, 4))
+        timed_toggle = ttk.Checkbutton(
+            timed_mode_frame,
+            text="问卷定时开放时启用自动刷新等待（仅提交 1 份）",
+            variable=self.timed_mode_enabled_var,
+            command=self._on_timed_mode_toggle,
+        )
+        timed_toggle.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self._main_parameter_widgets.extend([timed_toggle])
 
         # 随机 IP 开关单独一行，放在微信弹窗开关下方
         random_ip_frame = ttk.Frame(step3_frame)
@@ -1396,6 +1414,11 @@ class SurveyGUI(ConfigPersistenceMixin):
 
     def _update_parameter_widgets_state(self):
         locking = bool(self.full_simulation_enabled_var.get())
+        if locking and self.timed_mode_enabled_var.get():
+            try:
+                self.timed_mode_enabled_var.set(False)
+            except Exception:
+                pass
         if locking and not self.random_ua_enabled_var.get():
             self.random_ua_enabled_var.set(True)
         state = tk.DISABLED if locking else tk.NORMAL
@@ -1426,6 +1449,7 @@ class SurveyGUI(ConfigPersistenceMixin):
                 except Exception:
                     continue
         self._apply_random_ua_widgets_state()
+        self._apply_timed_mode_widgets_state()
 
     def _apply_random_ua_widgets_state(self):
         option_widgets = getattr(self, "_random_ua_option_widgets", [])
@@ -1456,6 +1480,52 @@ class SurveyGUI(ConfigPersistenceMixin):
             self._auto_exit_on_stop = bool(self.auto_exit_on_stop_var.get())
         except Exception:
             self._auto_exit_on_stop = False
+        self._mark_config_changed()
+
+    def _apply_timed_mode_widgets_state(self):
+        enabled = bool(self.timed_mode_enabled_var.get())
+        locked_state = tk.DISABLED if enabled else tk.NORMAL
+        for widget in getattr(self, "_timed_mode_locked_widgets", []):
+            if widget is None:
+                continue
+            try:
+                if widget.winfo_exists():
+                    widget.configure(state=locked_state)
+            except Exception:
+                try:
+                    if widget.winfo_exists():
+                        widget["state"] = locked_state
+                except Exception:
+                    continue
+
+    def _on_timed_mode_toggle(self, *_: Any):
+        enabled = bool(self.timed_mode_enabled_var.get())
+        if enabled:
+            # 定时模式只提交一份且使用单线程，自动锁定基础参数
+            if getattr(self, "full_simulation_enabled_var", None) is not None:
+                try:
+                    if self.full_simulation_enabled_var.get():
+                        self.full_simulation_enabled_var.set(False)
+                except Exception:
+                    pass
+            if self._timed_mode_prev_target is None:
+                self._timed_mode_prev_target = self.target_var.get()
+            if self._timed_mode_prev_threads is None:
+                self._timed_mode_prev_threads = self.thread_var.get()
+            if (self.target_var.get() or "").strip() != "1":
+                self.target_var.set("1")
+            if (self.thread_var.get() or "").strip() != "1":
+                self.thread_var.set("1")
+            logging.info("定时模式已开启：锁定线程数为 1、目标份数为 1，将等待问卷开放后立即提交。")
+        else:
+            if self._timed_mode_prev_target is not None:
+                self.target_var.set(self._timed_mode_prev_target)
+            if self._timed_mode_prev_threads is not None:
+                self.thread_var.set(self._timed_mode_prev_threads)
+            self._timed_mode_prev_target = None
+            self._timed_mode_prev_threads = None
+        self._apply_timed_mode_widgets_state()
+        self._update_parameter_widgets_state()
         self._mark_config_changed()
 
     def _get_random_ip_api_text(self) -> str:
@@ -4871,18 +4941,33 @@ class SurveyGUI(ConfigPersistenceMixin):
             return
         target_value = self.target_var.get().strip()
         full_sim_enabled = bool(self.full_simulation_enabled_var.get())
+        timed_mode_enabled = bool(self.timed_mode_enabled_var.get())
+        if timed_mode_enabled and full_sim_enabled:
+            self._log_popup_error("参数错误", "定时模式与全真模拟不能同时启用")
+            return
+        if timed_mode_enabled:
+            full_sim_enabled = False
         if full_sim_enabled:
             target_value = self.full_sim_target_var.get().strip()
             if not target_value:
                 self._log_popup_error("参数错误", "请在全真模拟设置中填写目标份数")
                 return
             self.target_var.set(target_value)
+        if timed_mode_enabled:
+            target_value = "1"
+            if self.target_var.get().strip() != "1":
+                self.target_var.set("1")
         if not target_value:
             self._log_popup_error("参数错误", "目标份数不能为空")
             return
+        threads_text = self.thread_var.get().strip()
+        if timed_mode_enabled:
+            threads_text = "1"
+            if self.thread_var.get().strip() != "1":
+                self.thread_var.set("1")
         try:
             target = int(target_value)
-            threads_count = int(self.thread_var.get().strip() or "0")
+            threads_count = int(threads_text or "0")
             if target <= 0 or threads_count <= 0:
                 raise ValueError
         except ValueError:
@@ -4941,6 +5026,7 @@ class SurveyGUI(ConfigPersistenceMixin):
                 threads_count = 1
                 self.thread_var.set("1")
                 logging.info("全真模拟模式强制使用单线程执行")
+        timed_refresh_interval = timed_mode.DEFAULT_REFRESH_INTERVAL
         max_fields_empty = (not max_minute_text) and (not max_second_text)
         if interval_minutes < 0 or interval_seconds < 0 or interval_max_minutes < 0 or interval_max_seconds < 0:
             self._log_popup_error("参数错误", "提交间隔必须为非负数")
@@ -4987,6 +5073,7 @@ class SurveyGUI(ConfigPersistenceMixin):
             logging.info("[Action Log] 随机IP接口：已配置成功")
         if random_proxy_flag and not ensure_random_ip_ready(self):
             return
+        timed_refresh_interval = timed_mode.DEFAULT_REFRESH_INTERVAL
         ctx = {
             "url_value": url_value,
             "target": target,
@@ -4998,6 +5085,8 @@ class SurveyGUI(ConfigPersistenceMixin):
             "full_sim_enabled": full_sim_enabled,
             "full_sim_est_seconds": full_sim_est_seconds,
             "full_sim_total_seconds": full_sim_total_seconds,
+            "timed_mode_enabled": timed_mode_enabled,
+            "timed_mode_interval": timed_refresh_interval,
             "random_proxy_flag": random_proxy_flag,
             "random_ua_flag": random_ua_flag,
             "random_ua_keys_list": random_ua_keys_list,
@@ -5079,12 +5168,17 @@ class SurveyGUI(ConfigPersistenceMixin):
         full_sim_enabled = ctx["full_sim_enabled"]
         full_sim_est_seconds = ctx["full_sim_est_seconds"]
         full_sim_total_seconds = ctx["full_sim_total_seconds"]
+        timed_mode_flag = bool(ctx.get("timed_mode_enabled"))
+        try:
+            timed_mode_interval_value = float(ctx.get("timed_mode_interval", timed_mode.DEFAULT_REFRESH_INTERVAL))
+        except Exception:
+            timed_mode_interval_value = timed_mode.DEFAULT_REFRESH_INTERVAL
 
         logging.info(
             f"[Action Log] Starting run url={url_value} target={target} threads={threads_count}"
         )
 
-        global url, target_num, num_threads, fail_threshold, cur_num, cur_fail, stop_event, submit_interval_range_seconds, answer_duration_range_seconds, full_simulation_enabled, full_simulation_estimated_seconds, full_simulation_total_duration_seconds, random_proxy_ip_enabled, proxy_ip_pool, random_user_agent_enabled, user_agent_pool_keys, stop_on_fail_enabled, _aliyun_captcha_stop_triggered, _target_reached_stop_triggered, _resume_after_aliyun_captcha_stop, _resume_snapshot
+        global url, target_num, num_threads, fail_threshold, cur_num, cur_fail, stop_event, submit_interval_range_seconds, answer_duration_range_seconds, full_simulation_enabled, full_simulation_estimated_seconds, full_simulation_total_duration_seconds, timed_mode_enabled, timed_mode_refresh_interval, random_proxy_ip_enabled, proxy_ip_pool, random_user_agent_enabled, user_agent_pool_keys, stop_on_fail_enabled, _aliyun_captcha_stop_triggered, _target_reached_stop_triggered, _resume_after_aliyun_captcha_stop, _resume_snapshot
         url = url_value
         target_num = target
         # 强制限制线程数不超过12，确保用户电脑流畅
@@ -5092,6 +5186,8 @@ class SurveyGUI(ConfigPersistenceMixin):
         submit_interval_range_seconds = (interval_total_seconds, max_interval_total_seconds)
         answer_duration_range_seconds = (answer_min_seconds, answer_max_seconds)
         full_simulation_enabled = full_sim_enabled
+        timed_mode_enabled = timed_mode_flag
+        timed_mode_refresh_interval = timed_mode_interval_value
         random_proxy_ip_enabled = random_proxy_flag
         proxy_ip_pool = proxy_pool if random_proxy_flag else []
         random_user_agent_enabled = random_ua_flag
@@ -5113,6 +5209,8 @@ class SurveyGUI(ConfigPersistenceMixin):
         engine.full_simulation_enabled = full_simulation_enabled
         engine.full_simulation_estimated_seconds = full_simulation_estimated_seconds
         engine.full_simulation_total_duration_seconds = full_simulation_total_duration_seconds
+        engine.timed_mode_enabled = timed_mode_enabled
+        engine.timed_mode_refresh_interval = timed_mode_refresh_interval
         engine.random_proxy_ip_enabled = random_proxy_ip_enabled
         engine.proxy_ip_pool = proxy_ip_pool
         engine.random_user_agent_enabled = random_user_agent_enabled
@@ -5140,6 +5238,8 @@ class SurveyGUI(ConfigPersistenceMixin):
             full_simulation_total_duration_seconds = 0
             _FULL_SIM_STATE.disable()
             _reset_full_simulation_runtime_state()
+        if timed_mode_enabled:
+            logging.info(f"[Action Log] 定时模式启用，刷新间隔 {timed_mode_refresh_interval:.2f} 秒，将等待开放后自动提交。")
         fail_threshold = max(1, math.ceil(target_num / 4) + 1)
         stop_event = threading.Event()
         _aliyun_captcha_stop_triggered = False
@@ -5178,7 +5278,9 @@ class SurveyGUI(ConfigPersistenceMixin):
         self.running = True
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL, text="🚫 停止")
-        if resume_allowed:
+        if timed_mode_enabled:
+            self.status_var.set("定时模式：等待问卷开放...")
+        elif resume_allowed:
             self.status_var.set(
                 f"继续执行 | 已提交 {engine.cur_num}/{engine.target_num} 份 | 失败 {engine.cur_fail} 次"
             )

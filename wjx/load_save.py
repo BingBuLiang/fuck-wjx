@@ -81,6 +81,7 @@ class ConfigPersistenceMixin:
         interval_max_seconds_var: tk.StringVar
         answer_duration_min_var: tk.StringVar
         answer_duration_max_var: tk.StringVar
+        timed_mode_enabled_var: tk.BooleanVar
         random_ua_enabled_var: tk.BooleanVar
         random_ua_pc_web_var: tk.BooleanVar
         random_ua_android_wechat_var: tk.BooleanVar
@@ -151,6 +152,7 @@ class ConfigPersistenceMixin:
             "num_threads": self.thread_var.get(),
             "submit_interval": self._serialize_submit_interval(),
             "answer_duration_range": self._serialize_answer_duration_config(),
+            "timed_mode": self._serialize_timed_mode_config(),
             "full_simulation": self._serialize_full_simulation_config(),
             "random_user_agent": self._serialize_random_ua_config(),
             "wechat_login_bypass_enabled": wechat_login_bypass_enabled,
@@ -262,6 +264,11 @@ class ConfigPersistenceMixin:
             "selected": _filter_valid_user_agent_keys(self._get_selected_random_ua_keys()),
         }
 
+    def _serialize_timed_mode_config(self) -> Dict[str, Any]:
+        return {
+            "enabled": bool(self.timed_mode_enabled_var.get()),
+        }
+
     def _serialize_full_simulation_config(self) -> Dict[str, Any]:
         def _normalize(value: Any, *, cap_seconds: bool = False) -> int:
             try:
@@ -365,6 +372,12 @@ class ConfigPersistenceMixin:
             var.set(key in selected_keys)
         self._apply_random_ua_widgets_state()
 
+    def _apply_timed_mode_config(self, config: Optional[Dict[str, Any]]):
+        enabled = False
+        if isinstance(config, dict):
+            enabled = bool(config.get("enabled"))
+        self.timed_mode_enabled_var.set(enabled)
+
     def _pick_random_user_agent(self) -> Tuple[Optional[str], Optional[str]]:
         if not self.random_ua_enabled_var.get():
             return None, None
@@ -448,6 +461,7 @@ class ConfigPersistenceMixin:
                     pass
             self._apply_submit_interval_config(config.get("submit_interval"))
             self._apply_answer_duration_config(config.get("answer_duration_range"))
+            self._apply_timed_mode_config(config.get("timed_mode"))
             self._apply_full_simulation_config(config.get("full_simulation"))
 
             if restore_paned_position:
@@ -627,6 +641,7 @@ class ConfigPersistenceMixin:
             "num_threads": self.thread_var.get(),
             "submit_interval": self._serialize_submit_interval(),
             "answer_duration_range": self._serialize_answer_duration_config(),
+            "timed_mode": self._serialize_timed_mode_config(),
             "full_simulation": self._serialize_full_simulation_config(),
             "random_user_agent": self._serialize_random_ua_config(),
             "random_proxy_enabled": bool(self.random_ip_enabled_var.get()),
@@ -662,6 +677,7 @@ class ConfigPersistenceMixin:
             "num_threads": self.thread_var.get(),
             "submit_interval": self._serialize_submit_interval(),
             "answer_duration_range": self._serialize_answer_duration_config(),
+            "timed_mode": self._serialize_timed_mode_config(),
             "full_simulation": self._serialize_full_simulation_config(),
             "random_user_agent": self._serialize_random_ua_config(),
             "random_proxy_enabled": bool(self.random_ip_enabled_var.get()),

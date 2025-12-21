@@ -1492,6 +1492,9 @@ class SurveyGUI(ConfigPersistenceMixin):
                 try:
                     if self.full_simulation_enabled_var.get():
                         self.full_simulation_enabled_var.set(False)
+                        self._refresh_full_simulation_status_label()
+                        full_simulation_ui.update_full_simulation_controls_state(self)
+                        self._update_parameter_widgets_state()
                 except Exception:
                     pass
             if self._timed_mode_prev_target is None:

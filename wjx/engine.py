@@ -2111,12 +2111,7 @@ def _log_multi_limit_once(
     cache_key = (_get_driver_session_key(driver), question_number)
     if cache_key in _REPORTED_MULTI_LIMITS:
         return
-    if min_limit is not None and max_limit is not None:
-        print(f"第{question_number}题检测到需要选择 {min_limit}-{max_limit} 项，自动限制选择数量。")
-    elif max_limit is not None:
-        print(f"第{question_number}题检测到最多可选 {max_limit} 项，自动限制选择数量。")
-    else:
-        print(f"第{question_number}题检测到至少需选择 {min_limit} 项，自动限制选择数量。")
+    # 仅标记已处理的题目，不再输出限制日志以保持日志简洁
     _REPORTED_MULTI_LIMITS.add(cache_key)
 
 

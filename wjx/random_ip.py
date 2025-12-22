@@ -787,7 +787,6 @@ def _disable_random_ip_and_show_dialog(gui: Any):
 def handle_random_ip_submission(gui: Any, stop_signal: Optional[threading.Event]):
     """每次随机 IP 成功提交后更新计数并判断是否需要触发卡密验证。"""
     if RegistryManager.is_quota_unlimited():
-        logging.info("已启用无限额度，无需验证")
         return
     limit = max(1, get_random_ip_limit())
     ip_count = RegistryManager.increment_submit_count()

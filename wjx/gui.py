@@ -3201,19 +3201,24 @@ class SurveyGUI(ConfigPersistenceMixin):
             inline_fill_vars: List[Optional[tk.StringVar]] = [None] * entry.option_count if entry.question_type in ("single", "dropdown") else []
 
             if entry.question_type == "matrix":
+                max_cols_per_row = 3
                 for row_idx in range(rows_count):
                     row_box = ttk.LabelFrame(sliders_container, text=f"第 {row_idx + 1} 行")
                     row_box.pack(fill=tk.X, pady=6, padx=(6, 6))
-                    row_box.columnconfigure(1, weight=1)
+                    grid_frame = ttk.Frame(row_box)
+                    grid_frame.pack(fill=tk.X, padx=6, pady=4)
+                    for c in range(max_cols_per_row):
+                        grid_frame.columnconfigure(c, weight=1)
                     row_vars: List[tk.DoubleVar] = []
                     for col_idx in range(effective_option_count):
-                        row_frame = ttk.Frame(row_box)
-                        row_frame.pack(fill=tk.X, pady=4, padx=(10, 20))
-                        row_frame.columnconfigure(1, weight=1)
+                        grid_row = col_idx // max_cols_per_row
+                        grid_col = col_idx % max_cols_per_row
+                        col_cell = ttk.Frame(grid_frame)
+                        col_cell.grid(row=grid_row, column=grid_col, sticky="ew", padx=6, pady=4)
 
                         option_text = option_texts[col_idx] if col_idx < len(option_texts) and option_texts[col_idx] else ""
                         text_value = f"列 {col_idx + 1}: {option_text}" if option_text else f"列 {col_idx + 1}"
-                        ttk.Label(row_frame, text=text_value, anchor="w", wraplength=420).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 2))
+                        ttk.Label(col_cell, text=text_value, anchor="w", wraplength=220).pack(anchor="w")
 
                         initial_value = 1.0
                         if initial_matrix_weights and row_idx < len(initial_matrix_weights) and col_idx < len(initial_matrix_weights[row_idx]):
@@ -3222,11 +3227,13 @@ class SurveyGUI(ConfigPersistenceMixin):
                             except Exception:
                                 initial_value = 1.0
                         var = tk.DoubleVar(value=initial_value)
-                        slider = ttk.Scale(row_frame, from_=0, to=10, variable=var, orient=tk.HORIZONTAL)
-                        slider.grid(row=1, column=0, columnspan=2, sticky="ew", padx=(20, 5))
+                        slider_row = ttk.Frame(col_cell)
+                        slider_row.pack(fill=tk.X, pady=(2, 0))
+                        slider = ttk.Scale(slider_row, from_=0, to=10, variable=var, orient=tk.HORIZONTAL)
+                        slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-                        value_label = ttk.Label(row_frame, text=f"{initial_value:.1f}", width=6, anchor="e")
-                        value_label.grid(row=1, column=2, sticky="e")
+                        value_label = ttk.Label(slider_row, text=f"{initial_value:.1f}", width=5, anchor="e")
+                        value_label.pack(side=tk.LEFT, padx=(6, 0))
 
                         def _update_value_label(v=var, lbl=value_label):
                             lbl.config(text=f"{v.get():.1f}")
@@ -5058,26 +5065,29 @@ class SurveyGUI(ConfigPersistenceMixin):
                     text="为每一行单独设置各列的权重（0-10）：",
                     foreground="gray"
                 ).pack(anchor="w", pady=(10, 5), fill=tk.X)
+                max_cols_per_row = 3
                 for row_idx in range(rows_count):
                     row_box = ttk.LabelFrame(sliders_weight_frame, text=f"第 {row_idx + 1} 行")
                     row_box.pack(fill=tk.X, pady=6, padx=(6, 6))
-                    row_box.columnconfigure(1, weight=1)
+                    grid_frame = ttk.Frame(row_box)
+                    grid_frame.pack(fill=tk.X, padx=6, pady=4)
+                    for c in range(max_cols_per_row):
+                        grid_frame.columnconfigure(c, weight=1)
                     row_vars: List[tk.DoubleVar] = []
                     for col_idx in range(q['options']):
-                        row_frame = ttk.Frame(row_box)
-                        row_frame.pack(fill=tk.X, pady=3, padx=(10, 10))
-                        row_frame.columnconfigure(1, weight=1)
-
+                        grid_row = col_idx // max_cols_per_row
+                        grid_col = col_idx % max_cols_per_row
+                        col_cell = ttk.Frame(grid_frame)
+                        col_cell.grid(row=grid_row, column=grid_col, sticky="ew", padx=6, pady=4)
                         option_text = ""
                         if col_idx < len(q.get('option_texts', [])) and q['option_texts'][col_idx]:
                             option_text = q['option_texts'][col_idx]
-
                         ttk.Label(
-                            row_frame,
+                            col_cell,
                             text=f"列 {col_idx + 1}: {option_text}" if option_text else f"列 {col_idx + 1}",
                             anchor="w",
-                            wraplength=500,
-                        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 2))
+                            wraplength=220,
+                        ).pack(anchor="w")
 
                         initial_value = 1.0
                         if initial_matrix_weights and row_idx < len(initial_matrix_weights):
@@ -5089,11 +5099,12 @@ class SurveyGUI(ConfigPersistenceMixin):
                                     initial_value = 1.0
 
                         var = tk.DoubleVar(value=initial_value)
-                        slider = ttk.Scale(row_frame, from_=0, to=10, variable=var, orient=tk.HORIZONTAL)
-                        slider.grid(row=1, column=0, columnspan=2, sticky="ew", padx=(20, 5))
-
-                        value_label = ttk.Label(row_frame, text=f"{initial_value:.1f}", width=6, anchor="e")
-                        value_label.grid(row=1, column=2, sticky="e")
+                        slider_row = ttk.Frame(col_cell)
+                        slider_row.pack(fill=tk.X, pady=(2, 0))
+                        slider = ttk.Scale(slider_row, from_=0, to=10, variable=var, orient=tk.HORIZONTAL)
+                        slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                        value_label = ttk.Label(slider_row, text=f"{initial_value:.1f}", width=5, anchor="e")
+                        value_label.pack(side=tk.LEFT, padx=(6, 0))
 
                         def _update_label(v=var, lbl=value_label):
                             lbl.config(text=f"{v.get():.1f}")
@@ -5143,7 +5154,7 @@ class SurveyGUI(ConfigPersistenceMixin):
                 if type_code == "6":
                     q_type = "matrix"
                     if mode == "random":
-                        probs: Union[int, List[List[float]]] = -1
+                        probs = -1
                         weights = None
                     else:
                         matrix_weights = []

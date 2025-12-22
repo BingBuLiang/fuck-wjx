@@ -565,7 +565,7 @@ def show_card_validation_dialog(gui: Any) -> bool:
     container = ttk.Frame(dialog, padding=15)
     container.pack(fill=tk.BOTH, expand=True)
 
-    ttk.Label(container, text="解锁无限随机IP提交额度", font=("Segoe UI", 12, "bold")).pack(anchor=tk.W, pady=(0, 10))
+    ttk.Label(container, text="解锁大额随机IP提交额度", font=("Segoe UI", 12, "bold")).pack(anchor=tk.W, pady=(0, 10))
 
     style = ttk.Style()
     bg_color = style.lookup("TFrame", "background") or (parent.cget("background") if parent else "#ffffff")
@@ -596,7 +596,7 @@ def show_card_validation_dialog(gui: Any) -> bool:
 
     text_widget.insert(tk.END, "（多少都行♥）\n")
     text_widget.insert(tk.END, "2.在“联系”中找到开发者，并留下联系邮箱\n")
-    text_widget.insert(tk.END, "3.开发者会发送卡密到你的邮箱，输入卡密后即可解锁无限随机IP提交额度\n")
+    text_widget.insert(tk.END, "3.开发者会发送卡密到你的邮箱，输入卡密后即可解锁大额随机IP提交额度\n")
 
     gray_start = text_widget.index(tk.END + "-1c")
     text_widget.insert(tk.END, "4.你也可以通过自己的口才白嫖卡密（误）")
@@ -698,7 +698,7 @@ def refresh_ip_counter_display(gui: Any):
             if using_custom_api:
                 label.config(text="--/-- (已启用自定义接口)", foreground="#ff8c00")
             elif is_unlimited:
-                label.config(text="∞ (无限额度)", foreground="green")
+                label.config(text="∞ (无限IP额度)", foreground="green")
                 if button and button.winfo_exists():
                     button.config(text="恢复限制", state=tk.NORMAL)
             else:
@@ -712,7 +712,7 @@ def refresh_ip_counter_display(gui: Any):
                     if limit >= _PREMIUM_RANDOM_IP_LIMIT:
                         button.config(text="已解锁", state=tk.DISABLED)
                     else:
-                        button.config(text="解锁无限IP", state=tk.NORMAL)
+                        button.config(text="解锁大额IP", state=tk.NORMAL)
         if button and button.winfo_exists():
             if using_custom_api:
                 if button.winfo_manager():
@@ -750,20 +750,20 @@ def reset_ip_counter(gui: Any):
             gui,
             "confirm",
             "确认",
-            "当前已启用无限额度。\n是否要禁用无限额度并恢复计数限制？",
+            "当前已启用无限IP额度。\n是否要禁用无限IP额度并恢复计数限制？",
         )
         if result:
             RegistryManager.set_quota_unlimited(False)
             RegistryManager.reset_submit_count()
-            logging.info("已禁用无限额度，恢复计数限制")
+            logging.info("已禁用无限IP额度，恢复计数限制")
             refresh_ip_counter_display(gui)
-            _invoke_popup(gui, "info", "成功", f"已禁用无限额度，恢复为{limit}份限制。")
+            _invoke_popup(gui, "info", "成功", f"已禁用无限IP额度，恢复为{limit}份限制。")
     else:
         result = _invoke_popup(
             gui,
             "confirm",
             "确认",
-            "确定要启用无限额度吗？\n(需要卡密验证)",
+            "确定要启用大额IP额度吗？\n(需要卡密验证)",
         )
         if result:
             show_card_validation_dialog(gui)

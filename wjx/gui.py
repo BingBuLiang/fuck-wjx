@@ -1179,7 +1179,7 @@ class SurveyGUI(ConfigPersistenceMixin):
         self._ip_reset_button_pack_opts = {"side": tk.LEFT, "padx": 2}
         self._ip_reset_button = ttk.Button(
             ip_counter_frame,
-            text="解锁无限IP",
+            text="解锁大额IP",
             command=lambda: reset_ip_counter(self),
         )
         self._ip_reset_button.pack(**self._ip_reset_button_pack_opts)

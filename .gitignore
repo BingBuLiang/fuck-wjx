@@ -10,3 +10,4 @@ ips.txt
 build/
 dist/
 control/
+control.py

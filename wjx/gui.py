@@ -4334,10 +4334,6 @@ class SurveyGUI(ConfigPersistenceMixin):
         if current_index >= len(questions_info):
             self._refresh_tree()
             logging.info(f"[Action Log] Wizard finished with {len(self.question_entries)} configured questions")
-            self._log_popup_info(
-                "完成",
-                f"配置完成！\n\n已配置 {len(self.question_entries)} 道题目。\n可在下方题目列表中查看和编辑。"
-            )
             self._wizard_history.clear()
             self._wizard_commit_log.clear()
             if existing_wizard and getattr(existing_wizard, "winfo_exists", lambda: False)():
@@ -4353,7 +4349,12 @@ class SurveyGUI(ConfigPersistenceMixin):
                     existing_wizard.destroy()
                 except Exception:
                     pass
-                self._wizard_window = None
+            self._wizard_window = None
+            self._log_popup_info(
+                "完成",
+                f"配置完成！\n\n已配置 {len(self.question_entries)} 道题目。\n可在下方题目列表中查看和编辑。",
+                parent=self.root
+            )
             return
         
         q = questions_info[current_index]

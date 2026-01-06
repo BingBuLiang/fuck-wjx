@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPlainTextEdit
 from qfluentwidgets import (
     BodyLabel,
@@ -61,6 +62,23 @@ class ContactDialog(QDialog):
             self.type_combo.addItem(item, item)
         form_layout.addWidget(self.type_combo)
 
+        # 金额输入行（仅卡密获取时显示）
+        self.amount_row = QHBoxLayout()
+        self.amount_label = BodyLabel("捐(施)助(舍)的金额：￥", self)
+        self.amount_edit = LineEdit(self)
+        self.amount_edit.setPlaceholderText("请输入金额")
+        self.amount_edit.setMaximumWidth(200)
+        validator = QDoubleValidator(0.0, 999999.99, 2, self)
+        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self.amount_edit.setValidator(validator)
+        self.amount_edit.textChanged.connect(self._on_amount_changed)
+        self.amount_row.addWidget(self.amount_label)
+        self.amount_row.addWidget(self.amount_edit)
+        self.amount_row.addStretch()
+        form_layout.addLayout(self.amount_row)
+        self.amount_label.hide()
+        self.amount_edit.hide()
+
         self.message_label = BodyLabel("请输入您的消息：", self)
         form_layout.addWidget(self.message_label)
         self.message_edit = QPlainTextEdit(self)
@@ -77,11 +95,8 @@ class ContactDialog(QDialog):
         self.status_spinner.setStrokeWidth(2)
         self.online_label = BodyLabel("作者当前在线状态：查询中...", self)
         self.online_label.setStyleSheet("color:#BA8303;")
-        self.send_status_label = BodyLabel("", self)
-        self.send_status_label.setStyleSheet("color:#2563EB;")
         status_row.addWidget(self.status_spinner)
         status_row.addWidget(self.online_label)
-        status_row.addWidget(self.send_status_label)
         status_row.addStretch(1)
         layout.addLayout(status_row)
 
@@ -89,15 +104,20 @@ class ContactDialog(QDialog):
         btn_row.addStretch(1)
         cancel_btn = PushButton("取消", self)
         self.send_btn = PrimaryPushButton("发送", self)
+        self.send_spinner = IndeterminateProgressRing(self)
+        self.send_spinner.setFixedSize(20, 20)
+        self.send_spinner.setStrokeWidth(3)
+        self.send_spinner.hide()
         btn_row.addWidget(cancel_btn)
         btn_row.addWidget(self.send_btn)
+        btn_row.addWidget(self.send_spinner)
         layout.addLayout(btn_row)
 
         cancel_btn.clicked.connect(self.reject)
         self.send_btn.clicked.connect(self._on_send_clicked)
 
         # set default type
-        idx = self.type_combo.findData(default_type)
+        idx = self.type_combo.findText(default_type)
         if idx >= 0:
             self.type_combo.setCurrentIndex(idx)
         
@@ -183,7 +203,6 @@ class ContactDialog(QDialog):
         current_type = self.type_combo.currentText()
         
         # 动态添加/移除"白嫖卡密"选项
-        # 检查是否已有白嫖卡密选项
         has_whitepiao = False
         whitepiao_idx = -1
         for i in range(self.type_combo.count()):
@@ -192,37 +211,63 @@ class ContactDialog(QDialog):
                 whitepiao_idx = i
                 break
         
-        # 阻止信号避免递归
         self.type_combo.blockSignals(True)
         try:
             if current_type == "卡密获取" and not has_whitepiao:
-                # 添加白嫖卡密选项
                 self.type_combo.addItem("白嫖卡密（？）")
             elif current_type not in ("卡密获取", "白嫖卡密（？）") and has_whitepiao:
-                # 移除白嫖卡密选项
                 if whitepiao_idx >= 0:
                     self.type_combo.removeItem(whitepiao_idx)
         finally:
             self.type_combo.blockSignals(False)
 
-        if current_type in ("卡密获取", "白嫖卡密（？）"):
-            self.email_label.setText("您的邮箱（必填）：")
-        else:
-            self.email_label.setText("您的邮箱（选填，如果希望收到回复的话）：")
-
-        # preset text for donation/whitepiao
-        text = self.message_edit.toPlainText().strip()
+        # 控制金额行显示/隐藏
         if current_type == "卡密获取":
-            if not text.startswith("捐(施)助(舍)的金额：￥"):
-                self.message_edit.setPlainText("捐(施)助(舍)的金额：￥")
+            self.amount_label.show()
+            self.amount_edit.show()
+            self.email_label.setText("您的邮箱（必填）：")
+            self.message_label.setText("请输入您的消息：")
         elif current_type == "白嫖卡密（？）":
-            if text.startswith("捐(施)助(舍)的金额：￥"):
-                self.message_edit.setPlainText("")
+            self.amount_label.hide()
+            self.amount_edit.hide()
+            self.email_label.setText("您的邮箱（必填）：")
             self.message_label.setText("请输入白嫖话术：")
         else:
+            self.amount_label.hide()
+            self.amount_edit.hide()
+            self.email_label.setText("您的邮箱（选填，如果希望收到回复的话）：")
             self.message_label.setText("请输入您的消息：")
-            if text.startswith("捐(施)助(舍)的金额：￥"):
-                self.message_edit.setPlainText(text[13:])
+
+    def _on_amount_changed(self, text: str):
+        """金额输入框文本改变时同步到消息框"""
+        current_type = self.type_combo.currentText()
+        if current_type != "卡密获取":
+            return
+        
+        # 获取当前消息框内容
+        current_msg = self.message_edit.toPlainText()
+        
+        # 构建金额行
+        amount_line = f"捐(施)助(舍)的金额：￥{text}" if text else ""
+        
+        # 检查消息框是否已有金额行
+        lines = current_msg.split('\n')
+        if lines and lines[0].startswith("捐(施)助(舍)的金额：￥"):
+            # 替换第一行
+            if amount_line:
+                lines[0] = amount_line
+            else:
+                lines.pop(0)
+            new_msg = '\n'.join(lines)
+        else:
+            # 在开头添加金额行
+            if amount_line:
+                new_msg = amount_line + ('\n' + current_msg if current_msg else '')
+            else:
+                new_msg = current_msg
+        
+        # 更新消息框
+        self.message_edit.setPlainText(new_msg)
 
     def _on_status_loaded(self, text: str, color: str):
         """信号槽：在主线程更新状态标签"""
@@ -240,12 +285,28 @@ class ContactDialog(QDialog):
         return re.match(pattern, email) is not None
 
     def _on_send_clicked(self):
-        message = (self.message_edit.toPlainText() or "").strip()
         email = (self.email_edit.text() or "").strip()
+        
+        # 延迟清除邮箱选中状态，确保在所有事件处理完成后执行
+        QTimer.singleShot(10, lambda: self.email_edit.setSelection(0, 0))
+        QTimer.singleShot(10, lambda: self.send_btn.setFocus())
+        
         mtype = self.type_combo.currentData() or "报错反馈"
-        if not message:
-            InfoBar.warning("", "请输入消息内容", parent=self, position=InfoBarPosition.TOP, duration=2000)
-            return
+        
+        # 直接读取消息框内容
+        message = (self.message_edit.toPlainText() or "").strip()
+        
+        # 验证消息内容
+        if mtype == "卡密获取":
+            # 检查是否包含金额信息
+            if not message or not message.startswith("捐(施)助(舍)的金额：￥"):
+                InfoBar.warning("", "请输入捐助金额", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                return
+        else:
+            if not message:
+                InfoBar.warning("", "请输入消息内容", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                return
+        
         if mtype in ("卡密获取", "白嫖卡密（？）") and not email:
             InfoBar.warning("", f"{mtype}必须填写邮箱地址", parent=self, position=InfoBarPosition.TOP, duration=2000)
             return
@@ -269,33 +330,46 @@ class ContactDialog(QDialog):
         api_url = os.getenv("CONTACT_API_URL")
         if not api_url:
             InfoBar.error("", "联系API未配置，请检查 .env 文件", parent=self, position=InfoBarPosition.TOP, duration=3000)
-            self.send_btn.setEnabled(True)
-            self.send_status_label.setText("")
             return
         payload = {"message": full_message, "timestamp": datetime.now().isoformat()}
 
+        # 清除焦点，防止邮箱被选中
+        self.send_btn.setFocus()
+        
         self.send_btn.setEnabled(False)
-        self.send_status_label.setText("正在发送...")
+        self.send_btn.setText("发送中...")
+        self.send_spinner.show()
+
+        # 捕获 mtype 到局部变量
+        message_type = mtype
 
         def _send():
             try:
                 resp = post(api_url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
                 ok = resp.status_code == 200
                 def _done():
-                    self.send_btn.setEnabled(True)
-                    self.send_status_label.setText("")
-                    if ok:
-                        msg = "发送成功！请留意邮件信息！" if mtype == "卡密获取" else "消息已成功发送！"
-                        InfoBar.success("", msg, parent=self, position=InfoBarPosition.TOP, duration=2500)
-                        self.accept()
-                    else:
-                        InfoBar.error("", f"发送失败：{resp.status_code}", parent=self, position=InfoBarPosition.TOP, duration=2500)
+                    try:
+                        self.send_spinner.hide()
+                        self.send_btn.setEnabled(True)
+                        self.send_btn.setText("发送")
+                        if ok:
+                            msg = "发送成功！请留意邮件信息！" if message_type == "卡密获取" else "消息已成功发送！"
+                            InfoBar.success("", msg, parent=self, position=InfoBarPosition.TOP, duration=2500)
+                            QTimer.singleShot(500, self.accept)
+                        else:
+                            InfoBar.error("", f"发送失败：{resp.status_code}", parent=self, position=InfoBarPosition.TOP, duration=2500)
+                    except Exception as e:
+                        print(f"Error in _done: {e}")
                 QTimer.singleShot(0, _done)
             except Exception as exc:
                 def _err():
-                    self.send_btn.setEnabled(True)
-                    self.send_status_label.setText("")
-                    InfoBar.error("", f"发送失败：{exc}", parent=self, position=InfoBarPosition.TOP, duration=3000)
+                    try:
+                        self.send_spinner.hide()
+                        self.send_btn.setEnabled(True)
+                        self.send_btn.setText("发送")
+                        InfoBar.error("", f"发送失败：{exc}", parent=self, position=InfoBarPosition.TOP, duration=3000)
+                    except Exception as e:
+                        print(f"Error in _err: {e}")
                 QTimer.singleShot(0, _err)
 
         threading.Thread(target=_send, daemon=True).start()

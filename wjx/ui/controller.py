@@ -27,7 +27,6 @@ from wjx.utils.load_save import RuntimeConfig, load_config, save_config
 from wjx.utils.log_utils import LOG_BUFFER_HANDLER, log_popup_confirm, log_popup_error, log_popup_info, log_popup_warning
 from wjx.network.random_ip import (
     _fetch_new_proxy_batch,
-    ensure_random_ip_ready,
     on_random_ip_toggle,
     get_effective_proxy_api_url,
 )
@@ -340,8 +339,6 @@ class RunController(QObject):
 
         proxy_pool: List[str] = []
         if config.random_ip_enabled:
-            if not ensure_random_ip_ready(self.adapter):
-                return
             try:
                 proxy_pool = _fetch_new_proxy_batch(
                     expected_count=max(1, config.threads),

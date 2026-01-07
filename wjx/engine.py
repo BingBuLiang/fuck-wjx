@@ -905,65 +905,6 @@ def decode_qrcode(image_source: Union[str, Image.Image]) -> Optional[str]:
         return None
 
 
-def _normalize_html_text(value: Optional[str]) -> str:
-    if not value:
-        return ""
-    return _HTML_SPACE_RE.sub(" ", value).strip()
-
-
-def _extract_survey_title_from_html(html: str) -> Optional[str]:
-    """尝试从问卷 HTML 文本中提取标题。"""
-    if not BeautifulSoup:
-        return None
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-    except Exception:
-        return None
-
-    selectors = [
-        "#divTitle h1",
-        "#divTitle",
-        ".surveytitle",
-        ".survey-title",
-        ".surveyTitle",
-        ".wjdcTitle",
-        ".htitle",
-        ".topic_tit",
-        "#htitle",
-        "#lbTitle",
-    ]
-    candidates: List[str] = []
-    for selector in selectors:
-        element = soup.select_one(selector)
-        if element:
-            text = _normalize_html_text(element.get_text(" ", strip=True))
-            if text:
-                candidates.append(text)
-
-    if not candidates:
-        for tag_name in ("h1", "h2"):
-            header = soup.find(tag_name)
-            if header:
-                text = _normalize_html_text(header.get_text(" ", strip=True))
-                if text:
-                    candidates.append(text)
-                if candidates:
-                    break
-
-    title_tag = soup.find("title")
-    if title_tag:
-        text = _normalize_html_text(title_tag.get_text(" ", strip=True))
-        if text:
-            candidates.append(text)
-
-    for raw in candidates:
-        cleaned = raw
-        cleaned = re.sub(r"(?:[-|]\s*)?(?:问卷星.*)$", "", cleaned, flags=re.IGNORECASE)
-        cleaned = cleaned.strip(" -_|")
-        if cleaned:
-            return cleaned
-    return None
-
 
 def _extract_question_number_from_div(question_div) -> Optional[int]:
     topic_attr = question_div.get("topic")

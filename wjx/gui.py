@@ -2,7 +2,6 @@ import sys
 import time
 
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import QTimer
 
 from wjx.boot import preload_boot_splash, update_boot_splash, close_boot_splash
 from wjx.utils.log_utils import setup_logging

@@ -109,7 +109,8 @@ class RuntimeConfig:
     timed_mode_interval: float = 3.0
     random_ip_enabled: bool = False
     random_proxy_api: Optional[str] = None
-    proxy_source: str = "default"  # 代理源选择: "default" 或 "pikachu"
+    proxy_source: str = "default"  # 代理源选择: "default", "pikachu" 或 "custom"
+    custom_proxy_api: str = ""  # 自定义代理API地址
     random_ua_enabled: bool = False
     random_ua_keys: List[str] = field(default_factory=lambda: list(DEFAULT_RANDOM_UA_KEYS))
     fail_stop_enabled: bool = True
@@ -223,9 +224,11 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     )
     config.random_proxy_api = raw.get("random_proxy_api") or raw.get("random_proxy_api_url") or None
     config.proxy_source = str(raw.get("proxy_source") or "default")
+    config.custom_proxy_api = str(raw.get("custom_proxy_api") or "")
 
     # random UA: legacy payload stored under random_user_agent
-    legacy_ua = raw.get("random_user_agent") if isinstance(raw.get("random_user_agent"), dict) else {}
+    legacy_ua_raw = raw.get("random_user_agent")
+    legacy_ua: Dict[str, Any] = legacy_ua_raw if isinstance(legacy_ua_raw, dict) else {}
     config.random_ua_enabled = bool(raw.get("random_ua_enabled") if "random_ua_enabled" in raw else legacy_ua.get("enabled"))
     selected_ua_keys = raw.get("random_ua_keys") if "random_ua_keys" in raw else legacy_ua.get("selected")
     config.random_ua_keys = _filter_valid_user_agent_keys(selected_ua_keys or [])

@@ -158,8 +158,8 @@ class DashboardPage(QWidget):
         ip_row.setSpacing(8)
         ip_row.addWidget(BodyLabel("随机IP计数：", self))
         self.random_ip_hint = BodyLabel("--/--", self)
-        self.random_ip_hint.setMinimumWidth(120)
         ip_row.addWidget(self.random_ip_hint)
+        ip_row.addSpacing(4)
         self.card_btn = PushButton("解锁大额IP", self)
         ip_row.addWidget(self.card_btn)
         ip_row.addStretch(1)
@@ -405,6 +405,16 @@ class DashboardPage(QWidget):
         return cfg
 
     def update_random_ip_counter(self, count: int, limit: int, unlimited: bool, custom_api: bool):
+        from wjx.network.random_ip import _PREMIUM_RANDOM_IP_LIMIT
+        # 检查是否已解锁大额IP（额度上限>=400）
+        is_unlocked = limit >= _PREMIUM_RANDOM_IP_LIMIT
+        if is_unlocked:
+            self.card_btn.setEnabled(False)
+            self.card_btn.setText("已解锁")
+        else:
+            self.card_btn.setEnabled(True)
+            self.card_btn.setText("解锁大额IP")
+        
         if custom_api:
             self.random_ip_hint.setText("自定义接口")
             self.random_ip_hint.setStyleSheet("color:#ff8c00;")
@@ -414,10 +424,44 @@ class DashboardPage(QWidget):
             self.random_ip_hint.setStyleSheet("color:green;")
             return
         self.random_ip_hint.setText(f"{count}/{limit}")
-        self.random_ip_hint.setStyleSheet("color:#6b6b6b;")
+        # 额度耗尽时变红
+        if count >= limit:
+            self.random_ip_hint.setStyleSheet("color:red;")
+        else:
+            self.random_ip_hint.setStyleSheet("color:#6b6b6b;")
+        # 达到上限时自动关闭随机IP开关
+        if count >= limit and self.random_ip_cb.isChecked():
+            self.random_ip_cb.blockSignals(True)
+            self.random_ip_cb.setChecked(False)
+            self.random_ip_cb.blockSignals(False)
+            try:
+                self.settings_page.random_ip_switch.blockSignals(True)
+                self.settings_page.random_ip_switch.setChecked(False)
+                self.settings_page.random_ip_switch.blockSignals(False)
+            except Exception:
+                pass
 
     def _on_random_ip_toggled(self, state: int):
         enabled = state != 0
+        # 先同步检查限制，防止快速点击绕过
+        if enabled:
+            from wjx.utils.registry_manager import RegistryManager
+            from wjx.network.random_ip import get_random_ip_limit
+            if not RegistryManager.is_quota_unlimited():
+                count = RegistryManager.read_submit_count()
+                limit = max(1, get_random_ip_limit())
+                if count >= limit:
+                    self._toast(f"随机IP已达{limit}份限制，请验证卡密后再启用。", "warning")
+                    self.random_ip_cb.blockSignals(True)
+                    self.random_ip_cb.setChecked(False)
+                    self.random_ip_cb.blockSignals(False)
+                    try:
+                        self.settings_page.random_ip_switch.blockSignals(True)
+                        self.settings_page.random_ip_switch.setChecked(False)
+                        self.settings_page.random_ip_switch.blockSignals(False)
+                    except Exception:
+                        pass
+                    return
         try:
             self.controller.adapter.random_ip_enabled_var.set(bool(enabled))
             on_random_ip_toggle(self.controller.adapter)
@@ -475,25 +519,21 @@ class DashboardPage(QWidget):
             status_fetcher=get_status,
             status_formatter=_format_status_payload,
             contact_handler=lambda: self._open_contact_dialog(default_type="卡密获取"),
+            card_validator=_validate_card,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        code = dialog.get_card_code()
-        if not code:
-            self._toast("未输入卡密", "warning")
-            return
-        if _validate_card(code):
-            RegistryManager.set_quota_unlimited(True)
-            RegistryManager.reset_submit_count()
+        # 验证成功后处理解锁逻辑：设置400份额度上限（不重置已用额度）
+        if dialog.get_validation_result():
+            from wjx.network.random_ip import _PREMIUM_RANDOM_IP_LIMIT
+            RegistryManager.write_quota_limit(_PREMIUM_RANDOM_IP_LIMIT)
+            RegistryManager.set_quota_unlimited(False)
             refresh_ip_counter_display(self.controller.adapter)
             self.random_ip_cb.setChecked(True)
             try:
                 self.settings_page.random_ip_switch.setChecked(True)
             except Exception:
                 pass
-            self._toast("卡密验证通过，已解锁额度", "success")
-        else:
-            self._toast("卡密验证失败，请重试", "error")
 
     def _edit_selected_entry(self):
         """编辑选中的题目 - 由于代码过长，这里简化实现"""

@@ -420,6 +420,11 @@ def create_playwright_driver(
                 x, y = window_position
                 launch_args["args"] = [f"--window-position={x},{y}"]
 
+            # 当使用 context 级别代理时，必须在 launch 时设置一个占位的全局代理
+            # 参考: https://playwright.dev/python/docs/network#http-proxy
+            if normalized_proxy:
+                launch_args["proxy"] = {"server": "http://per-context"}
+
             browser_instance = pw.chromium.launch(**launch_args)
 
             context_args: Dict[str, Any] = {}

@@ -1,7 +1,7 @@
 """卡密解锁对话框"""
 import os
 import webbrowser
-from typing import Optional
+from typing import Optional, Callable
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLineEdit
@@ -16,6 +16,8 @@ from qfluentwidgets import (
     Action,
     FluentIcon,
     RoundMenu,
+    InfoBar,
+    InfoBarPosition,
 )
 
 from wjx.ui.widgets import StatusFetchWorker
@@ -24,15 +26,34 @@ from wjx.utils.load_save import get_assets_directory
 from wjx.utils.version import ISSUE_FEEDBACK_URL
 
 
+class CardValidateWorker(QThread):
+    """卡密验证 Worker"""
+    finished = Signal(bool)  # 验证结果
+
+    def __init__(self, card_code: str, validator: Callable[[str], object]):
+        super().__init__()
+        self._card_code = card_code
+        self._validator = validator
+
+    def run(self):
+        try:
+            result = self._validator(self._card_code)
+            self.finished.emit(result)
+        except Exception:
+            self.finished.emit(False)
+
+
 class CardUnlockDialog(QDialog):
     """解锁大额随机 IP 的说明/输入弹窗。使用 QThread + Worker 模式确保线程安全。"""
 
     _statusLoaded = Signal(str, str)  # text, color
+    _validateFinished = Signal(bool)  # 验证结果信号
 
-    def __init__(self, parent=None, status_fetcher=None, status_formatter=None, contact_handler=None):
+    def __init__(self, parent=None, status_fetcher=None, status_formatter=None, contact_handler=None, card_validator=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self._statusLoaded.connect(self._on_status_loaded)
+        self._validateFinished.connect(self._on_validate_finished)
         self.setWindowTitle("随机IP额度限制")
         self.resize(820, 600)
         
@@ -42,6 +63,9 @@ class CardUnlockDialog(QDialog):
         self._status_timer: Optional[QTimer] = None
         self._status_fetcher = status_fetcher
         self._status_formatter = status_formatter
+        self._card_validator = card_validator
+        self._validate_thread: Optional[CardValidateWorker] = None
+        self._validation_result: Optional[bool] = None
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
@@ -113,14 +137,20 @@ class CardUnlockDialog(QDialog):
 
         action_row = QHBoxLayout()
         action_row.addStretch(1)
-        cancel_btn = PushButton("取消", self)
-        ok_btn = PrimaryPushButton("验证", self)
-        action_row.addWidget(cancel_btn)
-        action_row.addWidget(ok_btn)
+        self.cancel_btn = PushButton("取消", self)
+        self.ok_btn = PrimaryPushButton("验证", self)
+        # 验证按钮旁的转圈动画（放在右边）
+        self.validate_spinner = IndeterminateProgressRing(self)
+        self.validate_spinner.setFixedSize(20, 20)
+        self.validate_spinner.setStrokeWidth(2)
+        self.validate_spinner.hide()
+        action_row.addWidget(self.cancel_btn)
+        action_row.addWidget(self.ok_btn)
+        action_row.addWidget(self.validate_spinner)
         layout.addLayout(action_row)
 
-        cancel_btn.clicked.connect(self.reject)
-        ok_btn.clicked.connect(self.accept)
+        self.cancel_btn.clicked.connect(self.reject)
+        self.ok_btn.clicked.connect(self._on_validate_clicked)
         self.contact_btn.clicked.connect(contact_handler if callable(contact_handler) else self._open_contact)
         self.donate_btn.clicked.connect(self._open_donate)
 
@@ -188,10 +218,10 @@ class CardUnlockDialog(QDialog):
         self._worker = None
         self._worker_thread = None
 
-    def closeEvent(self, event):
+    def closeEvent(self, arg__1):
         """对话框关闭时安全停止线程"""
         self._stop_status_polling()
-        super().closeEvent(event)
+        super().closeEvent(arg__1)
 
     def reject(self):
         """取消时安全停止线程"""
@@ -302,5 +332,53 @@ class CardUnlockDialog(QDialog):
         except Exception:
             pass
 
+    def _on_validate_clicked(self):
+        """点击验证按钮时触发"""
+        code = self.card_edit.text().strip()
+        if not code:
+            InfoBar.warning("", "请输入卡密", parent=self, position=InfoBarPosition.TOP, duration=2000)
+            return
+        
+        # 如果没有验证器，直接返回卡密（兼容旧逻辑）
+        if not callable(self._card_validator):
+            self._stop_status_polling()
+            super().accept()
+            return
+        
+        # 禁用按钮，显示转圈动画
+        self.ok_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(False)
+        self.validate_spinner.show()
+        
+        # 启动验证线程
+        self._validate_thread = CardValidateWorker(code, self._card_validator)
+        self._validate_thread.finished.connect(self._validateFinished.emit)
+        self._validate_thread.start()
+
+    def _on_validate_finished(self, success: bool):
+        """验证完成后的回调"""
+        # 隐藏转圈动画，恢复按钮
+        self.validate_spinner.hide()
+        self.ok_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(True)
+        
+        self._validation_result = success
+        
+        if success:
+            InfoBar.success("", "卡密验证通过，已解锁额度", parent=self, position=InfoBarPosition.TOP, duration=2000)
+            # 延迟关闭窗口，让用户看到成功提示
+            QTimer.singleShot(1500, self._close_on_success)
+        else:
+            InfoBar.error("", "卡密验证失败，请重试", parent=self, position=InfoBarPosition.TOP, duration=2500)
+
+    def _close_on_success(self):
+        """验证成功后关闭窗口"""
+        self._stop_status_polling()
+        super().accept()
+
     def get_card_code(self) -> Optional[str]:
         return self.card_edit.text().strip() or None
+
+    def get_validation_result(self) -> Optional[bool]:
+        """获取验证结果"""
+        return self._validation_result

@@ -21,6 +21,7 @@ from qfluentwidgets import (
     SwitchButton,
     CheckBox,
     ComboBox,
+    LineEdit,
     FluentIcon,
     TeachingTip,
     TeachingTipTailPosition,
@@ -179,12 +180,30 @@ class SettingsPage(ScrollArea):
         proxy_source_row.setSpacing(8)
         proxy_source_row.addWidget(BodyLabel("代理源：", self.view))
         self.proxy_source_combo = ComboBox(self.view)
-        self.proxy_source_combo.addItem("默认", "default")
-        self.proxy_source_combo.addItem("皮卡丘代理站 (中国大陆)", "pikachu")
+        self.proxy_source_combo.addItem("默认", userData="default")
+        self.proxy_source_combo.addItem("皮卡丘代理站 (中国大陆)", userData="pikachu")
+        self.proxy_source_combo.addItem("自定义", userData="custom")
         self.proxy_source_combo.setMinimumWidth(200)
         proxy_source_row.addWidget(self.proxy_source_combo)
         proxy_source_row.addStretch(1)
         feature_layout.addLayout(proxy_source_row)
+
+        # 自定义API地址输入框 - 使用容器widget便于整体隐藏/显示
+        self.custom_api_container = QWidget(feature_group)
+        custom_api_layout = QHBoxLayout(self.custom_api_container)
+        custom_api_layout.setContentsMargins(0, 0, 0, 0)
+        custom_api_layout.setSpacing(8)
+        self.custom_api_label = BodyLabel("API地址：", self.custom_api_container)
+        custom_api_layout.addWidget(self.custom_api_label)
+        self.custom_api_edit = LineEdit(self.custom_api_container)
+        self.custom_api_edit.setPlaceholderText("仅支持json返回格式")
+        self.custom_api_edit.setMinimumWidth(300)
+        self.custom_api_edit.setFixedHeight(36)
+        custom_api_layout.addWidget(self.custom_api_edit)
+        custom_api_layout.addStretch(1)
+        feature_layout.addWidget(self.custom_api_container)
+        # 默认隐藏
+        self.custom_api_container.hide()
 
         ua_group = CardWidget(self.view)
         ua_layout = QVBoxLayout(ua_group)
@@ -219,7 +238,7 @@ class SettingsPage(ScrollArea):
         self.interval_max_btn.clicked.connect(lambda: self._show_time_picker("interval_max"))
         self.answer_min_btn.clicked.connect(lambda: self._show_time_picker("answer_min"))
         self.answer_max_btn.clicked.connect(lambda: self._show_time_picker("answer_max"))
-        self.proxy_source_combo.currentIndexChanged.connect(self._on_proxy_source_changed)
+        self.proxy_source_combo.currentIndexChanged.connect(lambda idx: self._on_proxy_source_changed())
 
     def _on_random_ip_toggled(self, enabled: bool):
         """参数页随机IP开关切换时，同步到主页并显示弹窗"""
@@ -233,11 +252,23 @@ class SettingsPage(ScrollArea):
             finally:
                 self.random_ip_switch.blockSignals(False)
 
-    def _on_proxy_source_changed(self, index: int):
+    def _on_proxy_source_changed(self, text: str = ""):
         """代理源选择变化时更新设置"""
+        idx = self.proxy_source_combo.currentIndex()
+        source = str(self.proxy_source_combo.itemData(idx)) if idx >= 0 else "default"
+        if not source or source == "None":
+            source = "default"
+        is_custom = source == "custom"
+        # 显示/隐藏自定义API输入框容器
+        if is_custom:
+            self.custom_api_container.show()
+        else:
+            self.custom_api_container.hide()
         try:
-            from wjx.network.random_ip import set_proxy_source
-            source = self.proxy_source_combo.currentData() or "default"
+            from wjx.network.random_ip import set_proxy_source, set_proxy_api_override
+            if is_custom:
+                api_url = self.custom_api_edit.text().strip()
+                set_proxy_api_override(api_url if api_url else None)
             set_proxy_source(source)
         except Exception:
             pass
@@ -433,9 +464,15 @@ class SettingsPage(ScrollArea):
         
         # 保存代理源设置
         try:
-            cfg.proxy_source = self.proxy_source_combo.currentData() or "default"
+            idx = self.proxy_source_combo.currentIndex()
+            source = str(self.proxy_source_combo.itemData(idx)) if idx >= 0 else "default"
+            if not source or source == "None":
+                source = "default"
+            cfg.proxy_source = source
+            cfg.custom_proxy_api = self.custom_api_edit.text().strip() if source == "custom" else ""
         except Exception:
             cfg.proxy_source = "default"
+            cfg.custom_proxy_api = ""
 
     def apply_config(self, cfg: RuntimeConfig):
         self.target_spin.setValue(max(1, cfg.target))
@@ -475,10 +512,17 @@ class SettingsPage(ScrollArea):
         # 应用代理源设置
         try:
             proxy_source = getattr(cfg, "proxy_source", "default")
+            custom_api = getattr(cfg, "custom_proxy_api", "")
             idx = self.proxy_source_combo.findData(proxy_source)
             if idx >= 0:
                 self.proxy_source_combo.setCurrentIndex(idx)
-            from wjx.network.random_ip import set_proxy_source
+            # 设置自定义API地址并显示/隐藏输入框容器
+            self.custom_api_edit.setText(custom_api)
+            is_custom = proxy_source == "custom"
+            self.custom_api_container.setVisible(is_custom)
+            from wjx.network.random_ip import set_proxy_source, set_proxy_api_override
+            if is_custom and custom_api:
+                set_proxy_api_override(custom_api)
             set_proxy_source(proxy_source)
         except Exception:
             pass

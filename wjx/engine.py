@@ -2774,7 +2774,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
     global cur_num, cur_fail
     
     # 立即输出启动日志，让用户知道线程已经开始
-    logging.info("[启动] 工作线程已启动，正在初始化...")
+    logging.info("工作线程已启动，正在初始化...")
     
     fast_mode = _is_fast_mode()
     timed_mode_active = _timed_mode_active()
@@ -2787,13 +2787,13 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
     preferred_browsers = list(BROWSER_PREFERENCE)
     driver: Optional[BrowserDriver] = None
     
-    logging.info(f"[配置] 目标份数: {target_num}, 当前进度: {cur_num}/{target_num}")
+    logging.info(f"目标份数: {target_num}, 当前进度: {cur_num}/{target_num}")
     if timed_mode_active:
-        logging.info("[配置] 定时模式已启用")
+        logging.info("定时模式已启用")
     if random_proxy_ip_enabled:
-        logging.info("[配置] 随机IP已启用")
+        logging.info("随机IP已启用")
     if random_user_agent_enabled:
-        logging.info("[配置] 随机UA已启用")
+        logging.info("随机UA已启用")
 
     def _register_driver(instance: BrowserDriver) -> None:
         if gui_instance and hasattr(gui_instance, 'active_drivers'):
@@ -2841,14 +2841,14 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
         driver = None
 
     while True:
-        logging.info("[循环] 进入主循环")
+        logging.info("进入主循环")
         if stop_signal.is_set():
             break
         with lock:
             if stop_signal.is_set() or (target_num > 0 and cur_num >= target_num):
                 break
         
-        logging.info("[检查] 检查时长控制状态")
+        logging.info("检查时长控制状态")
         if _full_simulation_active():
             if not _wait_for_next_full_simulation_slot(stop_signal):
                 break
@@ -2857,13 +2857,13 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             break
         
         if driver is None:
-            logging.info("[浏览器] 准备创建浏览器实例...")
+            logging.info("准备创建浏览器实例...")
             proxy_address = _select_proxy_for_session()
             if proxy_address:
-                logging.info(f"[代理] 使用代理：{proxy_address}")
+                logging.info(f"使用代理：{proxy_address}")
                 # 快速验证代理可用性（3秒超时）
                 if not _proxy_is_responsive(proxy_address):
-                    logging.warning(f"[代理] 代理无响应，丢弃：{proxy_address}")
+                    logging.warning(f"代理无响应，丢弃：{proxy_address}")
                     _discard_unresponsive_proxy(proxy_address)
                     if stop_signal.is_set():
                         break
@@ -2873,7 +2873,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             if ua_label:
                 logging.info(f"使用随机 UA：{ua_label}")
             
-            logging.info("[浏览器] 正在启动浏览器...")
+            logging.info("正在启动浏览器...")
             try:
                 driver, active_browser = create_playwright_driver(
                     headless=False,
@@ -2882,11 +2882,11 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                     user_agent=ua_value,
                     window_position=(window_x_pos, window_y_pos),
                 )
-                logging.info(f"[浏览器] 浏览器启动成功：{active_browser}")
+                logging.info(f"浏览器启动成功：{active_browser}")
             except Exception as exc:
                 if stop_signal.is_set():
                     break
-                logging.error(f"[浏览器] 启动浏览器失败：{exc}")
+                logging.error(f"启动浏览器失败：{exc}")
                 traceback.print_exc()
                 if stop_signal.wait(1.0):
                     break
@@ -2894,9 +2894,9 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             
             preferred_browsers = [active_browser] + [b for b in BROWSER_PREFERENCE if b != active_browser]
             _register_driver(driver)
-            logging.info("[浏览器] 设置窗口大小...")
+            logging.info("设置窗口大小...")
             driver.set_window_size(550, 650)
-            logging.info("[浏览器] 浏览器初始化完成")
+            logging.info("浏览器初始化完成")
 
         driver_had_error = False
         try:

@@ -42,6 +42,7 @@ _CUSTOM_PROXY_CONFIG_FILENAME = "custom_ip.json"
 # 代理源常量
 PROXY_SOURCE_DEFAULT = "default"  # 默认代理源
 PROXY_SOURCE_PIKACHU = "pikachu"  # 皮卡丘代理站
+PROXY_SOURCE_CUSTOM = "custom"  # 自定义代理源
 
 # 当前选择的代理源
 _current_proxy_source: str = PROXY_SOURCE_DEFAULT
@@ -369,7 +370,14 @@ def _fetch_new_proxy_batch(expected_count: int = 1, proxy_url: Optional[str] = N
             logging.error(f"从皮卡丘代理站获取代理失败: {exc}")
             raise RuntimeError(f"获取皮卡丘代理失败: {exc}")
     
-    # 默认代理源：使用原有逻辑
+    if current_source == PROXY_SOURCE_CUSTOM:
+        # 使用自定义代理API
+        custom_url = get_effective_proxy_api_url()
+        if not custom_url:
+            raise RuntimeError("自定义代理API地址未配置")
+        proxy_url = custom_url
+    
+    # 默认代理源或自定义代理源：使用原有逻辑
     candidates: List[str] = []
     errors: List[str] = []
     for url in _proxy_api_candidates(expected_count, proxy_url):
@@ -508,7 +516,12 @@ def refresh_ip_counter_display(gui: Any):
         return
     limit = max(1, get_random_ip_limit())
     count = RegistryManager.read_submit_count()
-    handler(count, limit, RegistryManager.is_quota_unlimited(), is_custom_proxy_api_active())
+    unlimited = RegistryManager.is_quota_unlimited()
+    custom_api = is_custom_proxy_api_active()
+    handler(count, limit, unlimited, custom_api)
+    # 达到上限时自动关闭随机IP开关
+    if not unlimited and not custom_api and count >= limit:
+        _set_random_ip_enabled(gui, False)
 
 
 def reset_ip_counter(gui: Any = None):
@@ -555,9 +568,9 @@ def show_card_validation_dialog(gui: Any = None) -> bool:
         log_popup_warning("需要卡密", "请在界面中输入卡密解锁随机IP额度")
         return False
     if _validate_card(str(card_code) if card_code else ""):
-        RegistryManager.set_quota_unlimited(True)
-        RegistryManager.reset_submit_count()
-        _invoke_popup(gui, "info", "验证成功", "卡密验证通过，已解锁随机IP提交额度。")
+        RegistryManager.write_quota_limit(_PREMIUM_RANDOM_IP_LIMIT)
+        RegistryManager.set_quota_unlimited(False)
+        _invoke_popup(gui, "info", "验证成功", f"卡密验证通过，已解锁{_PREMIUM_RANDOM_IP_LIMIT}份随机IP提交额度。")
         return True
     _invoke_popup(gui, "error", "验证失败", "卡密验证失败，请检查后重试。")
     return False
@@ -581,12 +594,22 @@ def handle_random_ip_submission(gui: Any, stop_signal: Optional[threading.Event]
     if RegistryManager.is_quota_unlimited():
         return
     limit = max(1, get_random_ip_limit())
+    # 先检查当前计数是否已达限制
+    current_count = RegistryManager.read_submit_count()
+    if current_count >= limit:
+        logging.warning(f"随机IP提交已达{limit}份限制，停止任务并弹出卡密验证窗口")
+        if stop_signal:
+            stop_signal.set()
+        _disable_random_ip_and_show_dialog(gui)
+        return
+    # 未达限制时才递增计数
     ip_count = RegistryManager.increment_submit_count()
     logging.info(f"随机IP提交计数: {ip_count}/{limit}")
     try:
         _schedule_on_gui_thread(gui, lambda: refresh_ip_counter_display(gui))
     except Exception:
         pass
+    # 递增后再次检查是否达到限制
     if ip_count >= limit:
         logging.warning(f"随机IP提交已达{limit}份，停止任务并弹出卡密验证窗口")
         if stop_signal:

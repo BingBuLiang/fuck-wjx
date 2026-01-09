@@ -29,7 +29,10 @@ from wjx.network.random_ip import (
     _fetch_new_proxy_batch,
     on_random_ip_toggle,
     get_effective_proxy_api_url,
+    get_random_ip_limit,
+    is_custom_proxy_api_active,
 )
+from wjx.utils.registry_manager import RegistryManager
 
 
 class BoolVar:
@@ -306,17 +309,17 @@ class RunController(QObject):
 
     def start_run(self, config: RuntimeConfig):
         import logging
-        logging.info("[控制器] 收到启动请求")
+        logging.info("收到启动请求")
         
         if self.running:
-            logging.warning("[控制器] 任务已在运行中，忽略重复启动请求")
+            logging.warning("任务已在运行中，忽略重复启动请求")
             return
         if not getattr(config, "question_entries", None):
-            logging.error("[控制器] 未配置任何题目，无法启动")
+            logging.error("未配置任何题目，无法启动")
             self.runFailed.emit('未配置任何题目，无法开始执行（请先在"题目配置"页添加/配置题目）')
             return
         
-        logging.info(f"[控制器] 开始配置任务：目标{config.target}份，{config.threads}个线程")
+        logging.info(f"开始配置任务：目标{config.target}份，{config.threads}个线程")
         
         self.config = config
         self.question_entries = list(getattr(config, "question_entries", []) or [])
@@ -329,16 +332,25 @@ class RunController(QObject):
         )
         self.adapter.random_ip_enabled_var.set(config.random_ip_enabled)
         
-        logging.info(f"[控制器] 配置题目概率分布（共{len(config.question_entries)}题）")
+        logging.info(f"配置题目概率分布（共{len(config.question_entries)}题）")
         try:
             configure_probabilities(config.question_entries)
         except Exception as exc:
-            logging.error(f"[控制器] 配置题目失败：{exc}")
+            logging.error(f"配置题目失败：{exc}")
             self.runFailed.emit(str(exc))
             return
 
         proxy_pool: List[str] = []
         if config.random_ip_enabled:
+            # 检查是否已达随机IP上限
+            if not RegistryManager.is_quota_unlimited() and not is_custom_proxy_api_active():
+                count = RegistryManager.read_submit_count()
+                limit = max(1, get_random_ip_limit())
+                if count >= limit:
+                    logging.warning(f"随机IP已达{limit}份上限，无法启动")
+                    self.runFailed.emit(f"随机IP已达{limit}份上限，请关闭随机IP开关或解锁大额IP后再试")
+                    return
+            
             try:
                 proxy_pool = _fetch_new_proxy_batch(
                     expected_count=max(1, config.threads),
@@ -353,7 +365,7 @@ class RunController(QObject):
         self.runStateChanged.emit(True)
         self._status_timer.start()
 
-        logging.info(f"[控制器] 创建{config.threads}个工作线程")
+        logging.info(f"创建{config.threads}个工作线程")
         threads: List[threading.Thread] = []
         for idx in range(config.threads):
             x = 50 + idx * 60
@@ -367,14 +379,14 @@ class RunController(QObject):
             threads.append(t)
         self.worker_threads = threads
         
-        logging.info("[控制器] 启动所有工作线程")
+        logging.info("启动所有工作线程")
         for idx, t in enumerate(threads):
             t.start()
-            logging.info(f"[控制器] 线程 {idx+1}/{len(threads)} 已启动")
+            logging.info(f"线程 {idx+1}/{len(threads)} 已启动")
 
         monitor = threading.Thread(target=self._wait_for_threads, daemon=True, name="Monitor")
         monitor.start()
-        logging.info("[控制器] 任务启动完成，监控线程已启动")
+        logging.info("任务启动完成，监控线程已启动")
 
     def _wait_for_threads(self):
         for t in self.worker_threads:

@@ -1,21 +1,20 @@
 """界面设置页面"""
-import os
 import sys
 import subprocess
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QApplication
+from PySide6.QtCore import Qt, QSettings
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QApplication
 from qfluentwidgets import (
     ScrollArea,
-    SubtitleLabel,
-    BodyLabel,
-    CardWidget,
-    PushButton,
-    SwitchButton,
+    SettingCardGroup,
+    PushSettingCard,
+    FluentIcon,
     InfoBar,
     InfoBarPosition,
     MessageBox,
 )
+
+from wjx.ui.pages.runtime import SwitchSettingCard
 
 
 class SettingsPage(ScrollArea):
@@ -34,49 +33,53 @@ class SettingsPage(ScrollArea):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
-        layout.addWidget(SubtitleLabel("界面设置", self))
+        # 界面设置组
+        self.ui_group = SettingCardGroup("界面设置", self.view)
 
-        # 界面设置卡片
-        settings_card = CardWidget(self.view)
-        settings_layout = QVBoxLayout(settings_card)
-        settings_layout.setContentsMargins(16, 16, 16, 16)
-        settings_layout.setSpacing(12)
+        # 侧边栏展开设置卡片
+        self.sidebar_card = SwitchSettingCard(
+            FluentIcon.MENU,
+            "始终展开侧边栏",
+            "开启后侧边栏将始终保持展开状态",
+            self.ui_group
+        )
+        self.sidebar_card.setChecked(True)
+        self.ui_group.addSettingCard(self.sidebar_card)
 
-        # 侧边栏展开设置
-        sidebar_row = QHBoxLayout()
-        sidebar_label = BodyLabel("始终展开侧边栏", self)
-        self.sidebar_switch = SwitchButton(self)
-        self._pin_switch_label(self.sidebar_switch, "")
-        self.sidebar_switch.setChecked(True)
-        sidebar_row.addWidget(sidebar_label)
-        sidebar_row.addStretch(1)
-        sidebar_row.addWidget(self.sidebar_switch)
-        settings_layout.addLayout(sidebar_row)
+        # 重启程序设置卡片
+        self.restart_card = PushSettingCard(
+            text="重启",
+            icon=FluentIcon.SYNC,
+            title="重新启动程序",
+            content="重启程序以应用某些设置更改",
+            parent=self.ui_group
+        )
+        self.ui_group.addSettingCard(self.restart_card)
 
-        # 重启程序按钮
-        restart_row = QHBoxLayout()
-        restart_label = BodyLabel("重新启动程序", self)
-        self.restart_btn = PushButton("重启", self)
-        restart_row.addWidget(restart_label)
-        restart_row.addStretch(1)
-        restart_row.addWidget(self.restart_btn)
-        settings_layout.addLayout(restart_row)
+        layout.addWidget(self.ui_group)
 
-        layout.addWidget(settings_card)
+        # 软件更新组
+        self.update_group = SettingCardGroup("软件更新", self.view)
+
+        # 启动时检查更新开关
+        self.auto_update_card = SwitchSettingCard(
+            FluentIcon.UPDATE,
+            "在应用程序启动时检查更新",
+            "新版本将更加稳定并拥有更多功能（建议启用此选项）",
+            self.update_group
+        )
+        # 从设置中读取，默认开启
+        settings = QSettings("FuckWjx", "Settings")
+        self.auto_update_card.setChecked(settings.value("auto_check_update", True, type=bool))
+        self.update_group.addSettingCard(self.auto_update_card)
+
+        layout.addWidget(self.update_group)
         layout.addStretch(1)
 
         # 绑定事件
-        self.sidebar_switch.checkedChanged.connect(self._on_sidebar_toggled)
-        self.restart_btn.clicked.connect(self._restart_program)
-
-    def _pin_switch_label(self, sw: SwitchButton, text: str):
-        """保持开关两侧文本一致"""
-        try:
-            sw.setOnText(text)
-            sw.setOffText(text)
-            sw.setText(text)
-        except Exception:
-            sw.setText(text)
+        self.sidebar_card.switchButton.checkedChanged.connect(self._on_sidebar_toggled)
+        self.restart_card.clicked.connect(self._restart_program)
+        self.auto_update_card.switchButton.checkedChanged.connect(self._on_auto_update_toggled)
 
     def _on_sidebar_toggled(self, checked: bool):
         """侧边栏展开切换"""
@@ -89,13 +92,23 @@ class SettingsPage(ScrollArea):
                     nav.expand()
                 else:
                     nav.setCollapsible(True)
-                InfoBar.success("", f"侧边栏已设置为{'始终展开' if checked else '可折叠'}", parent=win, position=InfoBarPosition.TOP, duration=2000)
+                InfoBar.success(
+                    "",
+                    f"侧边栏已设置为{'始终展开' if checked else '可折叠'}",
+                    parent=win,
+                    position=InfoBarPosition.TOP,
+                    duration=2000
+                )
             except Exception:
                 pass
 
     def _restart_program(self):
         """重启程序"""
-        box = MessageBox("重启程序", "确定要重新启动程序吗？\n未保存的配置将会丢失。", self.window() or self)
+        box = MessageBox(
+            "重启程序",
+            "确定要重新启动程序吗？\n未保存的配置将会丢失。",
+            self.window() or self
+        )
         box.yesButton.setText("确定")
         box.cancelButton.setText("取消")
         if box.exec():
@@ -106,4 +119,22 @@ class SettingsPage(ScrollArea):
                 subprocess.Popen([sys.executable] + sys.argv)
                 QApplication.quit()
             except Exception as exc:
-                InfoBar.error("", f"重启失败：{exc}", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+                InfoBar.error(
+                    "",
+                    f"重启失败：{exc}",
+                    parent=self.window(),
+                    position=InfoBarPosition.TOP,
+                    duration=3000
+                )
+
+    def _on_auto_update_toggled(self, checked: bool):
+        """自动检查更新开关切换"""
+        settings = QSettings("FuckWjx", "Settings")
+        settings.setValue("auto_check_update", checked)
+        InfoBar.success(
+            "",
+            f"启动时检查更新已{'开启' if checked else '关闭'}",
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+            duration=2000
+        )

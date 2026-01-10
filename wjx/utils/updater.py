@@ -269,6 +269,20 @@ class UpdateManager:
 def _preview_release_notes(text: str, limit: int) -> str:
     if not text:
         return "暂无更新说明"
+    import re
+    # 移除 Markdown 标题标记
+    text = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
+    # 移除分隔线
+    text = re.sub(r'^---+\s*$', '', text, flags=re.MULTILINE)
+    # 移除删除线标记 ~~text~~ -> text
+    text = re.sub(r'~~(.+?)~~', r'\1', text)
+    # 移除粗体标记 **text** -> text
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    # 移除斜体标记 *text* -> text
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    # 移除多余空行
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = text.strip()
     preview = text[:limit]
     if len(text) > limit:
         preview += "\n..."
@@ -280,19 +294,29 @@ def check_updates_on_startup(gui=None, *, on_result=None) -> None:
 
     def _runner():
         try:
+            logging.info("开始检查更新...")
             update_info = UpdateManager.check_updates()
+            logging.info(f"检查更新结果: {update_info}")
             if update_info:
                 if gui is not None:
                     setattr(gui, "update_info", update_info)
                     callback = getattr(gui, "show_update_notification", None) or getattr(
                         gui, "_show_update_notification", None
                     )
+                    logging.info(f"找到回调函数: {callback}")
                     if callable(callback):
                         callback()
                 if callable(on_result):
                     on_result(update_info)
+            else:
+                logging.info("当前已是最新版本")
+                # 通知 GUI 显示最新版本徽章
+                if gui is not None:
+                    notify_latest = getattr(gui, "_notify_latest_version", None)
+                    if callable(notify_latest):
+                        notify_latest()
         except Exception as exc:
-            logging.debug(f"启动时检查更新失败: {exc}")
+            logging.warning(f"启动时检查更新失败: {exc}")
 
     Thread(target=_runner, daemon=True).start()
 

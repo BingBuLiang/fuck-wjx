@@ -6,8 +6,8 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, QThread, QTimer
-from PySide6.QtGui import QIcon, QGuiApplication, QPixmap
+from PySide6.QtCore import Qt, QThread, QTimer, QSettings, Signal
+from PySide6.QtGui import QColor, QIcon, QGuiApplication, QPixmap
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from qfluentwidgets import (
@@ -15,6 +15,7 @@ from qfluentwidgets import (
     AvatarWidget,
     FluentIcon,
     FluentWindow,
+    InfoBadge,
     InfoBar,
     InfoBarPosition,
     MessageBox,
@@ -66,6 +67,11 @@ from wjx.utils.github_auth import get_github_auth
 
 class MainWindow(FluentWindow):
     """主窗口，PowerToys 风格导航 + 圆角布局，支持主题动态切换。"""
+
+    # 更新通知信号（用于跨线程通信）
+    updateAvailable = Signal()
+    # 最新版本信号
+    isLatestVersion = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -129,6 +135,21 @@ class MainWindow(FluentWindow):
         self._center_on_screen()
 
         finish_boot_splash(1500)
+
+        # 连接更新通知信号
+        self.updateAvailable.connect(self._do_show_update_notification)
+        self.updateAvailable.connect(self._show_outdated_badge)
+        # 连接最新版本信号
+        self.isLatestVersion.connect(self._show_latest_version_badge)
+        self._latest_badge = None
+        self._outdated_badge = None
+        self._preview_badge = None
+
+        # 检查是否为预览版本，如果是则显示预览徽章
+        self._check_preview_version()
+
+        # 根据设置检查更新
+        self._check_update_on_startup()
 
     def resizeEvent(self, e):
         """调整启动页面组件位置"""
@@ -505,6 +526,95 @@ class MainWindow(FluentWindow):
         box.yesButton.setText("确定")
         box.cancelButton.hide()
         box.exec()
+
+    def _check_update_on_startup(self):
+        """根据设置在启动时检查更新"""
+        settings = QSettings("FuckWjx", "Settings")
+        if settings.value("auto_check_update", True, type=bool):
+            from wjx.utils.updater import check_updates_on_startup
+            check_updates_on_startup(self)
+
+    def _show_update_notification(self):
+        """显示更新通知（从后台线程安全调用）"""
+        self.updateAvailable.emit()
+
+    def _do_show_update_notification(self):
+        """实际显示更新通知"""
+        if not getattr(self, "update_info", None):
+            return
+        from wjx.utils.updater import show_update_notification
+        show_update_notification(self)
+
+    def _show_latest_version_badge(self):
+        """在标题栏显示最新版本徽章"""
+        # 如果是预览版本，不显示"最新"徽章（预览版本优先显示"预览"）
+        if self._preview_badge:
+            return
+        if self._latest_badge:
+            return
+        try:
+            # 在标题栏添加彩色徽章（绿色）
+            self._latest_badge = InfoBadge.custom(
+                "最新",
+                QColor("#10b981"),  # 浅色主题背景
+                QColor("#34d399"),  # 深色主题背景（更亮的绿色）
+                parent=self.titleBar
+            )
+            # 将徽章添加到标题栏布局
+            self.titleBar.hBoxLayout.insertWidget(2, self._latest_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        except Exception:
+            pass
+
+    def _show_outdated_badge(self):
+        """在标题栏显示过时版本徽章（红色）"""
+        if self._outdated_badge:
+            return
+        # 如果有预览徽章，先移除它（过时优先级更高）
+        if self._preview_badge:
+            try:
+                self.titleBar.hBoxLayout.removeWidget(self._preview_badge)
+                self._preview_badge.deleteLater()
+                self._preview_badge = None
+            except Exception:
+                pass
+        try:
+            # 在标题栏添加红色徽章
+            self._outdated_badge = InfoBadge.custom(
+                "过时",
+                QColor("#ef4444"),  # 浅色主题背景（红色）
+                QColor("#fd3c3c"),  # 深色主题背景（更亮的红色）
+                parent=self.titleBar
+            )
+            # 将徽章添加到标题栏布局
+            self.titleBar.hBoxLayout.insertWidget(2, self._outdated_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        except Exception:
+            pass
+
+    def _check_preview_version(self):
+        """检查是否为预览版本，如果是则显示预览徽章"""
+        if "pre" in __VERSION__.lower():
+            self._show_preview_badge()
+
+    def _show_preview_badge(self):
+        """在标题栏显示预览版本徽章（黄色）"""
+        if self._preview_badge:
+            return
+        try:
+            # 在标题栏添加黄色徽章
+            self._preview_badge = InfoBadge.custom(
+                "预览",
+                QColor("#f59e0b"),  # 浅色主题背景（黄色）
+                QColor("#fbbf24"),  # 深色主题背景（更亮的黄色）
+                parent=self.titleBar
+            )
+            # 将徽章添加到标题栏布局
+            self.titleBar.hBoxLayout.insertWidget(2, self._preview_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        except Exception:
+            pass
+
+    def _notify_latest_version(self):
+        """通知已是最新版本（从后台线程安全调用）"""
+        self.isLatestVersion.emit()
 
 
 def create_window() -> MainWindow:

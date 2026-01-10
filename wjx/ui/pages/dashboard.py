@@ -241,7 +241,7 @@ class DashboardPage(QWidget):
         self.progress_pct = StrongBodyLabel("0%", self)
         self.progress_pct.setMinimumWidth(50)
         self.progress_pct.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.progress_pct.setStyleSheet("font-size: 13pt; font-weight: bold;")
+        self.progress_pct.setStyleSheet("font-size: 13px; font-weight: bold;")
         self.start_btn = PrimaryPushButton("开始执行", self)
         self.stop_btn = PushButton("停止", self)
         self.stop_btn.setEnabled(False)

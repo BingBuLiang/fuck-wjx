@@ -1,4 +1,4 @@
-"""运行参数设置页面"""
+"""运行参数设置页面 - 使用 SettingCard 组件重构"""
 from typing import Dict, Optional
 
 from PySide6.QtCore import Qt
@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QGridLayout,
     QDialog,
-    QToolButton,
 )
 from qfluentwidgets import (
     ScrollArea,
@@ -25,12 +24,286 @@ from qfluentwidgets import (
     FluentIcon,
     PopupTeachingTip,
     TeachingTipTailPosition,
+    SettingCardGroup,
+    SettingCard,
+    ExpandGroupSettingCard,
+    IndicatorPosition,
+    TransparentToolButton,
 )
 
 from wjx.ui.widgets.no_wheel import NoWheelSlider, NoWheelSpinBox
 from wjx.ui.controller import RunController
 from wjx.utils.load_save import RuntimeConfig
 from wjx.utils.config import USER_AGENT_PRESETS
+
+
+class SpinBoxSettingCard(SettingCard):
+    """带 SpinBox 的设置卡"""
+
+    def __init__(self, icon, title, content, min_val=1, max_val=99999, default=10, parent=None):
+        super().__init__(icon, title, content, parent)
+        self.spinBox = NoWheelSpinBox(self)
+        self.spinBox.setRange(min_val, max_val)
+        self.spinBox.setValue(default)
+        self.spinBox.setMinimumWidth(110)
+        self.spinBox.setFixedHeight(36)
+        self.hBoxLayout.addWidget(self.spinBox, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+
+    def value(self):
+        return self.spinBox.value()
+
+    def setValue(self, value):
+        self.spinBox.setValue(value)
+
+
+class SwitchSettingCard(SettingCard):
+    """带开关的设置卡"""
+
+    def __init__(self, icon, title, content, parent=None):
+        super().__init__(icon, title, content, parent)
+        self.switchButton = SwitchButton(self, IndicatorPosition.RIGHT)
+        self.switchButton.setOnText("开")
+        self.switchButton.setOffText("关")
+        self.hBoxLayout.addWidget(self.switchButton, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+
+    def isChecked(self):
+        return self.switchButton.isChecked()
+
+    def setChecked(self, checked):
+        self.switchButton.setChecked(checked)
+
+    def blockSignals(self, block):
+        return self.switchButton.blockSignals(block)
+
+
+class RandomIPSettingCard(ExpandGroupSettingCard):
+    """随机IP设置卡 - 包含代理源选择"""
+
+    def __init__(self, parent=None):
+        super().__init__(FluentIcon.GLOBE, "随机 IP", "使用代理 IP 来模拟不同地区的访问", parent)
+
+        # 开关
+        self.switchButton = SwitchButton(self, IndicatorPosition.RIGHT)
+        self.switchButton.setOnText("开")
+        self.switchButton.setOffText("关")
+        self.addWidget(self.switchButton)
+
+        # 代理源选择容器
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(48, 12, 48, 12)
+        layout.setSpacing(12)
+
+        # 代理源下拉框
+        source_row = QHBoxLayout()
+        source_label = BodyLabel("代理源", container)
+        self.proxyCombo = ComboBox(container)
+        self.proxyCombo.addItem("默认", userData="default")
+        self.proxyCombo.addItem("皮卡丘代理站 (中国大陆)", userData="pikachu")
+        self.proxyCombo.addItem("自定义", userData="custom")
+        self.proxyCombo.setMinimumWidth(200)
+        source_row.addWidget(source_label)
+        source_row.addStretch(1)
+        source_row.addWidget(self.proxyCombo)
+        layout.addLayout(source_row)
+
+        # 自定义API输入
+        self.customApiRow = QWidget(container)
+        api_layout = QHBoxLayout(self.customApiRow)
+        api_layout.setContentsMargins(0, 0, 0, 0)
+        api_label = BodyLabel("API 地址", self.customApiRow)
+        self.customApiEdit = LineEdit(self.customApiRow)
+        self.customApiEdit.setPlaceholderText("仅支持json返回格式")
+        self.customApiEdit.setMinimumWidth(280)
+        api_layout.addWidget(api_label)
+        api_layout.addStretch(1)
+        api_layout.addWidget(self.customApiEdit)
+        self.customApiRow.hide()
+        layout.addWidget(self.customApiRow)
+
+        self.addGroupWidget(container)
+
+        # 代理源变化时显示/隐藏自定义API
+        self.proxyCombo.currentIndexChanged.connect(self._on_source_changed)
+
+    def _on_source_changed(self):
+        idx = self.proxyCombo.currentIndex()
+        source = str(self.proxyCombo.itemData(idx)) if idx >= 0 else "default"
+        self.customApiRow.setVisible(source == "custom")
+        # 刷新布局 - 重新触发展开/收起来更新高度
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._refreshLayout)
+
+    def _refreshLayout(self):
+        """刷新展开卡片的布局"""
+        # 通过重新设置展开状态来刷新高度
+        if self.isExpand:
+            self._adjustViewSize()
+
+    def isChecked(self):
+        return self.switchButton.isChecked()
+
+    def setChecked(self, checked):
+        self.switchButton.setChecked(checked)
+
+
+class TimedModeSettingCard(SettingCard):
+    """定时模式设置卡 - 带帮助按钮"""
+
+    def __init__(self, icon, title, content, parent=None):
+        super().__init__(icon, title, content, parent)
+        from PySide6.QtCore import QSize
+        self.helpButton = TransparentToolButton(FluentIcon.INFO, self)
+        self.helpButton.setFixedSize(18, 18)
+        self.helpButton.setIconSize(QSize(14, 14))
+        self.helpButton.setCursor(Qt.CursorShape.PointingHandCursor)
+        # 创建标题行布局，把图标放在标题右边
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(4)
+        self.vBoxLayout.removeWidget(self.titleLabel)
+        title_row.addWidget(self.titleLabel)
+        title_row.addWidget(self.helpButton)
+        title_row.addStretch()
+        self.vBoxLayout.insertLayout(0, title_row)
+        self.switchButton = SwitchButton(self, IndicatorPosition.RIGHT)
+        self.switchButton.setOnText("开")
+        self.switchButton.setOffText("关")
+        self.hBoxLayout.addWidget(self.switchButton, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+
+    def isChecked(self):
+        return self.switchButton.isChecked()
+
+    def setChecked(self, checked):
+        self.switchButton.setChecked(checked)
+
+
+class RandomUASettingCard(ExpandGroupSettingCard):
+    """随机UA设置卡 - 包含UA类型选择"""
+
+    def __init__(self, parent=None):
+        super().__init__(FluentIcon.ROBOT, "随机 UA", "随机使用不同的 User-Agent", parent)
+        self.checkboxes: Dict[str, CheckBox] = {}
+
+        # 开关
+        self.switchButton = SwitchButton(self, IndicatorPosition.RIGHT)
+        self.switchButton.setOnText("开")
+        self.switchButton.setOffText("关")
+        self.addWidget(self.switchButton)
+
+        # UA 类型选择容器
+        container = QWidget()
+        grid = QGridLayout(container)
+        grid.setContentsMargins(48, 12, 48, 12)
+        grid.setSpacing(12)
+
+        col, row = 0, 0
+        for key, preset in USER_AGENT_PRESETS.items():
+            label = preset.get("label") or key
+            cb = CheckBox(label, container)
+            cb.setChecked(key == "pc_web")
+            self.checkboxes[key] = cb
+            grid.addWidget(cb, row, col)
+            col += 1
+            if col >= 3:
+                col = 0
+                row += 1
+
+        self.addGroupWidget(container)
+
+    def isChecked(self):
+        return self.switchButton.isChecked()
+
+    def setChecked(self, checked):
+        self.switchButton.setChecked(checked)
+
+    def setUAEnabled(self, enabled):
+        for cb in self.checkboxes.values():
+            cb.setEnabled(enabled)
+
+
+class ComboBoxSettingCard(SettingCard):
+    """带下拉框的设置卡"""
+
+    def __init__(self, icon, title, content, items, parent=None):
+        super().__init__(icon, title, content, parent)
+        self.comboBox = ComboBox(self)
+        for text, data in items:
+            self.comboBox.addItem(text, userData=data)
+        self.comboBox.setMinimumWidth(180)
+        self.hBoxLayout.addWidget(self.comboBox, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+
+
+class TimeRangeSettingCard(SettingCard):
+    """时间范围设置卡"""
+
+    def __init__(self, icon, title, content, parent=None):
+        super().__init__(icon, title, content, parent)
+        self.min_seconds = 0
+        self.max_seconds = 0
+
+        self.minBtn = PushButton("0分0秒", self)
+        self.minBtn.setMinimumWidth(90)
+        self.maxBtn = PushButton("0分0秒", self)
+        self.maxBtn.setMinimumWidth(90)
+
+        self.hBoxLayout.addWidget(self.minBtn, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addWidget(BodyLabel("~", self))
+        self.hBoxLayout.addWidget(self.maxBtn, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+
+    def setEnabled(self, enabled):
+        self.minBtn.setEnabled(enabled)
+        self.maxBtn.setEnabled(enabled)
+
+
+class CustomApiSettingCard(SettingCard):
+    """自定义 API 设置卡"""
+
+    def __init__(self, icon, title, content, parent=None):
+        super().__init__(icon, title, content, parent)
+        self.lineEdit = LineEdit(self)
+        self.lineEdit.setPlaceholderText("仅支持json返回格式")
+        self.lineEdit.setMinimumWidth(280)
+        self.lineEdit.setFixedHeight(36)
+        self.hBoxLayout.addWidget(self.lineEdit, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+
+
+class UATypeSettingCard(ExpandGroupSettingCard):
+    """UA 类型选择卡"""
+
+    def __init__(self, parent=None):
+        super().__init__(FluentIcon.ROBOT, "随机 UA 类型", "选择要随机使用的 User-Agent 类型", parent)
+        self.checkboxes: Dict[str, CheckBox] = {}
+
+        # 创建 checkbox 容器
+        container = QWidget()
+        grid = QGridLayout(container)
+        grid.setContentsMargins(48, 12, 48, 12)
+        grid.setSpacing(12)
+
+        col, row = 0, 0
+        for key, preset in USER_AGENT_PRESETS.items():
+            label = preset.get("label") or key
+            cb = CheckBox(label, container)
+            cb.setChecked(key == "pc_web")
+            self.checkboxes[key] = cb
+            grid.addWidget(cb, row, col)
+            col += 1
+            if col >= 3:
+                col = 0
+                row += 1
+
+        self.addGroupWidget(container)
+
+    def setEnabled(self, enabled):
+        for cb in self.checkboxes.values():
+            cb.setEnabled(enabled)
 
 
 class SettingsPage(ScrollArea):
@@ -47,208 +320,129 @@ class SettingsPage(ScrollArea):
         self.ua_checkboxes: Dict[str, CheckBox] = {}
         self._build_ui()
         self._bind_events()
-        self._sync_random_ua(self.random_ua_switch.isChecked())
+        self._sync_random_ua(self.random_ua_card.isChecked())
 
     def _build_ui(self):
         layout = QVBoxLayout(self.view)
         layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
+        layout.setSpacing(20)
 
-        run_group = CardWidget(self.view)
-        run_layout = QVBoxLayout(run_group)
-        run_layout.setContentsMargins(16, 16, 16, 16)
-        run_layout.setSpacing(12)
-        run_layout.addWidget(SubtitleLabel("运行参数", self.view))
+        # ========== 运行参数组 ==========
+        run_group = SettingCardGroup("运行参数", self.view)
 
-        self.target_spin = NoWheelSpinBox(self.view)
-        self.target_spin.setRange(1, 99999)
-        self.target_spin.setValue(10)
-        self.target_spin.setMinimumWidth(110)
-        self.target_spin.setFixedHeight(36)
-        self.target_spin.setStyleSheet("QSpinBox { padding: 4px 8px; font-size: 11pt; }")
-        self.thread_spin = NoWheelSpinBox(self.view)
-        self.thread_spin.setRange(1, 12)
-        self.thread_spin.setValue(2)
-        self.thread_spin.setMinimumWidth(110)
-        self.thread_spin.setFixedHeight(36)
-        self.thread_spin.setStyleSheet("QSpinBox { padding: 4px 8px; font-size: 11pt; }")
-        self.fail_stop_switch = SwitchButton("失败过多自动停止", self.view)
-        self.fail_stop_switch.setChecked(True)
-        self._pin_switch_label(self.fail_stop_switch, "失败过多自动停止")
+        self.target_card = SpinBoxSettingCard(
+            FluentIcon.DOCUMENT, "目标份数", "设置要提交的问卷数量",
+            min_val=1, max_val=99999, default=10, parent=run_group
+        )
+        self.thread_card = SpinBoxSettingCard(
+            FluentIcon.APPLICATION, "并发浏览器", "同时运行的浏览器数量 (1-12)",
+            min_val=1, max_val=12, default=2, parent=run_group
+        )
+        self.fail_stop_card = SwitchSettingCard(
+            FluentIcon.CANCEL, "失败过多自动停止", "连续失败次数过多时自动停止运行",
+            parent=run_group
+        )
+        self.fail_stop_card.setChecked(True)
 
-        target_row = QHBoxLayout()
-        target_row.addWidget(BodyLabel("目标份数"))
-        target_row.addWidget(self.target_spin)
-        target_row.addStretch(1)
-        run_layout.addLayout(target_row)
-
-        thread_row = QHBoxLayout()
-        thread_row.addWidget(BodyLabel("并发浏览器"))
-        thread_row.addWidget(self.thread_spin)
-        thread_row.addStretch(1)
-        run_layout.addLayout(thread_row)
-
-        run_layout.addWidget(self.fail_stop_switch)
+        run_group.addSettingCard(self.target_card)
+        run_group.addSettingCard(self.thread_card)
+        run_group.addSettingCard(self.fail_stop_card)
         layout.addWidget(run_group)
 
-        time_group = CardWidget(self.view)
-        time_layout = QVBoxLayout(time_group)
-        time_layout.setContentsMargins(16, 16, 16, 16)
-        time_layout.setSpacing(12)
-        time_layout.addWidget(SubtitleLabel("时间控制", self.view))
+        # ========== 时间控制组 ==========
+        time_group = SettingCardGroup("时间控制", self.view)
 
-        # 提交间隔 - 使用按钮显示时间
+        self.interval_card = TimeRangeSettingCard(
+            FluentIcon.HISTORY, "提交间隔", "两次提交之间的等待时间范围",
+            parent=time_group
+        )
+        self.answer_card = TimeRangeSettingCard(
+            FluentIcon.STOP_WATCH, "作答时长", "模拟作答所需的时间范围",
+            parent=time_group
+        )
+        self.timed_card = TimedModeSettingCard(
+            FluentIcon.SPEED_HIGH, "定时模式", "启用后忽略时间设置，在开放后立即提交",
+            parent=time_group
+        )
+
+        time_group.addSettingCard(self.interval_card)
+        time_group.addSettingCard(self.answer_card)
+        time_group.addSettingCard(self.timed_card)
+        layout.addWidget(time_group)
+
+        # ========== 特性开关组 ==========
+        feature_group = SettingCardGroup("特性开关", self.view)
+
+        self.random_ip_card = RandomIPSettingCard(parent=feature_group)
+        self.random_ua_card = RandomUASettingCard(parent=feature_group)
+        self.ua_checkboxes = self.random_ua_card.checkboxes
+
+        feature_group.addSettingCard(self.random_ip_card)
+        feature_group.addSettingCard(self.random_ua_card)
+        layout.addWidget(feature_group)
+
+        layout.addStretch(1)
+
+        # 兼容旧代码的属性别名
+        self.target_spin = self.target_card.spinBox
+        self.thread_spin = self.thread_card.spinBox
+        self.fail_stop_switch = self.fail_stop_card.switchButton
+        self.interval_min_btn = self.interval_card.minBtn
+        self.interval_max_btn = self.interval_card.maxBtn
+        self.answer_min_btn = self.answer_card.minBtn
+        self.answer_max_btn = self.answer_card.maxBtn
+        self.timed_switch = self.timed_card.switchButton
+        self.random_ip_switch = self.random_ip_card.switchButton
+        self.random_ua_switch = self.random_ua_card.switchButton
+        self.proxy_source_combo = self.random_ip_card.proxyCombo
+        self.custom_api_edit = self.random_ip_card.customApiEdit
+
+        # 时间秒数存储
         self.interval_min_seconds = 0
         self.interval_max_seconds = 0
         self.answer_min_seconds = 0
         self.answer_max_seconds = 0
-        
-        interval_row = QHBoxLayout()
-        interval_row.addWidget(BodyLabel("提交间隔"))
-        self.interval_min_btn = PushButton("0分0秒", self.view)
-        self.interval_min_btn.setMinimumWidth(100)
-        interval_row.addWidget(self.interval_min_btn)
-        interval_row.addWidget(BodyLabel("~"))
-        self.interval_max_btn = PushButton("0分0秒", self.view)
-        self.interval_max_btn.setMinimumWidth(100)
-        interval_row.addWidget(self.interval_max_btn)
-        interval_row.addStretch(1)
-        time_layout.addLayout(interval_row)
-
-        answer_row = QHBoxLayout()
-        answer_row.addWidget(BodyLabel("作答时长"))
-        self.answer_min_btn = PushButton("0分0秒", self.view)
-        self.answer_min_btn.setMinimumWidth(100)
-        answer_row.addWidget(self.answer_min_btn)
-        answer_row.addWidget(BodyLabel("~"))
-        self.answer_max_btn = PushButton("0分0秒", self.view)
-        self.answer_max_btn.setMinimumWidth(100)
-        answer_row.addWidget(self.answer_max_btn)
-        answer_row.addStretch(1)
-        time_layout.addLayout(answer_row)
-        
-        timed_row = QHBoxLayout()
-        timed_row.setSpacing(8)
-        self.timed_switch = SwitchButton("定时模式", self.view)
-        self._pin_switch_label(self.timed_switch, "定时模式")
-        timed_row.addWidget(self.timed_switch)
-        
-        # 添加帮助按钮 - 使用 Qt 原生 QToolButton
-        help_btn = QToolButton(self.view)
-        help_btn.setIcon(FluentIcon.INFO.icon())
-        help_btn.setFixedSize(32, 32)
-        help_btn.setAutoRaise(True)
-        help_btn.setToolTip("")  # 显式设置空 tooltip
-        help_btn.setStyleSheet("""
-            QToolButton {
-                background: transparent;
-                border: none;
-                border-radius: 6px;
-            }
-            QToolButton:hover {
-                background: rgba(0, 0, 0, 0.05);
-            }
-            QToolButton:pressed {
-                background: rgba(0, 0, 0, 0.08);
-            }
-        """)
-        help_btn.clicked.connect(self._show_timed_mode_help)
-        timed_row.addWidget(help_btn)
-        timed_row.addStretch(1)
-        
-        time_layout.addLayout(timed_row)
-        layout.addWidget(time_group)
-
-        feature_group = CardWidget(self.view)
-        feature_layout = QVBoxLayout(feature_group)
-        feature_layout.setContentsMargins(16, 16, 16, 16)
-        feature_layout.setSpacing(12)
-        feature_layout.addWidget(SubtitleLabel("特性开关", self.view))
-
-        feature_row = QHBoxLayout()
-        self.random_ip_switch = SwitchButton("随机IP", self.view)
-        self.random_ua_switch = SwitchButton("随机 UA", self.view)
-        self._pin_switch_label(self.random_ip_switch, "随机IP")
-        self._pin_switch_label(self.random_ua_switch, "随机 UA")
-        feature_row.addWidget(self.random_ip_switch)
-        feature_row.addWidget(self.random_ua_switch)
-        feature_row.addStretch(1)
-        feature_layout.addLayout(feature_row)
-
-        # 代理源选择
-        proxy_source_row = QHBoxLayout()
-        proxy_source_row.setSpacing(8)
-        proxy_source_row.addWidget(BodyLabel("代理源：", self.view))
-        self.proxy_source_combo = ComboBox(self.view)
-        self.proxy_source_combo.addItem("默认", userData="default")
-        self.proxy_source_combo.addItem("皮卡丘代理站 (中国大陆)", userData="pikachu")
-        self.proxy_source_combo.addItem("自定义", userData="custom")
-        self.proxy_source_combo.setMinimumWidth(200)
-        proxy_source_row.addWidget(self.proxy_source_combo)
-        proxy_source_row.addStretch(1)
-        feature_layout.addLayout(proxy_source_row)
-
-        # 自定义API地址输入框 - 使用容器widget便于整体隐藏/显示
-        self.custom_api_container = QWidget(feature_group)
-        custom_api_layout = QHBoxLayout(self.custom_api_container)
-        custom_api_layout.setContentsMargins(0, 0, 0, 0)
-        custom_api_layout.setSpacing(8)
-        self.custom_api_label = BodyLabel("API地址：", self.custom_api_container)
-        custom_api_layout.addWidget(self.custom_api_label)
-        self.custom_api_edit = LineEdit(self.custom_api_container)
-        self.custom_api_edit.setPlaceholderText("仅支持json返回格式")
-        self.custom_api_edit.setMinimumWidth(300)
-        self.custom_api_edit.setFixedHeight(36)
-        custom_api_layout.addWidget(self.custom_api_edit)
-        custom_api_layout.addStretch(1)
-        feature_layout.addWidget(self.custom_api_container)
-        # 默认隐藏
-        self.custom_api_container.hide()
-
-        ua_group = CardWidget(self.view)
-        ua_layout = QVBoxLayout(ua_group)
-        ua_layout.setContentsMargins(12, 12, 12, 12)
-        ua_layout.setSpacing(8)
-        ua_layout.addWidget(SubtitleLabel("随机 UA 类型", self.view))
-        ua_grid = QGridLayout()
-        ua_grid.setSpacing(8)
-        col = 0
-        row = 0
-        for key, preset in USER_AGENT_PRESETS.items():
-            label = preset.get("label") or key
-            cb = CheckBox(label, self.view)
-            cb.setChecked(key == "pc_web")
-            self.ua_checkboxes[key] = cb
-            ua_grid.addWidget(cb, row, col)
-            col += 1
-            if col >= 3:
-                col = 0
-                row += 1
-        ua_layout.addLayout(ua_grid)
-        feature_layout.addWidget(ua_group)
-        layout.addWidget(feature_group)
-
-        layout.addStretch(1)
 
     def _bind_events(self):
         self.random_ip_switch.checkedChanged.connect(self._on_random_ip_toggled)
         self.random_ua_switch.checkedChanged.connect(self._sync_random_ua)
         self.timed_switch.checkedChanged.connect(self._sync_timed_mode)
+        self.timed_card.helpButton.clicked.connect(self._show_timed_mode_help)
         self.interval_min_btn.clicked.connect(lambda: self._show_time_picker("interval_min"))
         self.interval_max_btn.clicked.connect(lambda: self._show_time_picker("interval_max"))
         self.answer_min_btn.clicked.connect(lambda: self._show_time_picker("answer_min"))
         self.answer_max_btn.clicked.connect(lambda: self._show_time_picker("answer_max"))
         self.proxy_source_combo.currentIndexChanged.connect(lambda idx: self._on_proxy_source_changed())
 
+    def _show_timed_mode_help(self):
+        """显示定时模式说明"""
+        content = (
+            "启用后，程序会忽略「提交间隔」和「作答时长」设置，改为高频刷新并在开放后立即提交。\n\n"
+            "典型应用场景：\n"
+            "- 抢志愿填报名额\n"
+            "- 抢课程选课名额（如大学选课问卷）\n"
+            "- 抢活动报名名额（如讲座、比赛报名）\n"
+            "- 其他在特定时间点开放的问卷"
+        )
+        PopupTeachingTip.create(
+            target=self.timed_card.helpButton,
+            icon=FluentIcon.INFO,
+            title='定时模式说明',
+            content=content,
+            isClosable=True,
+            tailPosition=TeachingTipTailPosition.BOTTOM,
+            duration=-1,
+            parent=self.view
+        )
+
     def _on_random_ip_toggled(self, enabled: bool):
         """参数页随机IP开关切换时，同步到主页并显示弹窗"""
         main_win = self.window()
-        # 调用主页的处理逻辑（包含弹窗和同步）
-        if hasattr(main_win, "dashboard"):
-            # 阻止信号避免循环
+        dashboard = getattr(main_win, "dashboard", None)
+        if dashboard is not None:
             self.random_ip_switch.blockSignals(True)
             try:
-                main_win.dashboard._on_random_ip_toggled(2 if enabled else 0)  # type: ignore[union-attr]
+                dashboard._on_random_ip_toggled(2 if enabled else 0)
             finally:
                 self.random_ip_switch.blockSignals(False)
 
@@ -258,15 +452,9 @@ class SettingsPage(ScrollArea):
         source = str(self.proxy_source_combo.itemData(idx)) if idx >= 0 else "default"
         if not source or source == "None":
             source = "default"
-        is_custom = source == "custom"
-        # 显示/隐藏自定义API输入框容器
-        if is_custom:
-            self.custom_api_container.show()
-        else:
-            self.custom_api_container.hide()
         try:
             from wjx.network.random_ip import set_proxy_source, set_proxy_api_override
-            if is_custom:
+            if source == "custom":
                 api_url = self.custom_api_edit.text().strip()
                 set_proxy_api_override(api_url if api_url else None)
             set_proxy_source(source)
@@ -276,34 +464,30 @@ class SettingsPage(ScrollArea):
     def request_card_code(self) -> Optional[str]:
         """为解锁弹窗提供卡密输入。"""
         main_win = self.window()
-        if hasattr(main_win, "_ask_card_code"):
+        ask_func = getattr(main_win, "_ask_card_code", None)
+        if ask_func is not None:
             try:
-                return main_win._ask_card_code()  # type: ignore[union-attr]
+                return ask_func()
             except Exception:
                 return None
         return None
 
     def _sync_random_ua(self, enabled: bool):
         try:
-            for cb in self.ua_checkboxes.values():
-                cb.setEnabled(bool(enabled))
+            self.random_ua_card.setUAEnabled(bool(enabled))
         except Exception:
             pass
-    
+
     def _sync_timed_mode(self, enabled: bool):
         """定时模式切换时禁用/启用时间控制按钮"""
         try:
-            disabled = bool(enabled)
-            self.interval_min_btn.setEnabled(not disabled)
-            self.interval_max_btn.setEnabled(not disabled)
-            self.answer_min_btn.setEnabled(not disabled)
-            self.answer_max_btn.setEnabled(not disabled)
+            self.interval_card.setEnabled(not enabled)
+            self.answer_card.setEnabled(not enabled)
         except Exception:
             pass
-    
+
     def _show_time_picker(self, field: str):
-        """显示时间选择对话框（全新设计）"""
-        # 获取当前值
+        """显示时间选择对话框"""
         if field == "interval_min":
             current_seconds = self.interval_min_seconds
             title = "设置提交间隔最小值"
@@ -313,47 +497,43 @@ class SettingsPage(ScrollArea):
         elif field == "answer_min":
             current_seconds = self.answer_min_seconds
             title = "设置作答时长最小值"
-        else:  # answer_max
+        else:
             current_seconds = self.answer_max_seconds
             title = "设置作答时长最大值"
-        
-        # 创建对话框
+
         dialog = QDialog(self.window() or self)
         dialog.setWindowTitle(title)
         dialog.setFixedSize(480, 360)
         main_layout = QVBoxLayout(dialog)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(16)
-        
-        # 标题区域
+
         title_label = SubtitleLabel(title, dialog)
         main_layout.addWidget(title_label)
-        
-        # 卡片容器
+
         card = CardWidget(dialog)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(20, 20, 20, 20)
         card_layout.setSpacing(20)
-        
-        # 实时预览区域
+
+        # 实时预览
         preview_container = QWidget(card)
         preview_layout = QVBoxLayout(preview_container)
         preview_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.setSpacing(4)
         preview_hint = BodyLabel("当前设置", card)
-        preview_hint.setStyleSheet("color: #888; font-size: 11pt;")
+        preview_hint.setStyleSheet("color: #888; font-size: 11px;")
         preview_value = StrongBodyLabel("0分0秒", card)
-        preview_value.setStyleSheet("font-size: 18pt; color: #2563EB;")
+        preview_value.setStyleSheet("font-size: 18px; color: #2563EB;")
         preview_layout.addWidget(preview_hint, alignment=Qt.AlignmentFlag.AlignCenter)
         preview_layout.addWidget(preview_value, alignment=Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(preview_container)
-        
-        # 分钟控制区域
+
+        # 分钟控制
         minutes_container = QWidget(card)
         minutes_layout = QHBoxLayout(minutes_container)
         minutes_layout.setContentsMargins(0, 0, 0, 0)
         minutes_layout.setSpacing(12)
-        
         minutes_label = BodyLabel("分钟", card)
         minutes_label.setFixedWidth(50)
         minutes_slider = NoWheelSlider(Qt.Orientation.Horizontal, card)
@@ -363,18 +543,16 @@ class SettingsPage(ScrollArea):
         minutes_spin.setRange(0, 10)
         minutes_spin.setValue(current_seconds // 60)
         minutes_spin.setFixedWidth(70)
-        
         minutes_layout.addWidget(minutes_label)
         minutes_layout.addWidget(minutes_slider, 1)
         minutes_layout.addWidget(minutes_spin)
         card_layout.addWidget(minutes_container)
-        
-        # 秒控制区域
+
+        # 秒控制
         seconds_container = QWidget(card)
         seconds_layout = QHBoxLayout(seconds_container)
         seconds_layout.setContentsMargins(0, 0, 0, 0)
         seconds_layout.setSpacing(12)
-        
         seconds_label = BodyLabel("秒", card)
         seconds_label.setFixedWidth(50)
         seconds_slider = NoWheelSlider(Qt.Orientation.Horizontal, card)
@@ -384,34 +562,27 @@ class SettingsPage(ScrollArea):
         seconds_spin.setRange(0, 59)
         seconds_spin.setValue(current_seconds % 60)
         seconds_spin.setFixedWidth(70)
-        
         seconds_layout.addWidget(seconds_label)
         seconds_layout.addWidget(seconds_slider, 1)
         seconds_layout.addWidget(seconds_spin)
         card_layout.addWidget(seconds_container)
-        
+
         main_layout.addWidget(card)
         main_layout.addStretch(1)
-        
-        # 更新预览函数
+
         def update_preview():
             m = minutes_spin.value()
             s = seconds_spin.value()
             preview_value.setText(f"{m}分{s}秒")
-        
-        # 联动逻辑
+
         minutes_slider.valueChanged.connect(minutes_spin.setValue)
         minutes_spin.valueChanged.connect(minutes_slider.setValue)
         minutes_spin.valueChanged.connect(lambda: update_preview())
-        
         seconds_slider.valueChanged.connect(seconds_spin.setValue)
         seconds_spin.valueChanged.connect(seconds_slider.setValue)
         seconds_spin.valueChanged.connect(lambda: update_preview())
-        
-        # 初始化预览
         update_preview()
-        
-        # 按钮区域
+
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
         cancel_btn = PushButton("取消", dialog)
@@ -421,48 +592,42 @@ class SettingsPage(ScrollArea):
         btn_row.addWidget(cancel_btn)
         btn_row.addWidget(ok_btn)
         main_layout.addLayout(btn_row)
-        
+
         cancel_btn.clicked.connect(dialog.reject)
         ok_btn.clicked.connect(dialog.accept)
-        
+
         if dialog.exec() == QDialog.DialogCode.Accepted:
             total_seconds = minutes_spin.value() * 60 + seconds_spin.value()
-            # 更新值和按钮文本
+            text = f"{minutes_spin.value()}分{seconds_spin.value()}秒"
             if field == "interval_min":
                 self.interval_min_seconds = total_seconds
-                self.interval_min_btn.setText(f"{minutes_spin.value()}分{seconds_spin.value()}秒")
+                self.interval_min_btn.setText(text)
             elif field == "interval_max":
                 self.interval_max_seconds = total_seconds
-                self.interval_max_btn.setText(f"{minutes_spin.value()}分{seconds_spin.value()}秒")
+                self.interval_max_btn.setText(text)
             elif field == "answer_min":
                 self.answer_min_seconds = total_seconds
-                self.answer_min_btn.setText(f"{minutes_spin.value()}分{seconds_spin.value()}秒")
-            else:  # answer_max
+                self.answer_min_btn.setText(text)
+            else:
                 self.answer_max_seconds = total_seconds
-                self.answer_max_btn.setText(f"{minutes_spin.value()}分{seconds_spin.value()}秒")
+                self.answer_max_btn.setText(text)
 
     def update_config(self, cfg: RuntimeConfig):
         cfg.target = max(1, self.target_spin.value())
         cfg.threads = max(1, self.thread_spin.value())
-        
-        # 直接使用秒数变量
         cfg.submit_interval = (
             max(0, self.interval_min_seconds),
             max(self.interval_min_seconds, self.interval_max_seconds),
         )
-        
         cfg.answer_duration = (
             max(0, self.answer_min_seconds),
             max(self.answer_min_seconds, self.answer_max_seconds),
         )
-        
         cfg.timed_mode_enabled = self.timed_switch.isChecked()
         cfg.random_ip_enabled = self.random_ip_switch.isChecked()
         cfg.random_ua_enabled = self.random_ua_switch.isChecked()
         cfg.random_ua_keys = [k for k, cb in self.ua_checkboxes.items() if cb.isChecked()] if cfg.random_ua_enabled else []
         cfg.fail_stop_enabled = self.fail_stop_switch.isChecked()
-        
-        # 保存代理源设置
         try:
             idx = self.proxy_source_combo.currentIndex()
             source = str(self.proxy_source_combo.itemData(idx)) if idx >= 0 else "default"
@@ -477,89 +642,48 @@ class SettingsPage(ScrollArea):
     def apply_config(self, cfg: RuntimeConfig):
         self.target_spin.setValue(max(1, cfg.target))
         self.thread_spin.setValue(max(1, cfg.threads))
-        
-        # 更新秒数变量和按钮文本
+
         interval_min_seconds = max(0, cfg.submit_interval[0])
         self.interval_min_seconds = interval_min_seconds
         self.interval_min_btn.setText(f"{interval_min_seconds // 60}分{interval_min_seconds % 60}秒")
-        
+
         interval_max_seconds = max(cfg.submit_interval[0], cfg.submit_interval[1])
         self.interval_max_seconds = interval_max_seconds
         self.interval_max_btn.setText(f"{interval_max_seconds // 60}分{interval_max_seconds % 60}秒")
-        
+
         answer_min_seconds = max(0, cfg.answer_duration[0])
         self.answer_min_seconds = answer_min_seconds
         self.answer_min_btn.setText(f"{answer_min_seconds // 60}分{answer_min_seconds % 60}秒")
-        
+
         answer_max_seconds = max(cfg.answer_duration[0], cfg.answer_duration[1])
         self.answer_max_seconds = answer_max_seconds
         self.answer_max_btn.setText(f"{answer_max_seconds // 60}分{answer_max_seconds % 60}秒")
-        
+
         self.timed_switch.setChecked(cfg.timed_mode_enabled)
         self._sync_timed_mode(cfg.timed_mode_enabled)
-        # 阻塞信号避免加载配置时触发弹窗
+
         self.random_ip_switch.blockSignals(True)
         self.random_ip_switch.setChecked(cfg.random_ip_enabled)
         self.random_ip_switch.blockSignals(False)
         self.random_ua_switch.setChecked(cfg.random_ua_enabled)
-        # 应用 UA 选项
+
         active = set(cfg.random_ua_keys or [])
         for key, cb in self.ua_checkboxes.items():
             cb.setChecked((not active and key == "pc_web") or key in active)
-            cb.setEnabled(self.random_ua_switch.isChecked())
+        self._sync_random_ua(self.random_ua_switch.isChecked())
         self.fail_stop_switch.setChecked(cfg.fail_stop_enabled)
-        
-        # 应用代理源设置
+
         try:
             proxy_source = getattr(cfg, "proxy_source", "default")
             custom_api = getattr(cfg, "custom_proxy_api", "")
             idx = self.proxy_source_combo.findData(proxy_source)
             if idx >= 0:
                 self.proxy_source_combo.setCurrentIndex(idx)
-            # 设置自定义API地址并显示/隐藏输入框容器
             self.custom_api_edit.setText(custom_api)
-            is_custom = proxy_source == "custom"
-            self.custom_api_container.setVisible(is_custom)
+            self.random_ip_card.customApiRow.setVisible(proxy_source == "custom")
             from wjx.network.random_ip import set_proxy_source, set_proxy_api_override
-            if is_custom and custom_api:
+            if proxy_source == "custom" and custom_api:
                 set_proxy_api_override(custom_api)
             set_proxy_source(proxy_source)
         except Exception:
             pass
-
-    def _show_timed_mode_help(self):
-        """显示定时模式说明TeachingTip"""
-        # 获取触发按钮
-        sender = self.sender()
-        if not sender or not isinstance(sender, QWidget):
-            return
-        
-        # 创建内容文本
-        content = (
-            "启用后，程序会忽略「提交间隔」和「作答时长」设置，改为高频刷新并在开放后立即提交。\n\n"
-            "典型应用场景：\n"
-            "• 抢志愿填报名额\n"
-            "• 抢课程选课名额（如大学选课问卷）\n"
-            "• 抢活动报名名额（如讲座、比赛报名）\n"
-            "• 其他在特定时间点开放的问卷"
-        )
-        
-        PopupTeachingTip.create(
-            target=sender,
-            icon=FluentIcon.INFO,
-            title='定时模式说明',
-            content=content,
-            isClosable=True,
-            tailPosition=TeachingTipTailPosition.BOTTOM,
-            duration=-1,
-            parent=self.view
-        )
-    
-    def _pin_switch_label(self, sw: SwitchButton, text: str):
-        """保持开关两侧文本一致，避免切换为 On/Off。"""
-        try:
-            sw.setOnText(text)
-            sw.setOffText(text)
-            sw.setText(text)
-        except Exception:
-            sw.setText(text)

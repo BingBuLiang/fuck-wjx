@@ -166,11 +166,14 @@ def get_post_submit_wait_params(need_watch_submit: bool, fast_mode: bool) -> Tup
         POST_SUBMIT_URL_POLL_INTERVAL = 0.2
 
     base_wait = float(POST_SUBMIT_URL_MAX_WAIT)
+    # 即使在极速模式下，也需要足够的时间等待页面跳转到完成页
+    # 将最小等待时间从 0.2-0.25 秒增加到 2.0 秒，避免误判为失败
+    min_fast_wait = 2.0
     if DURATION_CONTROL_STATE.enabled:
-        max_wait = base_wait if not need_watch_submit else (0.25 if fast_mode else min(0.4, base_wait))
+        max_wait = base_wait if not need_watch_submit else (min_fast_wait if fast_mode else min(base_wait, 3.0))
         poll_interval = 0.05 if fast_mode else float(POST_SUBMIT_URL_POLL_INTERVAL)
     else:
-        max_wait = base_wait if not need_watch_submit else (0.2 if fast_mode else base_wait)
+        max_wait = base_wait if not need_watch_submit else (min_fast_wait if fast_mode else base_wait)
         poll_interval = 0.05 if fast_mode else float(POST_SUBMIT_URL_POLL_INTERVAL)
     return float(max_wait), float(poll_interval)
 

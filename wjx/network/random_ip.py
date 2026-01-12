@@ -66,7 +66,7 @@ def _fetch_cn_http_proxies_from_pikachu() -> List[str]:
         raise RuntimeError("缺少 requests 模块，无法获取代理")
     
     try:
-        resp = requests.get(PIKACHU_PROXY_API, timeout=15, headers=DEFAULT_HTTP_HEADERS)
+        resp = requests.get(PIKACHU_PROXY_API, timeout=15, headers=DEFAULT_HTTP_HEADERS, proxies={})
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
@@ -233,7 +233,7 @@ def get_status() -> Any:
     """Fetch developer status endpoint."""
     if requests is None:
         raise RuntimeError("requests 模块未安装，无法获取在线状态")
-    response = requests.get(STATUS_ENDPOINT, timeout=STATUS_TIMEOUT_SECONDS, headers=DEFAULT_HTTP_HEADERS)
+    response = requests.get(STATUS_ENDPOINT, timeout=STATUS_TIMEOUT_SECONDS, headers=DEFAULT_HTTP_HEADERS, proxies={})
     response.raise_for_status()
     return response.json()
 
@@ -262,57 +262,40 @@ def _proxy_api_candidates(expected_count: int, proxy_url: Optional[str]) -> List
 
 
 def _parse_proxy_payload(text: str) -> List[str]:
-    # JSON payload
+    """解析代理API返回的JSON数据，仅支持新格式：
+    {"code":200,"data":{"proxy_list":["IP:端口,地区"]}}
+    """
     try:
         data = json.loads(text)
-        if isinstance(data, dict):
-            candidates: List[str] = []
-            
-            # 处理嵌套结构：data.data.list (如 {"code":0, "data":{"list":[{"ip":"x.x.x.x","port":"8080"}]}})
-            data_section = data.get("data")
-            if isinstance(data_section, dict):
-                nested_list = data_section.get("list")
-                if isinstance(nested_list, list):
-                    for item in nested_list:
-                        if isinstance(item, dict):
-                            ip = str(item.get("ip") or item.get("host") or "").strip()
-                            port = str(item.get("port") or "").strip()
-                            if ip and port:
-                                # 处理认证信息
-                                username = str(item.get("account") or item.get("username") or "").strip()
-                                password = str(item.get("password") or item.get("pwd") or "").strip()
-                                if username and password:
-                                    candidates.append(f"http://{username}:{password}@{ip}:{port}")
-                                else:
-                                    candidates.append(f"{ip}:{port}")
-                    if candidates:
-                        return candidates
-            
-            # 原有逻辑：处理其他格式
-            for key in ("data", "list", "proxy", "proxies"):
-                value = data.get(key)
-                if isinstance(value, list):
-                    for item in value:
-                        if isinstance(item, str):
-                            candidates.append(item.strip())
-                        elif isinstance(item, dict):
-                            for k in ("proxy", "ip", "addr", "address"):
-                                raw = item.get(k)
-                                if raw:
-                                    candidates.append(str(raw).strip())
-                    if candidates:
-                        return candidates
-                elif isinstance(value, str):
-                    return [value.strip()]
-            if "proxy" in data and isinstance(data["proxy"], str):
-                return [data["proxy"].strip()]
-        elif isinstance(data, list):
-            return [str(item).strip() for item in data if str(item).strip()]
-    except Exception:
-        pass
-    # Plain text lines
-    lines = [line.strip() for line in re.split(r"[\r\n,]+", text) if line.strip()]
-    return lines
+        if not isinstance(data, dict):
+            raise ValueError("返回数据不是JSON对象")
+        
+        data_section = data.get("data")
+        if not isinstance(data_section, dict):
+            raise ValueError("返回数据缺少data字段")
+        
+        proxy_list = data_section.get("proxy_list")
+        if not isinstance(proxy_list, list) or not proxy_list:
+            raise ValueError("返回数据缺少proxy_list或为空")
+        
+        candidates: List[str] = []
+        for item in proxy_list:
+            if isinstance(item, str) and item.strip():
+                # 格式如 "171.40.165.28:41138,湖北|孝感"
+                full_info = item.strip()
+                # 分离IP:端口和地区信息
+                parts = full_info.split(",", 1)
+                addr = parts[0].strip()
+                region = parts[1].strip() if len(parts) > 1 else "未知地区"
+                if addr:
+                    logging.info(f"获取到代理: {addr} ({region})")
+                    candidates.append(addr)
+        
+        if not candidates:
+            raise ValueError("proxy_list中无有效代理地址")
+        return candidates
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON解析失败: {e}")
 
 
 def _normalize_proxy_address(proxy_address: Optional[str]) -> Optional[str]:
@@ -326,7 +309,18 @@ def _normalize_proxy_address(proxy_address: Optional[str]) -> Optional[str]:
     return normalized
 
 
-def _proxy_is_responsive(proxy_address: str) -> bool:
+def _proxy_is_responsive(proxy_address: str, skip_for_default: bool = True) -> bool:
+    """检测代理是否可用
+    
+    Args:
+        proxy_address: 代理地址
+        skip_for_default: 是否对默认代理源跳过检查（默认代理源是付费代理，无需检查）
+    """
+    # 默认代理源是付费代理，直接信任，跳过健康检查
+    if skip_for_default and get_proxy_source() == PROXY_SOURCE_DEFAULT:
+        logging.debug(f"默认代理源，跳过健康检查: {proxy_address}")
+        return True
+    
     if not requests:
         logging.warning("requests 模块未安装，无法检测代理可用性")
         return False
@@ -382,7 +376,7 @@ def _fetch_new_proxy_batch(expected_count: int = 1, proxy_url: Optional[str] = N
     errors: List[str] = []
     for url in _proxy_api_candidates(expected_count, proxy_url):
         try:
-            resp = requests.get(url, timeout=10, headers=DEFAULT_HTTP_HEADERS)
+            resp = requests.get(url, timeout=10, headers=DEFAULT_HTTP_HEADERS, proxies={})
             resp.raise_for_status()
             parsed = _parse_proxy_payload(resp.text)
             candidates.extend(parsed)
@@ -538,7 +532,7 @@ def _validate_card(card_code: str) -> bool:
         return False
     code = card_code.strip()
     try:
-        response = requests.get(CARD_VALIDATION_ENDPOINT, timeout=10, headers=DEFAULT_HTTP_HEADERS)
+        response = requests.get(CARD_VALIDATION_ENDPOINT, timeout=10, headers=DEFAULT_HTTP_HEADERS, proxies={})
         response.raise_for_status()
         valid_cards = {line.strip() for line in response.text.strip().split("\n") if line.strip()}
         if code in valid_cards:

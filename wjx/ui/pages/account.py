@@ -3,11 +3,12 @@
 
 import platform
 import webbrowser
+from threading import Thread
 from typing import Optional
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QEvent
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QApplication, QPlainTextEdit, QTextBrowser, QStackedWidget
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QApplication, QPlainTextEdit, QTextBrowser, QStackedWidget, QStyle
 import requests
 from qfluentwidgets import (
     BodyLabel,
@@ -27,6 +28,7 @@ from qfluentwidgets import (
     AvatarWidget,
     IconWidget,
     MessageBox,
+    StateToolTip,
 )
 
 from wjx.utils.github_auth import (
@@ -36,6 +38,7 @@ from wjx.utils.github_auth import (
 )
 from wjx.utils.github_issue import create_issue, GitHubIssueError, ISSUE_TYPES
 from wjx.utils.version import __VERSION__
+from wjx.utils.hosts_helper import check_hosts_status, run_hosts_operation_as_admin
 
 
 class DeviceCodeWorker(QThread):
@@ -297,7 +300,7 @@ class AccountPage(ScrollArea):
         login_title.setStyleSheet("font-size: 15px; font-weight: bold;")
         text_layout.addWidget(login_title)
         
-        desc = CaptionLabel("登录后享受免费权益", self)
+        desc = CaptionLabel("🎉【限时】登录后享受免费额度", self)
         desc.setStyleSheet("color: #888;")
         text_layout.addWidget(desc)
         
@@ -369,12 +372,177 @@ class AccountPage(ScrollArea):
         
         layout.addWidget(self.login_card)
         
+        # 网络优化卡片
+        self._build_network_card(layout)
+        
         # Issue 提交卡片
         self._build_issue_card(layout)
         
         layout.addStretch(1)
         
         self.setWidget(container)
+    
+    def _build_network_card(self, parent_layout: QVBoxLayout):
+        """构建网络优化卡片"""
+        network_title = SubtitleLabel("网络优化", self)
+        parent_layout.addWidget(network_title)
+        
+        self.network_card = CardWidget(self)
+        card_layout = QVBoxLayout(self.network_card)
+        card_layout.setContentsMargins(20, 20, 20, 20)
+        card_layout.setSpacing(12)
+        
+        # 说明文字
+        desc = BodyLabel("如果 GitHub 登录速度较慢，可以尝试优化网络连接", self)
+        desc.setWordWrap(True)
+        card_layout.addWidget(desc)
+        
+        # hosts 状态显示
+        self.hosts_status_label = CaptionLabel("", self)
+        self.hosts_status_label.setStyleSheet("color: #888;")
+        card_layout.addWidget(self.hosts_status_label)
+        
+        # 按钮行
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+        
+        self.hosts_add_btn = PrimaryPushButton("优化 GitHub 连接", self)
+        self.hosts_add_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_VistaShield))
+        self.hosts_add_btn.clicked.connect(self._on_hosts_add_clicked)
+        btn_row.addWidget(self.hosts_add_btn)
+        
+        self.hosts_remove_btn = PushButton("撤销更改", self)
+        self.hosts_remove_btn.setIcon(FluentIcon.DELETE)
+        self.hosts_remove_btn.clicked.connect(self._on_hosts_remove_clicked)
+        btn_row.addWidget(self.hosts_remove_btn)
+        
+        btn_row.addStretch(1)
+        card_layout.addLayout(btn_row)
+        
+        # 加载状态行（按钮下方）
+        self.hosts_loading_row = QHBoxLayout()
+        self.hosts_loading_row.setSpacing(8)
+        
+        self.hosts_spinner = IndeterminateProgressRing(self)
+        self.hosts_spinner.setFixedSize(16, 16)
+        self.hosts_spinner.setStrokeWidth(2)
+        self.hosts_spinner.hide()
+        self.hosts_loading_row.addWidget(self.hosts_spinner)
+        
+        self.hosts_loading_label = CaptionLabel("", self)
+        self.hosts_loading_label.setStyleSheet("color: #888;")
+        self.hosts_loading_label.hide()
+        self.hosts_loading_row.addWidget(self.hosts_loading_label)
+        
+        self.hosts_loading_row.addStretch(1)
+        card_layout.addLayout(self.hosts_loading_row)
+        
+        parent_layout.addWidget(self.network_card)
+        
+        # 更新 hosts 状态显示
+        self._update_hosts_status()
+    
+    def _update_hosts_status(self):
+        """更新 hosts 状态显示"""
+        has_config, _ = check_hosts_status()
+        if has_config:
+            self.hosts_status_label.setText("已配置 GitHub hosts 加速")
+            self.hosts_status_label.setStyleSheet("color: #4caf50;")
+            self.hosts_add_btn.setText("更新配置")
+        else:
+            self.hosts_status_label.setText("未配置 hosts 加速")
+            self.hosts_status_label.setStyleSheet("color: #888;")
+            self.hosts_add_btn.setText("优化 GitHub 连接")
+    
+    def _show_hosts_loading(self, text: str):
+        """显示 hosts 操作加载状态"""
+        self.hosts_spinner.show()
+        self.hosts_loading_label.setText(text)
+        self.hosts_loading_label.show()
+        self.hosts_add_btn.setEnabled(False)
+        self.hosts_remove_btn.setEnabled(False)
+    
+    def _hide_hosts_loading(self):
+        """隐藏 hosts 操作加载状态"""
+        self.hosts_spinner.hide()
+        self.hosts_loading_label.hide()
+        self.hosts_add_btn.setEnabled(True)
+        self.hosts_remove_btn.setEnabled(True)
+
+    def _on_hosts_add_clicked(self):
+        """优化 GitHub 连接按钮点击"""
+        box = MessageBox(
+            "优化 GitHub 连接",
+            "此操作将修改系统 hosts 文件以加速 GitHub 访问。\n\n"
+            "注意事项：\n"
+            "1. 需要管理员权限，请在弹出的 UAC 窗口中点击「是」\n"
+            "2. 如果杀毒软件弹出提示，请选择「允许」\n"
+            "3. 本程序安全无病毒，仅添加 GitHub 相关的 IP 映射\n\n"
+            "是否继续？",
+            self.window() or self
+        )
+        box.yesButton.setText("继续")
+        box.cancelButton.setText("取消")
+        if not box.exec():
+            return
+
+        # 显示加载状态
+        self._show_hosts_loading("正在获取最优 IP 并更新 hosts...")
+
+        def do_operation():
+            success, msg = run_hosts_operation_as_admin("add")
+            # 在主线程更新 UI
+            app = QApplication.instance()
+            if app:
+                app.postEvent(self, _HostsResultEvent(success, msg))
+
+        Thread(target=do_operation, daemon=True).start()
+    
+    def _on_hosts_remove_clicked(self):
+        """撤销 hosts 更改按钮点击"""
+        has_config, _ = check_hosts_status()
+        if not has_config:
+            InfoBar.info("", "未找到本程序添加的 hosts 配置", parent=self, position=InfoBarPosition.TOP, duration=2000)
+            return
+
+        box = MessageBox(
+            "撤销 hosts 更改",
+            "确定要移除本程序添加的 GitHub hosts 配置吗？\n\n"
+            "移除后 GitHub 访问速度可能会变慢。",
+            self.window() or self
+        )
+        box.yesButton.setText("确定移除")
+        box.cancelButton.setText("取消")
+        if not box.exec():
+            return
+
+        # 显示加载状态
+        self._show_hosts_loading("正在移除 hosts 配置...")
+
+        def do_operation():
+            success, msg = run_hosts_operation_as_admin("remove")
+            app = QApplication.instance()
+            if app:
+                app.postEvent(self, _HostsResultEvent(success, msg))
+
+        Thread(target=do_operation, daemon=True).start()
+    
+    def customEvent(self, event):
+        """处理自定义事件"""
+        if isinstance(event, _HostsResultEvent):
+            # 隐藏加载状态
+            self._hide_hosts_loading()
+
+            # 使用气泡提示显示结果
+            if event.success:
+                InfoBar.success("", event.message, parent=self, position=InfoBarPosition.TOP, duration=2500)
+            else:
+                InfoBar.error("", event.message, parent=self, position=InfoBarPosition.TOP, duration=3000)
+
+            # 更新状态显示
+            self._update_hosts_status()
+        else:
+            super().customEvent(event)
     
     def _build_issue_card(self, parent_layout: QVBoxLayout):
         """构建Issue提交卡片"""
@@ -782,3 +950,15 @@ class AccountPage(ScrollArea):
         """页面隐藏时停止 workers"""
         self._stop_workers()
         super().hideEvent(event)
+
+
+# 自定义事件类型
+_HOSTS_RESULT_EVENT_TYPE = QEvent.Type(QEvent.registerEventType())
+
+
+class _HostsResultEvent(QEvent):
+    """hosts 操作结果事件"""
+    def __init__(self, success: bool, message: str):
+        super().__init__(_HOSTS_RESULT_EVENT_TYPE)
+        self.success = success
+        self.message = message

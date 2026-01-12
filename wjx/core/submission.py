@@ -404,4 +404,17 @@ def wait_for_post_submit_outcome(
         final_url = str(driver.current_url)
     except Exception:
         final_url = ""
+    
+    # 最后再检查一次 URL 是否包含 complete
+    if "complete" in final_url.lower():
+        return "complete", final_url
+    
+    # 也检查一下页面内容
+    if duration_control:
+        try:
+            if duration_control.is_survey_completion_page(driver):
+                return "complete", final_url
+        except Exception:
+            pass
+    
     return "unknown", final_url

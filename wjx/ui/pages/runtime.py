@@ -296,6 +296,21 @@ class RuntimePage(ScrollArea):
 
         # ========== 时间控制组 ==========
         time_group = SettingCardGroup("时间控制", self.view)
+        # 在标题后添加小字提示（保持原标题字号）
+        time_hint = BodyLabel("（其实问卷星不会因为你提交过快就封你号）", time_group)
+        time_hint.setStyleSheet("color: blue; font-size: 12px;")
+        # 创建水平布局放置标题和提示
+        title_container = QWidget(time_group)
+        title_h_layout = QHBoxLayout(title_container)
+        title_h_layout.setContentsMargins(0, 0, 0, 0)
+        title_h_layout.setSpacing(8)
+        # 移动标题到新容器
+        time_group.titleLabel.setParent(title_container)
+        title_h_layout.addWidget(time_group.titleLabel)
+        title_h_layout.addWidget(time_hint)
+        title_h_layout.addStretch()
+        # 替换原标题位置
+        time_group.vBoxLayout.insertWidget(0, title_container)
 
         self.interval_card = TimeRangeSettingCard(
             FluentIcon.HISTORY, "提交间隔", "两次提交之间的等待时间范围",

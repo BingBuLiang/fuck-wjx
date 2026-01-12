@@ -17,7 +17,62 @@ try:
 except ImportError:  # pragma: no cover
     version = None
 
+try:
+    from PySide6.QtCore import QSettings
+except ImportError:
+    QSettings = None
+
 from .version import __VERSION__, GITHUB_API_URL, GITHUB_RELEASES_URL
+from .config import GITHUB_MIRROR_SOURCES, DEFAULT_GITHUB_MIRROR
+
+
+def _get_github_mirror() -> str:
+    """获取当前选择的 GitHub 镜像源 key"""
+    if QSettings is not None:
+        try:
+            settings = QSettings("FuckWjx", "Settings")
+            value = settings.value("github_mirror", DEFAULT_GITHUB_MIRROR, type=str)
+            return str(value) if value else DEFAULT_GITHUB_MIRROR
+        except Exception:
+            pass
+    return DEFAULT_GITHUB_MIRROR
+
+
+def _set_github_mirror(mirror_key: str) -> None:
+    """保存当前选择的 GitHub 镜像源 key"""
+    if QSettings is not None:
+        try:
+            settings = QSettings("FuckWjx", "Settings")
+            settings.setValue("github_mirror", mirror_key)
+            logging.info(f"已切换镜像源为: {mirror_key}")
+        except Exception:
+            pass
+
+
+def _get_next_mirror(current_key: str) -> Optional[str]:
+    """获取下一个可用的镜像源 key"""
+    keys = list(GITHUB_MIRROR_SOURCES.keys())
+    if current_key not in keys:
+        return keys[0] if keys else None
+    current_idx = keys.index(current_key)
+    next_idx = (current_idx + 1) % len(keys)
+    # 如果回到了起点，返回 None 表示已尝试所有源
+    if next_idx == 0 and current_idx != 0:
+        return None
+    return keys[next_idx]
+
+
+def _apply_mirror_to_url(url: str, mirror_key: Optional[str] = None) -> str:
+    """将下载 URL 转换为镜像 URL"""
+    if mirror_key is None:
+        mirror_key = _get_github_mirror()
+    mirror_config = GITHUB_MIRROR_SOURCES.get(mirror_key, {})
+    prefix = mirror_config.get("download_prefix", "")
+    if prefix and url.startswith("https://github.com/"):
+        mirrored_url = prefix + url
+        logging.info(f"使用镜像源 [{mirror_key}]: {mirrored_url}")
+        return mirrored_url
+    return url
 
 
 def _get_runtime_directory() -> str:
@@ -131,78 +186,124 @@ class UpdateManager:
 
     @staticmethod
     def download_update(
-        download_url: str, file_name: str, progress_callback=None, cancel_check=None
+        download_url: str, file_name: str, progress_callback=None, cancel_check=None,
+        on_mirror_switch=None
     ) -> Optional[str]:
         """下载更新文件，成功返回文件路径。
         
         Args:
             cancel_check: 可调用对象，返回True表示取消下载
+            on_mirror_switch: 镜像源切换时的回调，参数为新的镜像源 key
         """
         if not requests:
             logging.error("下载更新需要 requests 模块")
             return None
 
-        try:
-            logging.info(f"正在下载更新文件: {download_url}")
-            response = requests.get(download_url, timeout=30, stream=True)
-            response.raise_for_status()
-
-            total_size = int(response.headers.get("content-length", 0))
-
-            current_dir = _get_runtime_directory()
-            target_file = os.path.join(current_dir, file_name)
-            temp_file = target_file + ".tmp"
-            downloaded_size = 0
-            start_time = time.time()
-            last_time = start_time
-            last_downloaded = 0
-
-            logging.info(f"下载目标目录: {current_dir}")
-
-            last_speed = 0
-            with open(temp_file, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    # 检查是否取消
-                    if cancel_check and cancel_check():
-                        logging.info("下载已取消")
-                        raise Exception("下载已取消")
-                    if chunk:
-                        f.write(chunk)
-                        downloaded_size += len(chunk)
-                        # 计算下载速度
-                        now = time.time()
-                        elapsed = now - last_time
-                        if elapsed >= 0.3:  # 每0.3秒更新一次速度
-                            last_speed = (downloaded_size - last_downloaded) / elapsed
-                            last_time = now
-                            last_downloaded = downloaded_size
-                        if progress_callback:
-                            progress_callback(downloaded_size, total_size, last_speed)
-                        if total_size > 0:
-                            progress = (downloaded_size / total_size) * 100
-                            logging.debug(f"下载进度: {progress:.1f}%")
-
-            if os.path.exists(target_file):
-                os.remove(target_file)
-            os.rename(temp_file, target_file)
-
-            logging.info(f"文件已成功下载到: {target_file}")
-
-            UpdateManager.cleanup_old_executables(target_file)
-
-            return target_file
-
-        except Exception as exc:
-            logging.error(f"下载文件失败: {exc}")
+        # 连接超时时间（秒）
+        CONNECT_TIMEOUT = 2
+        # 已尝试的镜像源
+        tried_mirrors = set()
+        current_mirror = _get_github_mirror()
+        
+        while True:
+            tried_mirrors.add(current_mirror)
+            actual_url = _apply_mirror_to_url(download_url, current_mirror)
+            
             try:
+                logging.info(f"正在连接下载服务器: {actual_url}")
+                # 使用较短的连接超时，较长的读取超时
+                response = requests.get(actual_url, timeout=(CONNECT_TIMEOUT, 60), stream=True)
+                response.raise_for_status()
+
+                total_size = int(response.headers.get("content-length", 0))
+
                 current_dir = _get_runtime_directory()
                 target_file = os.path.join(current_dir, file_name)
                 temp_file = target_file + ".tmp"
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-            except Exception:
-                pass
-            return None
+                downloaded_size = 0
+                start_time = time.time()
+                last_time = start_time
+                last_downloaded = 0
+
+                logging.info(f"下载目标目录: {current_dir}")
+
+                last_speed = 0
+                with open(temp_file, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        # 检查是否取消
+                        if cancel_check and cancel_check():
+                            logging.info("下载已取消")
+                            raise Exception("下载已取消")
+                        if chunk:
+                            f.write(chunk)
+                            downloaded_size += len(chunk)
+                            # 计算下载速度
+                            now = time.time()
+                            elapsed = now - last_time
+                            if elapsed >= 0.3:  # 每0.3秒更新一次速度
+                                last_speed = (downloaded_size - last_downloaded) / elapsed
+                                last_time = now
+                                last_downloaded = downloaded_size
+                            if progress_callback:
+                                progress_callback(downloaded_size, total_size, last_speed)
+                            if total_size > 0:
+                                progress = (downloaded_size / total_size) * 100
+                                logging.debug(f"下载进度: {progress:.1f}%")
+
+                if os.path.exists(target_file):
+                    os.remove(target_file)
+                os.rename(temp_file, target_file)
+
+                logging.info(f"文件已成功下载到: {target_file}")
+                
+                # 下载成功，保存当前使用的镜像源
+                _set_github_mirror(current_mirror)
+                if on_mirror_switch:
+                    on_mirror_switch(current_mirror)
+
+                UpdateManager.cleanup_old_executables(target_file)
+
+                return target_file
+
+            except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as exc:
+                logging.warning(f"镜像源 [{current_mirror}] 连接失败: {exc}")
+                
+                # 清理临时文件
+                try:
+                    current_dir = _get_runtime_directory()
+                    target_file = os.path.join(current_dir, file_name)
+                    temp_file = target_file + ".tmp"
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                except Exception:
+                    pass
+                
+                # 尝试切换到下一个镜像源
+                next_mirror = _get_next_mirror(current_mirror)
+                if next_mirror and next_mirror not in tried_mirrors:
+                    mirror_label = GITHUB_MIRROR_SOURCES.get(next_mirror, {}).get("label", next_mirror)
+                    logging.info(f"自动切换到镜像源: {mirror_label}")
+                    current_mirror = next_mirror
+                    # 通知 GUI 镜像源已切换
+                    if on_mirror_switch:
+                        on_mirror_switch(current_mirror)
+                    continue
+                else:
+                    # 所有镜像源都已尝试
+                    logging.error("所有镜像源均连接失败")
+                    return None
+                    
+            except Exception as exc:
+                logging.error(f"下载文件失败: {exc}")
+                try:
+                    current_dir = _get_runtime_directory()
+                    target_file = os.path.join(current_dir, file_name)
+                    temp_file = target_file + ".tmp"
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                except Exception:
+                    pass
+                return None
 
     @staticmethod
     def restart_application():
@@ -414,6 +515,11 @@ def perform_update(gui, *, on_progress: Optional[Callable[[int, int, float], Non
     if hasattr(gui, "downloadStarted"):
         gui.downloadStarted.emit()
 
+    def on_mirror_switch(new_mirror_key):
+        """镜像源切换时的回调"""
+        if hasattr(gui, "mirrorSwitched"):
+            gui.mirrorSwitched.emit(new_mirror_key)
+
     def do_update():
         try:
             downloaded_file = UpdateManager.download_update(
@@ -421,6 +527,7 @@ def perform_update(gui, *, on_progress: Optional[Callable[[int, int, float], Non
                 update_info["file_name"],
                 progress_callback=update_progress,
                 cancel_check=cancel_check,
+                on_mirror_switch=on_mirror_switch,
             )
 
             if gui._download_cancelled:

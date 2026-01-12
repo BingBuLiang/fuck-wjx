@@ -82,6 +82,8 @@ class MainWindow(FluentWindow):
     downloadFinished = Signal(str)  # downloaded_file_path
     # 下载失败信号
     downloadFailed = Signal(str)  # error_message
+    # 镜像源切换信号
+    mirrorSwitched = Signal(str)  # new_mirror_key
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -158,6 +160,8 @@ class MainWindow(FluentWindow):
         # 连接下载完成/失败信号
         self.downloadFinished.connect(self._on_download_finished)
         self.downloadFailed.connect(self._on_download_failed)
+        # 连接镜像源切换信号
+        self.mirrorSwitched.connect(self._on_mirror_switched)
         self._latest_badge = None
         self._outdated_badge = None
         self._preview_badge = None
@@ -841,6 +845,23 @@ class MainWindow(FluentWindow):
         """下载失败后在主线程显示弹窗"""
         if not getattr(self, "_download_cancelled", False):
             self._log_popup_error("更新失败", error_msg)
+
+    def _on_mirror_switched(self, new_mirror_key: str):
+        """镜像源切换时更新设置页面的下拉框"""
+        from wjx.utils.config import GITHUB_MIRROR_SOURCES
+        try:
+            # 更新设置页面的下拉框
+            if hasattr(self, "settings_page") and hasattr(self.settings_page, "mirror_combo"):
+                idx = self.settings_page.mirror_combo.findData(new_mirror_key)
+                if idx >= 0:
+                    self.settings_page.mirror_combo.blockSignals(True)
+                    self.settings_page.mirror_combo.setCurrentIndex(idx)
+                    self.settings_page.mirror_combo.blockSignals(False)
+            # 显示提示
+            mirror_label = GITHUB_MIRROR_SOURCES.get(new_mirror_key, {}).get("label", new_mirror_key)
+            self._toast(f"已自动切换到镜像源: {mirror_label}", "info")
+        except Exception:
+            pass
 
 
 def create_window() -> MainWindow:

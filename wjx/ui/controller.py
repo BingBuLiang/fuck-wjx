@@ -125,7 +125,7 @@ class RunController(QObject):
         title = ""
         if requests:
             try:
-                resp = requests.get(url, timeout=12, headers=DEFAULT_HTTP_HEADERS)
+                resp = requests.get(url, timeout=12, headers=DEFAULT_HTTP_HEADERS, proxies={})
                 resp.raise_for_status()
                 html = resp.text
                 info = parse_survey_questions_from_html(html)

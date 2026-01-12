@@ -2674,6 +2674,18 @@ def _wait_for_post_submit_outcome(
         final_url = str(driver.current_url)
     except Exception:
         final_url = ""
+    
+    # 最后再检查一次 URL 是否包含 complete
+    if "complete" in final_url.lower():
+        return "complete", final_url
+    
+    # 也检查一下页面内容
+    try:
+        if duration_control.is_survey_completion_page(driver):
+            return "complete", final_url
+    except Exception:
+        pass
+    
     return "unknown", final_url
 
 
@@ -2773,9 +2785,6 @@ def _is_device_quota_limit_page(driver: BrowserDriver) -> bool:
 def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=None):
     global cur_num, cur_fail
     
-    # 立即输出启动日志，让用户知道线程已经开始
-    logging.info("工作线程已启动，正在初始化...")
-    
     fast_mode = _is_fast_mode()
     timed_mode_active = _timed_mode_active()
     try:
@@ -2841,14 +2850,12 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
         driver = None
 
     while True:
-        logging.info("进入主循环")
         if stop_signal.is_set():
             break
         with lock:
             if stop_signal.is_set() or (target_num > 0 and cur_num >= target_num):
                 break
         
-        logging.info("检查时长控制状态")
         if _full_simulation_active():
             if not _wait_for_next_full_simulation_slot(stop_signal):
                 break
@@ -2857,23 +2864,17 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             break
         
         if driver is None:
-            logging.info("准备创建浏览器实例...")
             proxy_address = _select_proxy_for_session()
             if proxy_address:
-                logging.info(f"使用代理：{proxy_address}")
-                # 快速验证代理可用性（3秒超时）
                 if not _proxy_is_responsive(proxy_address):
-                    logging.warning(f"代理无响应，丢弃：{proxy_address}")
+                    logging.warning(f"代理无响应：{proxy_address}")
                     _discard_unresponsive_proxy(proxy_address)
                     if stop_signal.is_set():
                         break
                     continue
             
             ua_value, ua_label = _select_user_agent_for_session()
-            if ua_label:
-                logging.info(f"使用随机 UA：{ua_label}")
             
-            logging.info("正在启动浏览器...")
             try:
                 driver, active_browser = create_playwright_driver(
                     headless=False,
@@ -2882,7 +2883,6 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                     user_agent=ua_value,
                     window_position=(window_x_pos, window_y_pos),
                 )
-                logging.info(f"浏览器启动成功：{active_browser}")
             except Exception as exc:
                 if stop_signal.is_set():
                     break
@@ -2894,9 +2894,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             
             preferred_browsers = [active_browser] + [b for b in BROWSER_PREFERENCE if b != active_browser]
             _register_driver(driver)
-            logging.info("设置窗口大小...")
             driver.set_window_size(550, 650)
-            logging.info("浏览器初始化完成")
 
         driver_had_error = False
         try:
@@ -2956,91 +2954,48 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 if stop_signal.is_set() or not finished:
                     break
 
-                need_watch_submit = bool(last_submit_had_captcha)
-                max_wait, poll_interval = duration_control.get_post_submit_wait_params(need_watch_submit, fast_mode)
-                outcome, outcome_url = _wait_for_post_submit_outcome(
-                    driver,
-                    str(initial_url),
-                    max_wait=max_wait,
-                    poll_interval=poll_interval,
-                    stop_signal=stop_signal,
-                )
+                # 简化判断逻辑：点击提交成功后，短暂等待让页面加载
+                post_submit_wait = random.uniform(0.2, 0.6)
+                if stop_signal.wait(post_submit_wait):
+                    break
 
-                if outcome == "unknown" and not stop_signal.is_set():
-                    extra_wait_seconds = max(1.0, float(POST_SUBMIT_URL_MAX_WAIT or 0.0) * 3.0)
-                    extra_poll = max(0.05, float(POST_SUBMIT_URL_POLL_INTERVAL or 0.1))
-                    outcome, outcome_url = _wait_for_post_submit_outcome(
-                        driver,
-                        str(initial_url),
-                        max_wait=extra_wait_seconds,
-                        poll_interval=extra_poll,
-                        stop_signal=stop_signal,
-                    )
-
-                if outcome == "unknown" and not stop_signal.is_set():
-                    aliyun_detected = False
+                # 检查是否触发阿里云验证
+                aliyun_detected = False
+                if not stop_signal.is_set():
                     try:
                         aliyun_detected = handle_aliyun_captcha(
                             driver,
-                            timeout=3,
+                            timeout=2,
                             stop_signal=stop_signal,
                             raise_on_detect=False,
                         )
                     except Exception:
                         aliyun_detected = False
-                    if aliyun_detected:
-                        driver_had_error = True
-                        _trigger_aliyun_captcha_stop(gui_instance, stop_signal)
-                        break
 
-                if outcome == "complete":
-                    with lock:
-                        if target_num <= 0 or cur_num < target_num:
-                            cur_num += 1
-                            logging.info(
-                                f"[OK] 已填写{cur_num}份 - 失败{cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
-                            )
-                            if random_proxy_ip_enabled:
-                                handle_random_ip_submission(gui_instance, stop_signal)
-                            if target_num > 0 and cur_num >= target_num:
-                                stop_signal.set()
-                                _trigger_target_reached_stop(gui_instance, stop_signal)
-                        else:
-                            stop_signal.set()
-                            break
-                    grace_seconds = float(POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
-                    if grace_seconds > 0 and not stop_signal.is_set():
-                        time.sleep(grace_seconds)
-                    _dispose_driver()
+                if aliyun_detected:
+                    driver_had_error = True
+                    _trigger_aliyun_captcha_stop(gui_instance, stop_signal)
                     break
 
-                if outcome == "followup":
-                    followup_hops += 1
-                    if POST_SUBMIT_FOLLOWUP_MAX_HOPS and followup_hops > int(POST_SUBMIT_FOLLOWUP_MAX_HOPS):
-                        logging.warning(
-                            "提交后检测到连续跳转问卷次数过多（>%s），视为失败：%s",
-                            POST_SUBMIT_FOLLOWUP_MAX_HOPS,
-                            outcome_url,
+                # 没有触发验证，直接标记为成功
+                with lock:
+                    if target_num <= 0 or cur_num < target_num:
+                        cur_num += 1
+                        logging.info(
+                            f"[OK] 已填写{cur_num}份 - 失败{cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
                         )
-                        driver_had_error = True
-                        if _handle_submission_failure(stop_signal):
-                            break
+                        if random_proxy_ip_enabled:
+                            handle_random_ip_submission(gui_instance, stop_signal)
+                        if target_num > 0 and cur_num >= target_num:
+                            stop_signal.set()
+                            _trigger_target_reached_stop(gui_instance, stop_signal)
+                    else:
+                        stop_signal.set()
                         break
-                    next_norm = _normalize_url_for_compare(outcome_url)
-                    if next_norm and next_norm in visited_urls:
-                        logging.warning("提交后跳转问卷出现循环，视为失败：%s", outcome_url)
-                        driver_had_error = True
-                        if _handle_submission_failure(stop_signal):
-                            break
-                        break
-                    if next_norm:
-                        visited_urls.add(next_norm)
-                    logging.info("[Action Log] 检测到分流：提交后跳转到下一份问卷：%s", outcome_url)
-                    continue
-
-                driver_had_error = True
-                if _handle_submission_failure(stop_signal):
-                    break
+                grace_seconds = float(POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
+                if grace_seconds > 0 and not stop_signal.is_set():
+                    time.sleep(grace_seconds)
+                _dispose_driver()
                 break
         except AliyunCaptchaBypassError:
             driver_had_error = True

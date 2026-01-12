@@ -10,20 +10,31 @@ from qfluentwidgets import (
     InfoBar,
     InfoBarPosition,
     FluentIcon as FIF,
+    isDarkTheme,
+    qconfig,
 )
 
 from wjx.utils.log_utils import LOG_BUFFER_HANDLER, save_log_records_to_file
 from wjx.utils.load_save import get_runtime_directory
 
 
-# 日志级别颜色配置（参考UniGetUI）
-LOG_COLORS = {
+# 日志级别颜色配置（深色/浅色主题）
+LOG_COLORS_DARK = {
     "ERROR": "#ef4444",   # 红色
     "WARN": "#eab308",    # 黄色
     "WARNING": "#eab308", # 黄色
-    "INFO": "#d1d5db",    # 浅灰色（普通信息）
+    "INFO": "#d1d5db",    # 浅灰色
     "DEBUG": "#6b7280",   # 深灰色
     "DEFAULT": "#9ca3af", # 默认灰色
+}
+
+LOG_COLORS_LIGHT = {
+    "ERROR": "#dc2626",   # 深红色
+    "WARN": "#ca8a04",    # 深黄色
+    "WARNING": "#ca8a04", # 深黄色
+    "INFO": "#374151",    # 深灰色
+    "DEBUG": "#6b7280",   # 中灰色
+    "DEFAULT": "#4b5563", # 默认深灰
 }
 
 # 日志级别筛选选项
@@ -80,7 +91,7 @@ class LogPage(QWidget):
         toolbar.addWidget(self.refresh_btn)
         layout.addLayout(toolbar)
 
-        # 日志显示区域（深色终端风格）
+        # 日志显示区域
         self.log_view = QPlainTextEdit(self)
         self.log_view.setReadOnly(True)
         self.log_view.setTextInteractionFlags(
@@ -89,22 +100,14 @@ class LogPage(QWidget):
         )
         self.log_view.setPlaceholderText("日志输出会显示在这里...")
         
-        # 设置深色终端风格
-        self.log_view.setStyleSheet("""
-            QPlainTextEdit {
-                background-color: #1a1a1a;
-                color: #d1d5db;
-                border: 1px solid #333;
-                border-radius: 6px;
-                padding: 8px;
-                selection-background-color: #3b82f6;
-            }
-        """)
-        
         # 设置等宽字体
         font = QFont("Consolas", 10)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.log_view.setFont(font)
+        
+        # 应用主题样式
+        self._apply_theme()
+        qconfig.themeChanged.connect(self._apply_theme)
         
         layout.addWidget(self.log_view, 1)
 
@@ -151,17 +154,20 @@ class LogPage(QWidget):
 
         # 保存滚动位置
         scrollbar = self.log_view.verticalScrollBar()
-        was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 10
+        old_value = scrollbar.value()
+        old_max = scrollbar.maximum()
+        was_at_bottom = old_value >= old_max - 10
 
         self.log_view.clear()
         cursor = self.log_view.textCursor()
 
+        colors = LOG_COLORS_DARK if isDarkTheme() else LOG_COLORS_LIGHT
         for entry in records:
             level = self._get_log_level(entry)
             if not self._should_show(level):
                 continue
 
-            color = LOG_COLORS.get(level, LOG_COLORS["DEFAULT"])
+            color = colors.get(level, colors["DEFAULT"])
             
             # 使用HTML插入带颜色的文本
             text = entry.text if hasattr(entry, 'text') else str(entry)
@@ -170,6 +176,10 @@ class LogPage(QWidget):
         # 恢复滚动位置
         if was_at_bottom:
             self.log_view.moveCursor(QTextCursor.MoveOperation.End)
+        elif old_max > 0:
+            # 按比例恢复滚动位置
+            ratio = old_value / old_max
+            scrollbar.setValue(int(ratio * scrollbar.maximum()))
 
     def _copy_to_clipboard(self):
         """复制日志到剪贴板"""
@@ -202,6 +212,31 @@ class LogPage(QWidget):
                 position=InfoBarPosition.TOP,
                 duration=3000
             )
+
+    def _apply_theme(self):
+        """根据主题应用样式"""
+        if isDarkTheme():
+            self.log_view.setStyleSheet("""
+                QPlainTextEdit {
+                    background-color: #1a1a1a;
+                    color: #d1d5db;
+                    border: 1px solid #333;
+                    border-radius: 6px;
+                    padding: 8px;
+                    selection-background-color: #3b82f6;
+                }
+            """)
+        else:
+            self.log_view.setStyleSheet("""
+                QPlainTextEdit {
+                    background-color: #f8f9fa;
+                    color: #1f2937;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 6px;
+                    padding: 8px;
+                    selection-background-color: #3b82f6;
+                }
+            """)
 
     def _load_last_session_logs(self):
         """加载上次会话的日志"""

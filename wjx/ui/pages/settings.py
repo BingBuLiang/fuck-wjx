@@ -2,19 +2,22 @@
 import sys
 import subprocess
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QApplication
 from qfluentwidgets import (
     ScrollArea,
     SettingCardGroup,
+    SettingCard,
     PushSettingCard,
     FluentIcon,
     InfoBar,
     InfoBarPosition,
     MessageBox,
+    ComboBox,
 )
 
 from wjx.ui.pages.runtime import SwitchSettingCard
+from wjx.utils.config import GITHUB_MIRROR_SOURCES, DEFAULT_GITHUB_MIRROR
 
 
 class SettingsPage(ScrollArea):
@@ -73,6 +76,26 @@ class SettingsPage(ScrollArea):
         self.auto_update_card.setChecked(settings.value("auto_check_update", True, type=bool))
         self.update_group.addSettingCard(self.auto_update_card)
 
+        # 下载镜像源选择
+        self.mirror_card = SettingCard(
+            FluentIcon.DOWNLOAD,
+            "下载镜像源",
+            "国内用户建议使用镜像加速下载",
+            self.update_group
+        )
+        self.mirror_combo = ComboBox(self.mirror_card)
+        self.mirror_combo.setMinimumWidth(180)
+        for key, source in GITHUB_MIRROR_SOURCES.items():
+            self.mirror_combo.addItem(source["label"], userData=key)
+        # 读取保存的镜像源设置
+        saved_mirror = settings.value("github_mirror", DEFAULT_GITHUB_MIRROR, type=str)
+        idx = self.mirror_combo.findData(saved_mirror)
+        if idx >= 0:
+            self.mirror_combo.setCurrentIndex(idx)
+        self.mirror_card.hBoxLayout.addWidget(self.mirror_combo, 0, Qt.AlignmentFlag.AlignRight)
+        self.mirror_card.hBoxLayout.addSpacing(16)
+        self.update_group.addSettingCard(self.mirror_card)
+
         layout.addWidget(self.update_group)
         layout.addStretch(1)
 
@@ -80,6 +103,7 @@ class SettingsPage(ScrollArea):
         self.sidebar_card.switchButton.checkedChanged.connect(self._on_sidebar_toggled)
         self.restart_card.clicked.connect(self._restart_program)
         self.auto_update_card.switchButton.checkedChanged.connect(self._on_auto_update_toggled)
+        self.mirror_combo.currentIndexChanged.connect(self._on_mirror_changed)
 
     def _on_sidebar_toggled(self, checked: bool):
         """侧边栏展开切换"""
@@ -134,6 +158,21 @@ class SettingsPage(ScrollArea):
         InfoBar.success(
             "",
             f"启动时检查更新已{'开启' if checked else '关闭'}",
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+            duration=2000
+        )
+
+    def _on_mirror_changed(self):
+        """镜像源选择变化"""
+        idx = self.mirror_combo.currentIndex()
+        mirror_key = str(self.mirror_combo.itemData(idx)) if idx >= 0 else DEFAULT_GITHUB_MIRROR
+        settings = QSettings("FuckWjx", "Settings")
+        settings.setValue("github_mirror", mirror_key)
+        mirror_label = GITHUB_MIRROR_SOURCES.get(mirror_key, {}).get("label", mirror_key)
+        InfoBar.success(
+            "",
+            f"下载镜像源已切换为：{mirror_label}",
             parent=self.window(),
             position=InfoBarPosition.TOP,
             duration=2000

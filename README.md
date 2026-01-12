@@ -9,7 +9,7 @@ A GUI tool for auto-filling WenJuanXing (wjx.cn) surveys with custom answer dist
 > [!WARNING]
 > **For learning and testing only.** Ensure you have authorization. **DO NOT pollute others' survey data!**
 
-<img width="600" alt="gui" src="https://github.com/user-attachments/assets/e9f71c9b-5222-4196-916c-df6eed5a743b" />
+<img width="689" height="626" alt="gui" src="https://github.com/user-attachments/assets/dab85fed-1b28-4d45-8adf-37bb2770cf28" />
 
 ---
 

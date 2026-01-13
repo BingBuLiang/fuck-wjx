@@ -90,7 +90,7 @@ def _fetch_cn_http_proxies_from_pikachu() -> List[str]:
         country = proxy.get("country", "")
         protocol = proxy.get("protocol", "")
         
-        if country == "CN" and "Http" in protocol:
+        if country == "CN" and "http" in protocol.lower():
             ip = proxy.get("ip", "")
             port = proxy.get("port", "")
             if ip and port:
@@ -261,61 +261,131 @@ def _proxy_api_candidates(expected_count: int, proxy_url: Optional[str]) -> List
     return [f"{url}{separator}num={max(1, expected_count)}", url]
 
 
+def _extract_proxy_from_string(s: str) -> Optional[str]:
+    """从字符串中提取代理地址，支持多种格式"""
+    if not isinstance(s, str):
+        return None
+    s = s.strip()
+    if not s:
+        return None
+    # 格式: "IP:端口,地区" 或 "IP:端口"
+    parts = s.split(",", 1)
+    addr = parts[0].strip()
+    # 验证是否是有效的 IP:端口 格式
+    if ":" in addr and not addr.startswith("http"):
+        return addr
+    return None
+
+
+def _extract_proxy_from_dict(obj: dict) -> Optional[str]:
+    """从字典对象中提取代理地址"""
+    if not isinstance(obj, dict):
+        return None
+    # 尝试提取 ip + port
+    ip = str(obj.get("ip") or obj.get("IP") or obj.get("host") or "").strip()
+    port = str(obj.get("port") or obj.get("Port") or obj.get("PORT") or "").strip()
+    if ip and port:
+        username = str(obj.get("account") or obj.get("username") or obj.get("user") or "").strip()
+        password = str(obj.get("password") or obj.get("pwd") or obj.get("pass") or "").strip()
+        if username and password:
+            return f"{username}:{password}@{ip}:{port}"
+        return f"{ip}:{port}"
+    return None
+
+
+def _recursive_find_proxies(data: Any, results: List[str], depth: int = 0) -> None:
+    """递归遍历JSON结构，自动识别并提取代理地址"""
+    if depth > 10:  # 防止无限递归
+        return
+    
+    if isinstance(data, dict):
+        # 尝试从当前字典提取代理
+        proxy = _extract_proxy_from_dict(data)
+        if proxy:
+            results.append(proxy)
+            return  # 找到代理后不再深入该对象
+        # 递归遍历所有值
+        for value in data.values():
+            _recursive_find_proxies(value, results, depth + 1)
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, str):
+                proxy = _extract_proxy_from_string(item)
+                if proxy:
+                    results.append(proxy)
+            else:
+                _recursive_find_proxies(item, results, depth + 1)
+    elif isinstance(data, str):
+        proxy = _extract_proxy_from_string(data)
+        if proxy:
+            results.append(proxy)
+
+
 def _parse_proxy_payload(text: str) -> List[str]:
-    """解析代理API返回的JSON数据，支持多种格式：
-    格式1: {"code":200,"data":{"proxy_list":["IP:端口,地区"]}}
-    格式2: {"data":{"list":[{"ip":"x.x.x.x","port":"xxx","account":"xxx","password":"xxx"}]},"code":0}
-    """
+    """智能解析代理API返回的JSON数据，自动兼容各种格式"""
     try:
         data = json.loads(text)
-        if not isinstance(data, dict):
-            raise ValueError("返回数据不是JSON对象")
-        
-        data_section = data.get("data")
-        if not isinstance(data_section, dict):
-            raise ValueError("返回数据缺少data字段")
-        
-        candidates: List[str] = []
-        
-        # 尝试格式1: proxy_list 字符串数组
-        proxy_list = data_section.get("proxy_list")
-        if isinstance(proxy_list, list) and proxy_list:
-            for item in proxy_list:
-                if isinstance(item, str) and item.strip():
-                    full_info = item.strip()
-                    parts = full_info.split(",", 1)
-                    addr = parts[0].strip()
-                    region = parts[1].strip() if len(parts) > 1 else "未知地区"
-                    if addr:
-                        logging.info(f"获取到代理: {addr} ({region})")
-                        candidates.append(addr)
-        
-        # 尝试格式2: list 对象数组
-        if not candidates:
-            obj_list = data_section.get("list")
-            if isinstance(obj_list, list) and obj_list:
-                for item in obj_list:
-                    if not isinstance(item, dict):
-                        continue
-                    ip = str(item.get("ip", "")).strip()
-                    port = str(item.get("port", "")).strip()
-                    if not ip or not port:
-                        continue
-                    username = str(item.get("account") or item.get("username") or "").strip()
-                    password = str(item.get("password") or item.get("pwd") or "").strip()
-                    if username and password:
-                        addr = f"{username}:{password}@{ip}:{port}"
-                    else:
-                        addr = f"{ip}:{port}"
-                    region = str(item.get("net") or item.get("region") or "未知地区").strip()
-                    logging.info(f"获取到代理: {ip}:{port} ({region})")
-                    candidates.append(addr)
-        
-        if not candidates:
-            raise ValueError("返回数据中无有效代理地址")
-        return candidates
     except json.JSONDecodeError as e:
         raise ValueError(f"JSON解析失败: {e}")
+    
+    candidates: List[str] = []
+    _recursive_find_proxies(data, candidates)
+    
+    if not candidates:
+        raise ValueError("返回数据中无有效代理地址")
+    
+    # 去重并记录日志
+    seen: Set[str] = set()
+    unique: List[str] = []
+    for addr in candidates:
+        if addr not in seen:
+            seen.add(addr)
+            unique.append(addr)
+            logging.info(f"获取到代理: {addr}")
+    
+    return unique
+
+
+def test_custom_proxy_api(url: str) -> tuple[bool, str, List[str]]:
+    """测试自定义代理API是否可用
+    
+    Args:
+        url: API地址
+        
+    Returns:
+        (是否成功, 错误信息, 解析到的代理列表)
+    """
+    if not url or not url.strip():
+        return False, "API地址不能为空", []
+    
+    url = url.strip()
+    if not (url.lower().startswith("http://") or url.lower().startswith("https://")):
+        return False, "API地址必须以 http:// 或 https:// 开头", []
+    
+    if not requests:
+        return False, "缺少 requests 模块", []
+    
+    try:
+        resp = requests.get(url, timeout=10, headers=DEFAULT_HTTP_HEADERS, proxies={})
+        resp.raise_for_status()
+    except requests.exceptions.Timeout:
+        return False, "请求超时，请检查网络或API地址", []
+    except requests.exceptions.ConnectionError:
+        return False, "连接失败，请检查API地址是否正确", []
+    except requests.exceptions.HTTPError as e:
+        return False, f"HTTP错误: {e.response.status_code}", []
+    except Exception as e:
+        return False, f"请求失败: {e}", []
+    
+    try:
+        proxies = _parse_proxy_payload(resp.text)
+        if not proxies:
+            return False, "未能从返回数据中解析出代理地址", []
+        return True, "", proxies
+    except ValueError as e:
+        return False, str(e), []
+    except Exception as e:
+        return False, f"解析失败: {e}", []
 
 
 def _normalize_proxy_address(proxy_address: Optional[str]) -> Optional[str]:
@@ -362,6 +432,21 @@ def _proxy_is_responsive(proxy_address: str, skip_for_default: bool = True) -> b
     return True
 
 
+def _proxy_is_responsive_fast(proxy_address: str) -> bool:
+    """快速检测代理是否可用（3秒超时）"""
+    if not requests:
+        return False
+    proxy_address = _normalize_proxy_address(proxy_address) or ""
+    if not proxy_address:
+        return False
+    proxies = {"http": proxy_address, "https": proxy_address}
+    try:
+        response = requests.get(PROXY_HEALTH_CHECK_URL, proxies=proxies, timeout=3)
+        return response.status_code < 400
+    except Exception:
+        return False
+
+
 def _fetch_new_proxy_batch(expected_count: int = 1, proxy_url: Optional[str] = None) -> List[str]:
     """Fetch a batch of proxy addresses."""
     if not requests:
@@ -378,10 +463,22 @@ def _fetch_new_proxy_batch(expected_count: int = 1, proxy_url: Optional[str] = N
             all_proxies = _fetch_cn_http_proxies_from_pikachu()
             if not all_proxies:
                 raise RuntimeError("皮卡丘代理站未返回任何中国大陆 HTTP 代理")
-            # 随机选择指定数量的代理
-            count = min(expected_count, len(all_proxies))
-            selected = random.sample(all_proxies, count)
-            return selected
+            # 打乱顺序后逐个检查可用性，最多验证10个
+            random.shuffle(all_proxies)
+            max_check = min(10, len(all_proxies))
+            valid_proxies: List[str] = []
+            for i, proxy in enumerate(all_proxies[:max_check]):
+                if len(valid_proxies) >= expected_count:
+                    break
+                logging.info(f"正在验证代理 ({i+1}/{max_check}): {proxy}")
+                if _proxy_is_responsive_fast(proxy):
+                    valid_proxies.append(proxy)
+                    logging.info(f"代理可用: {proxy}")
+                else:
+                    logging.info(f"代理不可用: {proxy}")
+            if not valid_proxies:
+                raise RuntimeError(f"已验证{max_check}个代理均不可用，请稍后重试或切换代理源")
+            return valid_proxies
         except Exception as exc:
             logging.error(f"从皮卡丘代理站获取代理失败: {exc}")
             raise RuntimeError(f"获取皮卡丘代理失败: {exc}")

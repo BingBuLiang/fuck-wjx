@@ -29,6 +29,9 @@ from qfluentwidgets import (
     ExpandGroupSettingCard,
     IndicatorPosition,
     TransparentToolButton,
+    IndeterminateProgressRing,
+    InfoBar,
+    InfoBarPosition,
 )
 
 from wjx.ui.widgets.no_wheel import NoWheelSlider, NoWheelSpinBox
@@ -118,11 +121,35 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         api_hint.setStyleSheet("color: red; font-size: 11px;")
         self.customApiEdit = LineEdit(self.customApiRow)
         self.customApiEdit.setPlaceholderText("请输入代理api地址")
-        self.customApiEdit.setMinimumWidth(280)
+        self.customApiEdit.setMinimumWidth(420)
+        
+        # 检测按钮容器（包含按钮、加载动画、状态图标）
+        self.testBtnContainer = QWidget(self.customApiRow)
+        test_btn_layout = QHBoxLayout(self.testBtnContainer)
+        test_btn_layout.setContentsMargins(0, 0, 0, 0)
+        test_btn_layout.setSpacing(4)
+        
+        self.testApiBtn = PushButton("检测", self.testBtnContainer)
+        self.testApiBtn.setFixedWidth(60)
+        self.testApiBtn.clicked.connect(self._on_test_api_clicked)
+        
+        self.testApiSpinner = IndeterminateProgressRing(self.testBtnContainer)
+        self.testApiSpinner.setFixedSize(20, 20)
+        self.testApiSpinner.hide()
+        
+        self.testApiStatus = BodyLabel("", self.testBtnContainer)
+        self.testApiStatus.setFixedWidth(20)
+        self.testApiStatus.hide()
+        
+        test_btn_layout.addWidget(self.testApiBtn)
+        test_btn_layout.addWidget(self.testApiSpinner)
+        test_btn_layout.addWidget(self.testApiStatus)
+        
         api_layout.addWidget(api_label)
         api_layout.addWidget(api_hint)
         api_layout.addStretch(1)
         api_layout.addWidget(self.customApiEdit)
+        api_layout.addWidget(self.testBtnContainer)
         self.customApiRow.hide()
         layout.addWidget(self.customApiRow)
 
@@ -144,6 +171,70 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         # 通过重新设置展开状态来刷新高度
         if self.isExpand:
             self._adjustViewSize()
+
+    def _on_test_api_clicked(self):
+        """检测API按钮点击事件"""
+        import logging
+        from PySide6.QtCore import QThread, Signal, QObject
+        
+        api_url = self.customApiEdit.text().strip()
+        if not api_url:
+            InfoBar.warning("", "请先输入API地址", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+            return
+        
+        # 显示加载状态
+        self.testApiBtn.hide()
+        self.testApiStatus.hide()
+        self.testApiSpinner.show()
+        
+        # 创建工作线程
+        class TestWorker(QObject):
+            finished = Signal(bool, str, list)
+            
+            def __init__(self, url):
+                super().__init__()
+                self.url = url
+            
+            def run(self):
+                from wjx.network.random_ip import test_custom_proxy_api
+                success, error, proxies = test_custom_proxy_api(self.url)
+                self.finished.emit(success, error, proxies)
+        
+        self._test_thread = QThread()
+        self._test_worker = TestWorker(api_url)
+        self._test_worker.moveToThread(self._test_thread)
+        self._test_thread.started.connect(self._test_worker.run)
+        self._test_worker.finished.connect(self._on_test_finished)
+        self._test_worker.finished.connect(self._test_thread.quit)
+        self._test_worker.finished.connect(self._test_worker.deleteLater)
+        self._test_thread.finished.connect(self._test_thread.deleteLater)
+        self._test_thread.start()
+    
+    def _on_test_finished(self, success: bool, error: str, proxies: list):
+        """检测完成回调"""
+        import logging
+        
+        self.testApiSpinner.hide()
+        self.testApiStatus.show()
+        
+        if success:
+            self.testApiStatus.setText("✔")
+            self.testApiStatus.setStyleSheet("color: green; font-size: 16px; font-weight: bold;")
+            logging.info(f"API检测成功，获取到 {len(proxies)} 个代理")
+        else:
+            self.testApiStatus.setText("✖")
+            self.testApiStatus.setStyleSheet("color: red; font-size: 16px; font-weight: bold;")
+            logging.error(f"API检测失败: {error}")
+            InfoBar.error("API检测失败", error, parent=self.window(), position=InfoBarPosition.TOP, duration=5000)
+        
+        # 3秒后恢复按钮
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(3000, self._reset_test_button)
+    
+    def _reset_test_button(self):
+        """重置检测按钮状态"""
+        self.testApiStatus.hide()
+        self.testApiBtn.show()
 
     def isChecked(self):
         return self.switchButton.isChecked()

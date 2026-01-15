@@ -49,7 +49,6 @@ PROXY_SOURCE_CUSTOM = "custom"  # 自定义代理源
 # 当前选择的代理源
 _current_proxy_source: str = PROXY_SOURCE_DEFAULT
 
-# 默认/自定义代理源的代理认证（Base64），与浏览器逻辑保持一致
 _PA = "MTgxNzAxMTk4MDg6dFdKNWhMRG9Id3JIZ1RraWowelk="
 
 
@@ -419,7 +418,7 @@ def _inject_default_proxy_auth(proxy_address: str) -> str:
             rebuilt = f"{scheme}://{netloc}"
         return rebuilt
     except Exception:
-        logging.debug("注入默认代理认证失败，使用原始地址", exc_info=True)
+        logging.debug("注入失败，使用原始地址", exc_info=True)
         return proxy_address
 
 
@@ -431,7 +430,6 @@ def _normalize_proxy_address(proxy_address: Optional[str]) -> Optional[str]:
         return None
     if "://" not in normalized:
         normalized = f"http://{normalized}"
-    # 默认或自定义代理源自动补充认证，保证健康检查也带上凭据
     if get_proxy_source() in (PROXY_SOURCE_DEFAULT, PROXY_SOURCE_CUSTOM):
         normalized = _inject_default_proxy_auth(normalized)
     return normalized

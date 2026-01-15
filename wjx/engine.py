@@ -189,6 +189,12 @@ from wjx.core.question_multiple import (
     detect_multiple_choice_limit,
     detect_multiple_choice_limit_range,
     _log_multi_limit_once,
+    _safe_positive_int,
+    _extract_range_from_json_obj,
+    _extract_range_from_possible_json,
+    _extract_min_max_from_attributes,
+    _extract_multi_limit_range_from_text,
+    _get_driver_session_key,
 )
 from wjx.core.question_dropdown import droplist as _droplist_impl
 from wjx.core.question_matrix import matrix as _matrix_impl
@@ -901,25 +907,6 @@ def _driver_question_has_shared_text_input(question_div) -> bool:
     return any(keyword in text_blob for keyword in option_fill_keywords)
 
 
-def _count_prefixed_text_inputs_driver(driver: BrowserDriver, question_number: int, question_div=None) -> int:
-    """Count inputs like q{num}_1 used by gap-fill/multi-text questions."""
-    if not question_number:
-        return 0
-    prefix = f"q{question_number}_"
-    selector = (
-        f"input[id^='{prefix}'], textarea[id^='{prefix}'], "
-        f"input[name^='{prefix}'], textarea[name^='{prefix}']"
-    )
-    try:
-        if question_div is not None:
-            elements = question_div.find_elements(By.CSS_SELECTOR, selector)
-        else:
-            elements = driver.find_elements(By.CSS_SELECTOR, f"#div{question_number} {selector}")
-    except Exception:
-        return 0
-    return len(elements)
-
-
 def _verify_text_indicates_location(value: Optional[str]) -> bool:
     if not value:
         return False
@@ -927,29 +914,6 @@ def _verify_text_indicates_location(value: Optional[str]) -> bool:
     if not text:
         return False
     return ("地图" in text) or ("map" in text.lower())
-
-
-def _driver_question_is_location(question_div) -> bool:
-    if question_div is None:
-        return False
-    try:
-        local_elements = question_div.find_elements(By.CSS_SELECTOR, ".get_Local")
-        if local_elements:
-            return True
-    except Exception:
-        pass
-    try:
-        inputs = question_div.find_elements(By.CSS_SELECTOR, "input[verify], .get_Local input, input")
-    except Exception:
-        inputs = []
-    for input_element in inputs:
-        try:
-            verify_value = input_element.get_attribute("verify")
-        except Exception:
-            verify_value = None
-        if _verify_text_indicates_location(verify_value):
-            return True
-    return False
 
 
 def _driver_question_looks_like_reorder(question_div) -> bool:
@@ -976,69 +940,6 @@ def _driver_question_looks_like_reorder(question_div) -> bool:
 
 _TEXT_INPUT_ALLOWED_TYPES = {"", "text", "search", "tel", "number"}
 _KNOWN_NON_TEXT_QUESTION_TYPES = {"3", "4", "5", "6", "7", "8", "11"}
-
-
-def _count_visible_text_inputs_driver(question_div) -> int:
-    try:
-        candidates = question_div.find_elements(
-            By.CSS_SELECTOR,
-            "input, textarea, span[contenteditable='true'], div[contenteditable='true'], .textCont, .textcont"
-        )
-    except Exception:
-        candidates = []
-    count = 0
-    for cand in candidates:
-        try:
-            tag_name = (cand.tag_name or "").lower()
-        except Exception:
-            tag_name = ""
-        input_type = ""
-        try:
-            input_type = (cand.get_attribute("type") or "").lower()
-        except Exception:
-            input_type = ""
-        try:
-            style_text = (cand.get_attribute("style") or "").lower()
-        except Exception:
-            style_text = ""
-        try:
-            class_attr = (cand.get_attribute("class") or "").lower()
-        except Exception:
-            class_attr = ""
-        is_textcont = "textcont" in class_attr or "textedit" in class_attr
-
-        # 跳过隐藏元素（type hidden 或 display:none / visibility:hidden）
-        if input_type == "hidden" or "display:none" in style_text or "visibility:hidden" in style_text:
-            continue
-        # 若 input 后紧跟 textEdit 的 contenteditable，避免重复计数
-        if tag_name == "input":
-            try:
-                sibling = cand.find_element(By.XPATH, "following-sibling::*[1]")
-                sibling_tag = (sibling.tag_name or "").lower()
-                sibling_class = (sibling.get_attribute("class") or "").lower()
-                if sibling_tag in {"label", "div", "span"} and "textedit" in sibling_class:
-                    continue
-            except Exception:
-                pass
-
-        if tag_name == "textarea" or (tag_name == "input" and input_type in _TEXT_INPUT_ALLOWED_TYPES):
-            try:
-                if cand.is_displayed():
-                    count += 1
-            except Exception:
-                count += 1
-            continue
-        try:
-            contenteditable = (cand.get_attribute("contenteditable") or "").lower() == "true"
-        except Exception:
-            contenteditable = False
-        if (contenteditable or is_textcont) and tag_name in {"span", "div"}:
-            try:
-                if cand.is_displayed():
-                    count += 1
-            except Exception:
-                count += 1
-    return count
 
 
 def _count_choice_inputs_driver(question_div) -> Tuple[int, int]:
@@ -1071,286 +972,6 @@ def _count_choice_inputs_driver(question_div) -> Tuple[int, int]:
     return checkbox_count, radio_count
 
 
-
-
-def _extract_text_from_element(element) -> str:
-    try:
-        text = element.text or ""
-    except Exception:
-        text = ""
-    text = text.strip()
-    if text:
-        return text
-    try:
-        text = (element.get_attribute("textContent") or "").strip()
-    except Exception:
-        text = ""
-    return text
-
-
-def _safe_positive_int(value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        int_value = int(value)
-        return int_value if int_value > 0 else None
-    try:
-        text = str(value).strip()
-    except Exception:
-        return None
-    if not text:
-        return None
-    if text.isdigit():
-        int_value = int(text)
-        return int_value if int_value > 0 else None
-    match = re.search(r"(\d+)", text)
-    if match:
-        int_value = int(match.group(1))
-        return int_value if int_value > 0 else None
-    return None
-
-
-def _extract_range_from_json_obj(obj: Any) -> Tuple[Optional[int], Optional[int]]:
-    min_limit: Optional[int] = None
-    max_limit: Optional[int] = None
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            normalized_key = str(key).lower()
-            if normalized_key in _MULTI_MIN_LIMIT_VALUE_KEYSET:
-                candidate = _safe_positive_int(value)
-                if candidate:
-                    min_limit = min_limit or candidate
-            if normalized_key in _MULTI_LIMIT_VALUE_KEYSET:
-                candidate = _safe_positive_int(value)
-                if candidate:
-                    max_limit = max_limit or candidate
-            nested_min, nested_max = _extract_range_from_json_obj(value)
-            if min_limit is None and nested_min is not None:
-                min_limit = nested_min
-            if max_limit is None and nested_max is not None:
-                max_limit = nested_max
-            if min_limit is not None and max_limit is not None:
-                break
-    elif isinstance(obj, list):
-        for item in obj:
-            nested_min, nested_max = _extract_range_from_json_obj(item)
-            if min_limit is None and nested_min is not None:
-                min_limit = nested_min
-            if max_limit is None and nested_max is not None:
-                max_limit = nested_max
-            if min_limit is not None and max_limit is not None:
-                break
-    return min_limit, max_limit
-
-
-def _extract_range_from_possible_json(text: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
-    min_limit: Optional[int] = None
-    max_limit: Optional[int] = None
-    if not text:
-        return min_limit, max_limit
-    normalized = text.strip()
-    if not normalized:
-        return min_limit, max_limit
-    candidates = [normalized]
-    if normalized.startswith("{") and "'" in normalized and '"' not in normalized:
-        candidates.append(normalized.replace("'", '"'))
-    for candidate in candidates:
-        try:
-            parsed = json.loads(candidate)
-        except Exception:
-            continue
-        cand_min, cand_max = _extract_range_from_json_obj(parsed)
-        if min_limit is None and cand_min is not None:
-            min_limit = cand_min
-        if max_limit is None and cand_max is not None:
-            max_limit = cand_max
-        if min_limit is not None and max_limit is not None:
-            return min_limit, max_limit
-    for key in _MULTI_MIN_LIMIT_VALUE_KEYSET:
-        pattern = re.compile(rf"{re.escape(key)}\s*[:=]\s*(\d+)", re.IGNORECASE)
-        match = pattern.search(normalized)
-        if match:
-            candidate = _safe_positive_int(match.group(1))
-            if candidate:
-                min_limit = min_limit or candidate
-                if max_limit is not None:
-                    return min_limit, max_limit
-    for key in _MULTI_LIMIT_VALUE_KEYSET:
-        pattern = re.compile(rf"{re.escape(key)}\s*[:=]\s*(\d+)", re.IGNORECASE)
-        match = pattern.search(normalized)
-        if match:
-            candidate = _safe_positive_int(match.group(1))
-            if candidate:
-                max_limit = max_limit or candidate
-                if min_limit is not None:
-                    return min_limit, max_limit
-    return min_limit, max_limit
-
-
-def _extract_min_max_from_attributes(element) -> Tuple[Optional[int], Optional[int]]:
-    min_limit = None
-    max_limit = None
-    for attr in _MULTI_MIN_LIMIT_ATTRIBUTE_NAMES:
-        try:
-            raw_value = element.get_attribute(attr)
-        except Exception:
-            continue
-        candidate = _safe_positive_int(raw_value)
-        if candidate:
-            min_limit = candidate
-            break
-    for attr in _MULTI_LIMIT_ATTRIBUTE_NAMES:
-        try:
-            raw_value = element.get_attribute(attr)
-        except Exception:
-            continue
-        candidate = _safe_positive_int(raw_value)
-        if candidate:
-            max_limit = candidate
-            break
-    return min_limit, max_limit
-
-
-def _extract_multi_limit_range_from_text(text: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
-    if not text:
-        return None, None
-    normalized = text.strip()
-    if not normalized:
-        return None, None
-    normalized_lower = normalized.lower()
-    min_limit: Optional[int] = None
-    max_limit: Optional[int] = None
-    contains_cn_keyword = any(keyword in normalized for keyword in _SELECTION_KEYWORDS_CN)
-    contains_en_keyword = any(keyword in normalized_lower for keyword in _SELECTION_KEYWORDS_EN)
-    if contains_cn_keyword:
-        for pattern in _CHINESE_MULTI_RANGE_PATTERNS:
-            match = pattern.search(normalized)
-            if match:
-                first = _safe_positive_int(match.group(1))
-                second = _safe_positive_int(match.group(2))
-                if first and second:
-                    min_limit = min(first, second)
-                    max_limit = max(first, second)
-                    break
-    if min_limit is None and max_limit is None and contains_en_keyword:
-        for pattern in _ENGLISH_MULTI_RANGE_PATTERNS:
-            match = pattern.search(normalized)
-            if match:
-                first = _safe_positive_int(match.group(1))
-                second = _safe_positive_int(match.group(2))
-                if first and second:
-                    min_limit = min(first, second)
-                    max_limit = max(first, second)
-                    break
-    if min_limit is None and contains_cn_keyword:
-        for pattern in _CHINESE_MULTI_MIN_PATTERNS:
-            match = pattern.search(normalized)
-            if match:
-                candidate = _safe_positive_int(match.group(1))
-                if candidate:
-                    min_limit = candidate
-                    break
-    if max_limit is None and contains_cn_keyword:
-        for pattern in _CHINESE_MULTI_LIMIT_PATTERNS:
-            match = pattern.search(normalized)
-            if match:
-                candidate = _safe_positive_int(match.group(1))
-                if candidate:
-                    max_limit = candidate
-                    break
-    if min_limit is None and contains_en_keyword:
-        for pattern in _ENGLISH_MULTI_MIN_PATTERNS:
-            match = pattern.search(normalized_lower)
-            if match:
-                candidate = _safe_positive_int(match.group(1))
-                if candidate:
-                    min_limit = candidate
-                    break
-    if max_limit is None and contains_en_keyword:
-        for pattern in _ENGLISH_MULTI_LIMIT_PATTERNS:
-            match = pattern.search(normalized_lower)
-            if match:
-                candidate = _safe_positive_int(match.group(1))
-                if candidate:
-                    max_limit = candidate
-                    break
-    if min_limit is not None and max_limit is not None and min_limit > max_limit:
-        min_limit, max_limit = max_limit, min_limit
-    return min_limit, max_limit
-
-
-def _get_driver_session_key(driver: BrowserDriver) -> str:
-    session_id = getattr(driver, "session_id", None)
-    if session_id:
-        return str(session_id)
-    return f"id-{id(driver)}"
-
-
-def _extract_reorder_required_from_text(text: Optional[str], total_options: Optional[int] = None) -> Optional[int]:
-    if not text:
-        return None
-    normalized = text.strip()
-    if not normalized:
-        return None
-    if total_options:
-        all_keywords = ("全选", "全部选择", "请选择全部", "全部选项", "所有选项", "全部排序", "全都排序")
-        if any(keyword in normalized for keyword in all_keywords):
-            return total_options
-        range_patterns = (
-            re.compile(r"数字?\s*(\d+)\s*[-~—－到]\s*(\d+)\s*填"),
-            re.compile(r"(\d+)\s*[-~—－到]\s*(\d+)\s*填入括号"),
-        )
-        for pattern in range_patterns:
-            match = pattern.search(normalized)
-            if match:
-                first = _safe_positive_int(match.group(1))
-                second = _safe_positive_int(match.group(2))
-                if first and second and max(first, second) == total_options:
-                    return total_options
-    patterns = (
-        re.compile(r"(?:选|选择|勾选|挑选)[^0-9]{0,4}(\d+)\s*[项个条]"),
-        re.compile(r"至少\s*(\d+)\s*[项个条]"),
-    )
-    for pattern in patterns:
-        match = pattern.search(normalized)
-        if match:
-            return _safe_positive_int(match.group(1))
-    return None
-
-
-def detect_reorder_required_count(
-    driver: BrowserDriver, question_number: int, total_options: Optional[int] = None
-) -> Optional[int]:
-    """检测多选排序题需要勾选的数量，优先使用通用限制解析，失败后额外从题干文本抽取。"""
-    limit = detect_multiple_choice_limit(driver, question_number)
-    detected_required: Optional[int] = None
-    try:
-        container = driver.find_element(By.CSS_SELECTOR, f"#div{question_number}")
-    except NoSuchElementException:
-        container = None
-    if container is None:
-        return None
-    fragments: List[str] = []
-    for selector in (".qtypetip", ".topichtml", ".field-label"):
-        try:
-            fragments.append(container.find_element(By.CSS_SELECTOR, selector).text)
-        except Exception:
-            continue
-    try:
-        fragments.append(container.text)
-    except Exception:
-        pass
-    for fragment in fragments:
-        required = _extract_reorder_required_from_text(fragment, total_options)
-        if required:
-            print(f"第{question_number}题检测到需要选择 {required} 项并排序。")
-            detected_required = required
-            break
-    if detected_required is not None:
-        return detected_required
-    return limit
 
 
 def try_click_start_answer_button(
@@ -1493,36 +1114,6 @@ def detect(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None)
     return question_counts_per_page
 
 
-def _normalize_droplist_probs(prob_config: Union[List[float], int, float, None], option_count: int) -> List[float]:
-    if option_count <= 0:
-        return []
-    if prob_config == -1 or prob_config is None:
-        try:
-            return normalize_probabilities([1.0] * option_count)
-        except Exception:
-            return [1.0 / option_count] * option_count
-    try:
-        # 尽量保留用户配置的配比，即便选项数量有变化也不强制重置
-        if isinstance(prob_config, (list, tuple)):
-            base = list(prob_config)
-        else:
-            try:
-                base = list(prob_config)  # type: ignore
-            except Exception:
-                base = []
-        sanitized = [max(0.0, float(v)) if v is not None else 0.0 for v in base]
-        if len(sanitized) < option_count:
-            sanitized.extend([0.0] * (option_count - len(sanitized)))
-        elif len(sanitized) > option_count:
-            sanitized = sanitized[:option_count]
-        total = sum(sanitized)
-        if total > 0:
-            return [value / total for value in sanitized]
-        return [1.0 / option_count] * option_count
-    except Exception:
-        return [1.0 / option_count] * option_count
-
-
 def _extract_select_options(driver: BrowserDriver, question_number: int):
     try:
         select_element = driver.find_element(By.CSS_SELECTOR, f"#q{question_number}")
@@ -1614,74 +1205,6 @@ def _build_per_question_delay_plan(question_count: int, target_seconds: float) -
 def _simulate_answer_duration_delay(stop_signal: Optional[threading.Event] = None) -> bool:
     # 委托到模块实现，传入当前配置范围以避免模块依赖全局变量
     return duration_control.simulate_answer_duration_delay(stop_signal, answer_duration_range_seconds)
-
-
-def _smooth_scroll_to_element(driver: BrowserDriver, element, block: str = 'center') -> None:
-    """
-    平滑滚动到指定元素位置，模拟人类滚动行为。
-    仅在启用时长控制时使用平滑滚动，否则使用瞬间滚动。
-    """
-    if not _full_simulation_active():
-        # 未启用时长控制时使用瞬间滚动
-        try:
-            driver.execute_script(f"arguments[0].scrollIntoView({{block:'{block}', behavior:'auto'}});", element)
-        except Exception:
-            pass
-        return
-    
-    # 启用时长控制时使用平滑滚动
-    try:
-        # 获取元素位置和当前滚动位置
-        element_y = driver.execute_script("return arguments[0].getBoundingClientRect().top + window.pageYOffset;", element)
-        current_scroll = driver.execute_script("return window.pageYOffset;")
-        viewport_height = driver.execute_script("return window.innerHeight;")
-        
-        # 确保值不为None
-        if element_y is None or current_scroll is None or viewport_height is None:
-            driver.execute_script(f"arguments[0].scrollIntoView({{block:'{block}'}});", element)
-            return
-        
-        # 计算目标滚动位置（居中）
-        if block == 'center':
-            target_scroll = element_y - viewport_height / 2
-        elif block == 'start':
-            target_scroll = element_y - 100
-        else:  # 'end' or other
-            target_scroll = element_y - viewport_height + 100
-        
-        distance = target_scroll - current_scroll
-        
-        # 如果距离很小，直接跳转
-        if abs(distance) < 30:
-            driver.execute_script(f"arguments[0].scrollIntoView({{block:'{block}', behavior:'auto'}});", element)
-            return
-        
-        # 分步平滑滚动 - 快速但仍有平滑感
-        steps = max(10, min(25, int(abs(distance) / 80)))  # 减少步数
-        
-        # 更短的延迟
-        base_delay = random.uniform(0.015, 0.025)
-        
-        for i in range(steps):
-            # 使用缓动函数让滚动更自然（先快后慢）
-            progress = (i + 1) / steps
-            # 使用更温和的缓动曲线
-            ease_progress = progress - (1 - progress) * progress * 0.5
-            current_step_scroll = current_scroll + distance * ease_progress
-            
-            driver.execute_script("window.scrollTo(0, arguments[0]);", current_step_scroll)
-            time.sleep(base_delay)
-        
-        # 最后确保精确到达目标位置
-        time.sleep(0.02)  # 极短停顿
-        driver.execute_script(f"arguments[0].scrollIntoView({{block:'{block}', behavior:'auto'}});", element)
-        
-    except Exception:
-        # 出错时回退到普通滚动
-        try:
-            driver.execute_script(f"arguments[0].scrollIntoView({{block:'{block}'}});", element)
-        except Exception:
-            pass
 
 
 def _human_scroll_after_question(driver: BrowserDriver) -> None:

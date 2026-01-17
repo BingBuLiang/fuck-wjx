@@ -21,11 +21,13 @@ from qfluentwidgets import (
     LineEdit,
     InfoBar,
     InfoBarPosition,
+    FluentIcon,
 )
 
 from wjx.ui.widgets.no_wheel import NoWheelSlider, NoWheelSpinBox
 from wjx.engine import QuestionEntry
 from wjx.utils.config import DEFAULT_FILL_TEXT
+from wjx.utils.ai_service import get_ai_settings, generate_answer
 
 # 题目类型选项
 TYPE_CHOICES = [
@@ -325,15 +327,18 @@ class QuestionPage(ScrollArea):
         self.add_btn = PrimaryPushButton("新增题目", self.view)
         self.del_btn = PushButton("删除选中", self.view)
         self.reset_btn = PushButton("恢复默认", self.view)
+        self.ai_btn = PushButton(FluentIcon.ROBOT, "AI 生成答案", self.view)
         btn_row.addWidget(self.add_btn)
         btn_row.addWidget(self.del_btn)
         btn_row.addWidget(self.reset_btn)
+        btn_row.addWidget(self.ai_btn)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
         self.add_btn.clicked.connect(self._add_entry)
         self.del_btn.clicked.connect(self._delete_selected)
         self.reset_btn.clicked.connect(self._reset_from_source)
+        self.ai_btn.clicked.connect(self._generate_ai_answers)
 
     # ---------- data helpers ----------
     def set_questions(self, info: List[Dict[str, Any]], entries: List[QuestionEntry]):
@@ -587,6 +592,49 @@ class QuestionPage(ScrollArea):
             if 0 <= row < len(self.entries):
                 self.entries.pop(row)
         self._refresh_table()
+
+    def _generate_ai_answers(self):
+        """使用 AI 为填空题生成答案"""
+        ai_config = get_ai_settings()
+        if not ai_config["enabled"]:
+            InfoBar.warning("", "请先在设置中启用 AI 填空功能", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+            return
+        if not ai_config["api_key"]:
+            InfoBar.warning("", "请先在设置中配置 API Key", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+            return
+
+        # 找出所有填空题
+        text_questions = []
+        for idx, entry in enumerate(self.entries):
+            if entry.question_type in ("text", "multi_text"):
+                info = self.questions_info[idx] if idx < len(self.questions_info) else {}
+                title = info.get("title", f"第{idx + 1}题")
+                text_questions.append((idx, entry, title))
+
+        if not text_questions:
+            InfoBar.info("", "当前没有填空题需要生成答案", parent=self.window(), position=InfoBarPosition.TOP, duration=2000)
+            return
+
+        InfoBar.info("", f"正在为 {len(text_questions)} 道填空题生成答案...", parent=self.window(), position=InfoBarPosition.TOP, duration=2000)
+
+        success_count = 0
+        fail_count = 0
+        for idx, entry, title in text_questions:
+            try:
+                answer = generate_answer(title)
+                if answer:
+                    # 更新 entry 的答案
+                    entry.texts = [answer]
+                    success_count += 1
+            except Exception as e:
+                fail_count += 1
+
+        self._refresh_table()
+
+        if fail_count == 0:
+            InfoBar.success("", f"成功为 {success_count} 道填空题生成答案", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+        else:
+            InfoBar.warning("", f"生成完成：成功 {success_count} 道，失败 {fail_count} 道", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
 
     # ---------- table helpers ----------
     def _refresh_table(self):

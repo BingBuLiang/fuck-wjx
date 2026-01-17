@@ -99,6 +99,11 @@ class MainWindow(FluentWindow):
             self.setWindowIcon(QIcon(icon_path))
         self.setMinimumSize(1080, 720)
 
+        # 应用窗口置顶设置
+        settings = QSettings("FuckWjx", "Settings")
+        if settings.value("window_topmost", False, type=bool):
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+
         # 创建启动页面
         self._boot_splash = create_boot_splash(self)
 

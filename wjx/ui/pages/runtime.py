@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QDialog,
     QSizePolicy,
+    QPlainTextEdit,
 )
 from qfluentwidgets import (
     ScrollArea,
@@ -573,6 +574,25 @@ class RuntimePage(ScrollArea):
             )
             self.ai_test_card.hBoxLayout.insertSpacing(insert_index + 1, 6)
 
+        self.ai_prompt_card = SettingCard(
+            FluentIcon.EDIT,
+            "系统提示词",
+            "自定义 AI 填空的系统提示词（留空使用默认）",
+            self.ai_group,
+        )
+        self.ai_prompt_edit = QPlainTextEdit(self.ai_prompt_card)
+        self.ai_prompt_edit.setPlaceholderText("留空使用默认提示词...")
+        self.ai_prompt_edit.setPlainText(self._ai_system_prompt)
+        self.ai_prompt_edit.setMaximumHeight(100)
+        self.ai_prompt_edit.setMinimumHeight(80)
+        prompt_container = QWidget(self.ai_prompt_card)
+        prompt_layout = QVBoxLayout(prompt_container)
+        prompt_layout.setContentsMargins(0, 0, 0, 0)
+        prompt_layout.addWidget(self.ai_prompt_edit)
+        self.ai_prompt_card.hBoxLayout.addWidget(prompt_container, 1)
+        self.ai_prompt_card.hBoxLayout.addSpacing(16)
+        self.ai_group.addSettingCard(self.ai_prompt_card)
+
         layout.addWidget(self.ai_group)
         self._update_ai_visibility()
 
@@ -615,6 +635,7 @@ class RuntimePage(ScrollArea):
         self.ai_baseurl_edit.editingFinished.connect(self._on_ai_baseurl_changed)
         self.ai_model_edit.editingFinished.connect(self._on_ai_model_changed)
         self.ai_test_card.clicked.connect(self._on_ai_test_clicked)
+        self.ai_prompt_edit.textChanged.connect(self._on_ai_prompt_changed)
 
     def _show_timed_mode_help(self):
         """显示定时模式说明"""
@@ -724,10 +745,11 @@ class RuntimePage(ScrollArea):
         self.ai_apikey_edit.setText(cfg.ai_api_key or "")
         self.ai_baseurl_edit.setText(cfg.ai_base_url or "")
         self.ai_model_edit.setText(cfg.ai_model or "")
+        self._ai_system_prompt = cfg.ai_system_prompt or DEFAULT_SYSTEM_PROMPT
+        self.ai_prompt_edit.setPlainText(self._ai_system_prompt)
         self._update_ai_visibility()
         self._set_ai_controls_blocked(False)
         self._ai_loading = False
-        self._ai_system_prompt = cfg.ai_system_prompt or DEFAULT_SYSTEM_PROMPT
 
         save_ai_settings(
             enabled=bool(cfg.ai_enabled),
@@ -785,6 +807,13 @@ class RuntimePage(ScrollArea):
         if self._ai_loading:
             return
         save_ai_settings(model=self.ai_model_edit.text())
+
+    def _on_ai_prompt_changed(self):
+        """系统提示词变化"""
+        if self._ai_loading:
+            return
+        self._ai_system_prompt = self.ai_prompt_edit.toPlainText().strip() or DEFAULT_SYSTEM_PROMPT
+        save_ai_settings(system_prompt=self._ai_system_prompt)
 
     def _on_ai_test_clicked(self):
         """测试 AI 连接"""

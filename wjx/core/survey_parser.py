@@ -146,6 +146,47 @@ def _collect_choice_option_texts(question_div) -> Tuple[List[str], List[int]]:
             option_elements = []
         if option_elements:
             break
+    def _extract_option_text_from_attrs(target) -> str:
+        if target is None:
+            return ""
+
+        def _get_attr_text(node, keys) -> str:
+            for key in keys:
+                try:
+                    raw = node.get(key)
+                except Exception:
+                    raw = None
+                if raw is None:
+                    continue
+                text_value = _normalize_html_text(str(raw))
+                if text_value:
+                    return text_value
+            return ""
+
+        primary_keys = ("title", "data-title", "data-text", "data-label", "aria-label", "alt", "htitle")
+        text_value = _get_attr_text(target, primary_keys)
+        if text_value:
+            return text_value
+
+        try:
+            candidates = target.find_all(["a", "span", "label"], limit=4)
+        except Exception:
+            candidates = []
+        for child in candidates:
+            text_value = _get_attr_text(child, primary_keys)
+            if text_value:
+                return text_value
+
+        fallback_keys = ("val", "value", "data-value", "data-val")
+        text_value = _get_attr_text(target, fallback_keys)
+        if text_value:
+            return text_value
+        for child in candidates:
+            text_value = _get_attr_text(child, fallback_keys)
+            if text_value:
+                return text_value
+        return ""
+
     if option_elements:
         for element in option_elements:
             label_element = None
@@ -156,6 +197,8 @@ def _collect_choice_option_texts(question_div) -> Tuple[List[str], List[int]]:
             if not label_element:
                 label_element = element
             text = _normalize_html_text(label_element.get_text(' ', strip=True))
+            if not text:
+                text = _extract_option_text_from_attrs(element)
             if not text or text in seen:
                 continue
             option_index = len(texts)
@@ -172,6 +215,8 @@ def _collect_choice_option_texts(question_div) -> Tuple[List[str], List[int]]:
                 elements = []
             for element in elements:
                 text = _normalize_html_text(element.get_text(' ', strip=True))
+                if not text:
+                    text = _extract_option_text_from_attrs(element)
                 if not text or text in seen:
                     continue
                 texts.append(text)

@@ -2016,12 +2016,6 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
         _wait_if_paused(gui_instance, stop_signal)
         
         if driver is None:
-            # 获取信号量，限制同时运行的浏览器实例数量
-            if not sem_acquired:
-                browser_sem.acquire()
-                sem_acquired = True
-                logging.debug("已获取浏览器信号量")
-            
             proxy_address = _select_proxy_for_session()
             if random_proxy_ip_enabled and not proxy_address:
                 if _record_bad_proxy_and_maybe_pause(gui_instance):
@@ -2043,6 +2037,12 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             
             ua_value, ua_label = _select_user_agent_for_session()
             
+            # 获取信号量，限制同时运行的浏览器实例数量
+            if not sem_acquired:
+                browser_sem.acquire()
+                sem_acquired = True
+                logging.debug("已获取浏览器信号量")
+            
             try:
                 driver, active_browser = create_playwright_driver(
                     headless=False,
@@ -2052,6 +2052,11 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                     window_position=(window_x_pos, window_y_pos),
                 )
             except Exception as exc:
+                # 创建浏览器失败时释放信号量
+                if sem_acquired:
+                    browser_sem.release()
+                    sem_acquired = False
+                    logging.debug("创建浏览器失败，已释放信号量")
                 if stop_signal.is_set():
                     break
                 logging.error(f"启动浏览器失败：{exc}")

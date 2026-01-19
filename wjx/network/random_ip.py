@@ -740,6 +740,9 @@ def _disable_random_ip_and_show_dialog(gui: Any):
 
 
 def handle_random_ip_submission(gui: Any, stop_signal: Optional[threading.Event]):
+    # 如果是自定义代理接口，不进行额度计数和限制
+    if is_custom_proxy_api_active():
+        return
     if RegistryManager.is_quota_unlimited():
         return
     limit = max(1, get_random_ip_limit())
@@ -769,6 +772,9 @@ def handle_random_ip_submission(gui: Any, stop_signal: Optional[threading.Event]
 def normalize_random_ip_enabled_value(desired_enabled: bool) -> bool:
     if not desired_enabled:
         return False
+    # 如果是自定义代理接口，不受额度限制
+    if is_custom_proxy_api_active():
+        return True
     if RegistryManager.is_quota_unlimited():
         return True
     limit = max(1, get_random_ip_limit())

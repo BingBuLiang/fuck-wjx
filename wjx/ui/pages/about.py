@@ -153,7 +153,7 @@ class AboutPage(ScrollArea):
     _updateCheckFinished = Signal(object)  # update_info or None
     _updateCheckError = Signal(str)  # error message
     _publishTimeLoaded = Signal(str)  # publish time string
-    _ipBalanceLoaded = Signal(int)  # IP balance
+    _ipBalanceLoaded = Signal(float)  # balance
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -434,19 +434,26 @@ class AboutPage(ScrollArea):
         def _do_load():
             try:
                 response = requests.get(
-                    "http://v2.api.juliangip.com/dynamic/balance",
-                    params={"trade_no": "2981859568469987", "sign": "4b295f4bdbed286696a74fcd7c0ca154"},
-                    timeout=5
+                    "https://service.ipzan.com/userProduct-get",
+                    params={"no": "20260112572376490874", "userId": "72FH7U4E0IG"},
+                    timeout=5,
                 )
                 data = response.json()
-                if data.get("code") == 200:
+                if data.get("code") in (0, 200) and data.get("status") in (200, "200", None):
                     balance = data.get("data", {}).get("balance", 0)
-                    self._ipBalanceLoaded.emit(balance)
+                    try:
+                        self._ipBalanceLoaded.emit(float(balance))
+                    except Exception:
+                        pass
             except Exception:
                 pass
         
         threading.Thread(target=_do_load, daemon=True).start()
 
-    def _on_ip_balance_loaded(self, balance: int):
+    def _on_ip_balance_loaded(self, balance: float):
         """更新IP余额标签"""
-        self.ip_balance_label.setText(f"|  剩余 IP 数量: {balance}")
+        try:
+            display = f"{float(balance):.2f}"
+        except Exception:
+            display = "--"
+        self.ip_balance_label.setText(f"|  开发者实时剩余经费：￥{display}")

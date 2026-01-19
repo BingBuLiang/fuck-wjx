@@ -1,4 +1,3 @@
-import base64
 import json
 import logging
 import os
@@ -6,7 +5,7 @@ import random
 import re
 import threading
 import time
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Any, Callable, Dict, List, Optional, Set
 
 try:
@@ -39,6 +38,7 @@ _PREMIUM_RANDOM_IP_LIMIT = 400
 STATUS_TIMEOUT_SECONDS = 5
 _quota_limit_dialog_shown = False
 _proxy_api_url_override: Optional[str] = None
+_proxy_area_code_override: Optional[str] = None
 _CUSTOM_PROXY_CONFIG_FILENAME = "custom_ip.json"
 
 # 代理源常量
@@ -48,9 +48,6 @@ PROXY_SOURCE_CUSTOM = "custom"  # 自定义代理源
 
 # 当前选择的代理源
 _current_proxy_source: str = PROXY_SOURCE_DEFAULT
-
-_PA = "MTgxNzAxMTk4MDg6dFdKNWhMRG9Id3JIZ1RraWowelk="
-
 
 def set_proxy_source(source: str) -> None:
     """设置代理源"""
@@ -140,13 +137,70 @@ def _validate_proxy_api_url(api_url: Optional[str]) -> str:
     return cleaned
 
 
+def _normalize_area_code(area_code: Optional[str]) -> str:
+    try:
+        cleaned = str(area_code or "").strip()
+    except Exception:
+        cleaned = ""
+    if not cleaned:
+        return ""
+    if not cleaned.isdigit() or len(cleaned) != 6:
+        return ""
+    return cleaned
+
+
+def _apply_area_to_proxy_url(url: str, area_code: Optional[str]) -> str:
+    if area_code is None:
+        return url
+    try:
+        split = urlsplit(url)
+    except Exception:
+        return url
+    query_items = [(k, v) for k, v in parse_qsl(split.query, keep_blank_values=True) if k.lower() != "area"]
+    normalized_area = _normalize_area_code(area_code)
+    if normalized_area:
+        query_items.append(("area", normalized_area))
+    query = urlencode(query_items, doseq=True)
+    return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
+
+
+def get_default_proxy_area_code() -> str:
+    url = (PROXY_REMOTE_URL or "").strip()
+    if not url:
+        return ""
+    try:
+        split = urlsplit(url)
+    except Exception:
+        return ""
+    for key, value in parse_qsl(split.query, keep_blank_values=True):
+        if key.lower() == "area":
+            return _normalize_area_code(value)
+    return ""
+
+
 def get_effective_proxy_api_url() -> str:
     override = (_proxy_api_url_override or "").strip()
-    return override or PROXY_REMOTE_URL
+    url = override or PROXY_REMOTE_URL
+    if get_proxy_source() != PROXY_SOURCE_DEFAULT:
+        return url
+    return _apply_area_to_proxy_url(url, _proxy_area_code_override)
 
 
 def is_custom_proxy_api_active() -> bool:
     return bool((_proxy_api_url_override or "").strip())
+
+
+def get_proxy_area_code() -> Optional[str]:
+    return _proxy_area_code_override
+
+
+def set_proxy_area_code(area_code: Optional[str]) -> Optional[str]:
+    global _proxy_area_code_override
+    if area_code is None:
+        _proxy_area_code_override = None
+        return None
+    _proxy_area_code_override = _normalize_area_code(area_code)
+    return _proxy_area_code_override
 
 
 def set_proxy_api_override(api_url: Optional[str]) -> str:
@@ -392,36 +446,6 @@ def test_custom_proxy_api(url: str) -> tuple[bool, str, List[str]]:
         return False, f"解析失败: {e}", []
 
 
-def _inject_default_proxy_auth(proxy_address: str) -> str:
-    """为默认/自定义代理源自动注入认证，避免健康检查 407。"""
-    if not proxy_address:
-        return proxy_address
-    try:
-        addr = proxy_address.strip()
-        if "://" not in addr:
-            addr = f"http://{addr}"
-        # 已包含账号密码则直接返回
-        parsed = urlparse(addr)
-        if parsed.username or parsed.password or "@" in addr:
-            return addr
-
-        decoded = base64.b64decode(_PA).decode("utf-8")
-        if ":" not in decoded:
-            return addr
-        username, password = decoded.split(":", 1)
-        host = parsed.hostname or ""
-        port = f":{parsed.port}" if parsed.port else ""
-        scheme = parsed.scheme or "http"
-        netloc = f"{username}:{password}@{host}{port}" if host or port else f"{username}:{password}"
-        rebuilt = parsed._replace(netloc=netloc).geturl()
-        if not rebuilt:
-            rebuilt = f"{scheme}://{netloc}"
-        return rebuilt
-    except Exception:
-        logging.debug("注入失败，使用原始地址", exc_info=True)
-        return proxy_address
-
-
 def _normalize_proxy_address(proxy_address: Optional[str]) -> Optional[str]:
     if not proxy_address:
         return None
@@ -430,8 +454,6 @@ def _normalize_proxy_address(proxy_address: Optional[str]) -> Optional[str]:
         return None
     if "://" not in normalized:
         normalized = f"http://{normalized}"
-    if get_proxy_source() in (PROXY_SOURCE_DEFAULT, PROXY_SOURCE_CUSTOM):
-        normalized = _inject_default_proxy_auth(normalized)
     return normalized
 
 

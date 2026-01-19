@@ -111,6 +111,7 @@ class RuntimeConfig:
     random_proxy_api: Optional[str] = None
     proxy_source: str = "default"  # 代理源选择: "default", "pikachu" 或 "custom"
     custom_proxy_api: str = ""  # 自定义代理API地址
+    proxy_area_code: Optional[str] = None
     random_ua_enabled: bool = False
     random_ua_keys: List[str] = field(default_factory=lambda: list(DEFAULT_RANDOM_UA_KEYS))
     fail_stop_enabled: bool = True
@@ -314,6 +315,8 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     config.random_proxy_api = raw.get("random_proxy_api") or raw.get("random_proxy_api_url") or None
     config.proxy_source = str(raw.get("proxy_source") or "default")
     config.custom_proxy_api = str(raw.get("custom_proxy_api") or "")
+    raw_area_code = raw.get("proxy_area_code")
+    config.proxy_area_code = None if raw_area_code is None else str(raw_area_code)
 
     # random UA: legacy payload stored under random_user_agent
     legacy_ua_raw = raw.get("random_user_agent")

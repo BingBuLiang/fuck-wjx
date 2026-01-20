@@ -46,7 +46,7 @@ def _select_proxy_for_session() -> Optional[str]:
 
         expected = max(1, int(state.num_threads or 1))
         try:
-            fetched = _fetch_new_proxy_batch(expected_count=expected)
+            fetched = _fetch_new_proxy_batch(expected_count=expected, stop_signal=state.stop_event)
         except Exception as exc:
             logging.warning(f"获取随机代理失败：{exc}")
             return None

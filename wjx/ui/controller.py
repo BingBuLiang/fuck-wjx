@@ -410,6 +410,8 @@ class RunController(QObject):
                 proxy_pool = _fetch_new_proxy_batch(
                     expected_count=max(1, config.threads),
                     proxy_url=config.random_proxy_api or get_effective_proxy_api_url(),
+                    notify_on_area_error=False,
+                    stop_signal=self.stop_event,
                 )
             except Exception as exc:
                 self.runFailed.emit(str(exc))

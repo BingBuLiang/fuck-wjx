@@ -12,7 +12,6 @@ try:
     import requests
 except ImportError:  # pragma: no cover
     requests = None
-
 from wjx.utils.config import (
     CARD_VALIDATION_ENDPOINT,
     CONTACT_API_URL,
@@ -48,6 +47,10 @@ PROXY_SOURCE_CUSTOM = "custom"  # 自定义代理源
 
 # 当前选择的代理源
 _current_proxy_source: str = PROXY_SOURCE_DEFAULT
+
+
+class AreaProxyQualityError(RuntimeError):
+    """地区代理质量差导致无法使用时抛出。"""
 
 def set_proxy_source(source: str) -> None:
     """设置代理源"""
@@ -149,6 +152,31 @@ def _normalize_area_code(area_code: Optional[str]) -> str:
     return cleaned
 
 
+def _is_area_quality_retry_payload(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    code = payload.get("code")
+    status = payload.get("status")
+    message = str(payload.get("message") or "").strip()
+    if str(code) != "-1":
+        return False
+    if str(status) != "200":
+        return False
+    if message != "请重试":
+        return False
+    return payload.get("data") is None
+
+
+def _handle_area_quality_failure(stop_signal: Optional[threading.Event] = None) -> None:
+    log_popup_error("地区代理不可用", "当前地区IP质量差，建议选择不限地区")
+    if stop_signal:
+        try:
+            if not stop_signal.is_set():
+                stop_signal.set()
+        except Exception:
+            pass
+
+
 def _apply_area_to_proxy_url(url: str, area_code: Optional[str]) -> str:
     if area_code is None:
         return url
@@ -159,7 +187,12 @@ def _apply_area_to_proxy_url(url: str, area_code: Optional[str]) -> str:
     query_items = [(k, v) for k, v in parse_qsl(split.query, keep_blank_values=True) if k.lower() != "area"]
     normalized_area = _normalize_area_code(area_code)
     if normalized_area:
-        query_items.append(("area", normalized_area))
+        insert_at = len(query_items)
+        for idx, (key, _) in enumerate(query_items):
+            if str(key).lower() == "format":
+                insert_at = idx + 1
+                break
+        query_items.insert(insert_at, ("area", normalized_area))
     query = urlencode(query_items, doseq=True)
     return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
 
@@ -542,7 +575,12 @@ def _proxy_is_responsive_fast(proxy_address: str) -> bool:
         return False
 
 
-def _fetch_new_proxy_batch(expected_count: int = 1, proxy_url: Optional[str] = None) -> List[str]:
+def _fetch_new_proxy_batch(
+    expected_count: int = 1,
+    proxy_url: Optional[str] = None,
+    notify_on_area_error: bool = True,
+    stop_signal: Optional[threading.Event] = None,
+) -> List[str]:
     """Fetch a batch of proxy addresses."""
     if not requests:
         raise RuntimeError("缺少 requests 模块，无法获取随机IP")
@@ -588,10 +626,21 @@ def _fetch_new_proxy_batch(expected_count: int = 1, proxy_url: Optional[str] = N
     # 默认代理源或自定义代理源：使用原有逻辑
     candidates: List[str] = []
     errors: List[str] = []
+    area_code = get_proxy_area_code()
+    has_area = bool(_normalize_area_code(area_code))
     for url in _proxy_api_candidates(expected_count, proxy_url):
         try:
             resp = requests.get(url, timeout=10, headers=DEFAULT_HTTP_HEADERS, proxies={})
             resp.raise_for_status()
+            if current_source == PROXY_SOURCE_DEFAULT and has_area:
+                try:
+                    payload = json.loads(resp.text)
+                except Exception:
+                    payload = None
+                if _is_area_quality_retry_payload(payload):
+                    if notify_on_area_error:
+                        _handle_area_quality_failure(stop_signal)
+                    raise AreaProxyQualityError("当前地区IP质量差，建议选择不限地区")
             parsed = _parse_proxy_payload(resp.text)
             candidates.extend(parsed)
             if candidates:

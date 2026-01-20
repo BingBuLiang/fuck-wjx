@@ -197,6 +197,8 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
 
         self._area_updating = False
         self._area_data = []
+        self._supported_area_codes = set()
+        self._supported_has_all = False
         self._cities_by_province = {}
         self._province_index_by_code = {}
         self._load_area_options()
@@ -227,17 +229,22 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
     def _load_area_options(self):
         try:
             from wjx.data.area_codes import load_area_codes
-            self._area_data = load_area_codes()
+            from wjx.data.area_support import load_supported_area_codes
+            self._supported_area_codes, self._supported_has_all = load_supported_area_codes()
+            self._area_data = load_area_codes(supported_only=True)
             if not self._area_data:
                 logging.warning("地区数据加载为空，可能是数据文件损坏或格式错误")
         except Exception as e:
             logging.error(f"加载地区数据失败: {e}", exc_info=True)
             self._area_data = []
+            self._supported_area_codes = set()
+            self._supported_has_all = False
         self._cities_by_province = {}
         self._province_index_by_code = {}
 
         self.provinceCombo.clear()
-        self.provinceCombo.addItem("不限制", userData="")
+        if self._supported_has_all or not self._supported_area_codes:
+            self.provinceCombo.addItem("不限制", userData="")
         for item in self._area_data:
             code = str(item.get("code") or "")
             name = str(item.get("name") or "")
@@ -252,6 +259,8 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
 
     def _populate_cities(self, province_code: str, preferred_city_code: Optional[str] = None) -> None:
         self.cityCombo.clear()
+        if province_code and province_code in self._supported_area_codes:
+            self.cityCombo.addItem("全省/全市", userData=province_code)
         cities = self._cities_by_province.get(province_code, [])
         for city in cities:
             code = str(city.get("code") or "")

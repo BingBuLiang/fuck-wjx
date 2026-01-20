@@ -60,7 +60,7 @@ from wjx.network.random_ip import (
     _format_status_payload,
     refresh_ip_counter_display,
 )
-from wjx.engine import _get_resource_path as get_resource_path
+from wjx.utils.runtime_paths import _get_resource_path as get_resource_path
 
 # 导入启动画面模块
 from wjx.boot import create_boot_splash, finish_boot_splash

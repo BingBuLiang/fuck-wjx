@@ -39,7 +39,8 @@ from wjx.ui.dialogs.contact import ContactDialog
 from wjx.ui.pages.question import QuestionPage, QuestionWizardDialog, TYPE_CHOICES, STRATEGY_CHOICES, _get_entry_type_label
 from wjx.ui.pages.runtime import RuntimePage
 from wjx.utils.load_save import RuntimeConfig, get_runtime_directory
-from wjx.engine import decode_qrcode, QuestionEntry
+from wjx.utils.qrcode_utils import decode_qrcode
+from wjx.core.question_config import QuestionEntry, configure_probabilities
 from wjx.utils.config import DEFAULT_FILL_TEXT
 from wjx.utils.registry_manager import RegistryManager
 from wjx.network.random_ip import (
@@ -49,7 +50,6 @@ from wjx.network.random_ip import (
     refresh_ip_counter_display,
     _validate_card,
 )
-from wjx.engine import configure_probabilities
 
 
 def _question_summary(entry: QuestionEntry) -> str:

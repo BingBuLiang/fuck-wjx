@@ -13,10 +13,10 @@ except ImportError:  # pragma: no cover
 from PySide6.QtCore import QObject, Signal, QTimer, QCoreApplication
 
 from wjx import engine
+from wjx.core import engine_state as state
 from wjx.utils.config import DEFAULT_HTTP_HEADERS, DEFAULT_FILL_TEXT
+from wjx.core.question_config import QuestionEntry, configure_probabilities
 from wjx.engine import (
-    QuestionEntry,
-    configure_probabilities,
     create_playwright_driver,
     parse_survey_questions_from_html,
     _normalize_question_type_code,
@@ -337,27 +337,27 @@ class RunController(QObject):
     def _prepare_engine_state(self, config: RuntimeConfig, proxy_pool: List[str]) -> None:
         fail_threshold = max(1, math.ceil(config.target / 4) + 1)
         # sync controller copies
-        engine.url = config.url
-        engine.target_num = config.target
-        engine.num_threads = min(config.threads, engine.MAX_THREADS)
-        engine.fail_threshold = fail_threshold
-        engine.cur_num = getattr(engine, "cur_num", 0)
-        engine.cur_fail = getattr(engine, "cur_fail", 0)
-        engine.stop_event = self.stop_event
-        engine.submit_interval_range_seconds = tuple(config.submit_interval)
-        engine.answer_duration_range_seconds = tuple(config.answer_duration)
-        engine.timed_mode_enabled = config.timed_mode_enabled
-        engine.timed_mode_refresh_interval = config.timed_mode_interval
-        engine.random_proxy_ip_enabled = config.random_ip_enabled
-        engine.proxy_ip_pool = proxy_pool if config.random_ip_enabled else []
-        engine.random_user_agent_enabled = config.random_ua_enabled
-        engine.user_agent_pool_keys = config.random_ua_keys
-        engine.stop_on_fail_enabled = config.fail_stop_enabled
-        engine.pause_on_aliyun_captcha = bool(getattr(config, "pause_on_aliyun_captcha", True))
+        state.url = config.url
+        state.target_num = config.target
+        state.num_threads = min(config.threads, state.MAX_THREADS)
+        state.fail_threshold = fail_threshold
+        state.cur_num = getattr(state, "cur_num", 0)
+        state.cur_fail = getattr(state, "cur_fail", 0)
+        state.stop_event = self.stop_event
+        state.submit_interval_range_seconds = tuple(config.submit_interval)
+        state.answer_duration_range_seconds = tuple(config.answer_duration)
+        state.timed_mode_enabled = config.timed_mode_enabled
+        state.timed_mode_refresh_interval = config.timed_mode_interval
+        state.random_proxy_ip_enabled = config.random_ip_enabled
+        state.proxy_ip_pool = proxy_pool if config.random_ip_enabled else []
+        state.random_user_agent_enabled = config.random_ua_enabled
+        state.user_agent_pool_keys = config.random_ua_keys
+        state.stop_on_fail_enabled = config.fail_stop_enabled
+        state.pause_on_aliyun_captcha = bool(getattr(config, "pause_on_aliyun_captcha", True))
         # sync module-level aliases used elsewhere in this file
-        engine._aliyun_captcha_stop_triggered = False
-        engine._aliyun_captcha_popup_shown = False
-        engine._target_reached_stop_triggered = False
+        state._aliyun_captcha_stop_triggered = False
+        state._aliyun_captcha_popup_shown = False
+        state._target_reached_stop_triggered = False
 
     def start_run(self, config: RuntimeConfig):
         import logging
@@ -485,9 +485,9 @@ class RunController(QObject):
             self.pauseStateChanged.emit(False, "")
 
     def _emit_status(self):
-        current = getattr(engine, "cur_num", 0)
-        target = getattr(engine, "target_num", 0)
-        fail = getattr(engine, "cur_fail", 0)
+        current = getattr(state, "cur_num", 0)
+        target = getattr(state, "target_num", 0)
+        fail = getattr(state, "cur_fail", 0)
         paused = False
         reason = ""
         try:

@@ -399,7 +399,7 @@ def _parse_proxy_payload(text: str) -> List[str]:
         if addr not in seen:
             seen.add(addr)
             unique.append(addr)
-            logging.info(f"获取到代理: {addr}")
+            logging.info(f"获取到代理: {_mask_proxy_for_log(addr)}")
     
     return unique
 
@@ -457,6 +457,42 @@ def _normalize_proxy_address(proxy_address: Optional[str]) -> Optional[str]:
     return normalized
 
 
+def _format_host_port(hostname: str, port: Optional[int]) -> str:
+    if not hostname:
+        return ""
+    if port is None:
+        return hostname
+    if ":" in hostname and not hostname.startswith("["):
+        return f"[{hostname}]:{port}"
+    return f"{hostname}:{port}"
+
+
+def _mask_proxy_for_log(proxy_address: Optional[str]) -> str:
+    """仅在默认代理源下抹掉账号密码，保留 ip:端口。"""
+    if not proxy_address:
+        return ""
+    text = str(proxy_address).strip()
+    if not text:
+        return ""
+    if get_proxy_source() != PROXY_SOURCE_DEFAULT:
+        return text
+    candidate = text if "://" in text else f"http://{text}"
+    try:
+        parsed = urlsplit(candidate)
+        host_port = _format_host_port(parsed.hostname or "", parsed.port)
+        if host_port:
+            return host_port
+    except Exception:
+        pass
+    raw = text
+    if "://" in raw:
+        raw = raw.split("://", 1)[1]
+    raw = raw.split("/", 1)[0]
+    if "@" in raw:
+        raw = raw.split("@", 1)[1]
+    return raw
+
+
 def _proxy_is_responsive(proxy_address: str, skip_for_default: bool = True) -> bool:
     """检测代理是否可用
     
@@ -464,9 +500,10 @@ def _proxy_is_responsive(proxy_address: str, skip_for_default: bool = True) -> b
         proxy_address: 代理地址
         skip_for_default: 是否对默认代理源跳过检查（默认代理源是付费代理，无需检查）
     """
+    masked_proxy = _mask_proxy_for_log(proxy_address)
     # 默认代理源是付费代理，直接信任，跳过健康检查
     if skip_for_default and get_proxy_source() == PROXY_SOURCE_DEFAULT:
-        logging.debug(f"默认代理源，跳过健康检查: {proxy_address}")
+        logging.debug(f"默认代理源，跳过健康检查: {masked_proxy}")
         return True
     
     if not requests:
@@ -481,12 +518,12 @@ def _proxy_is_responsive(proxy_address: str, skip_for_default: bool = True) -> b
         response = requests.get(PROXY_HEALTH_CHECK_URL, proxies=proxies, timeout=PROXY_HEALTH_CHECK_TIMEOUT)
         elapsed = time.perf_counter() - start
     except Exception as exc:
-        logging.debug(f"代理 {proxy_address} 验证失败: {exc}")
+        logging.debug(f"代理 {masked_proxy} 验证失败: {exc}")
         return False
     if response.status_code >= 400:
-        logging.warning(f"代理 {proxy_address} 返回状态码 {response.status_code}")
+        logging.warning(f"代理 {masked_proxy} 返回状态码 {response.status_code}")
         return False
-    logging.debug(f"代理 {proxy_address} 验证通过，耗时 {elapsed:.2f}s")
+    logging.debug(f"代理 {masked_proxy} 验证通过，耗时 {elapsed:.2f}s")
     return True
 
 

@@ -27,7 +27,7 @@ from qfluentwidgets import (
 )
 
 from wjx.ui.widgets.no_wheel import NoWheelSlider, NoWheelSpinBox
-from wjx.engine import QuestionEntry
+from wjx.core.question_config import QuestionEntry
 from wjx.utils.config import DEFAULT_FILL_TEXT
 from wjx.utils.ai_service import generate_answer
 from wjx.ui.helpers.ai_fill import ensure_ai_ready

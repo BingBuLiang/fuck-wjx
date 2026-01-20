@@ -10,43 +10,25 @@ import os
 import subprocess
 import sys
 import importlib.util
-from copy import deepcopy
-from dataclasses import dataclass
 from datetime import datetime
 from threading import Thread
 from typing import List, Optional, Union, Dict, Any, Tuple, Callable, Set, Deque, Literal
 from urllib.parse import urlparse
 import webbrowser
 
-from wjx.network.random_ip import (
-    _fetch_new_proxy_batch,
-    _proxy_is_responsive,
-    _normalize_proxy_address,
-    on_random_ip_toggle,
-    ensure_random_ip_ready,
-    refresh_ip_counter_display,
-    reset_ip_counter,
-    handle_random_ip_submission,
-    reset_quota_limit_dialog_flag,
-    get_effective_proxy_api_url,
-    get_custom_proxy_api_config_path,
-    load_custom_proxy_api_config,
-    save_custom_proxy_api_config,
-    reset_custom_proxy_api_config,
+from wjx.core import engine_state as state
+from wjx.core.captcha_control import _handle_aliyun_captcha_detected
+from wjx.core.question_config import QuestionEntry, configure_probabilities
+from wjx.network.random_ip import _mask_proxy_for_log, _proxy_is_responsive, handle_random_ip_submission
+from wjx.network.session_policy import (
+    _discard_unresponsive_proxy,
+    _record_bad_proxy_and_maybe_pause,
+    _reset_bad_proxy_streak,
+    _select_proxy_for_session,
+    _select_user_agent_for_session,
 )
-
-from wjx.utils.log_utils import (
-    LOG_BUFFER_HANDLER,
-    setup_logging,
-    LOG_LIGHT_THEME,
-    LOG_DARK_THEME,
-    save_log_records_to_file,
-    dump_threads_to_file,
-    log_popup_info,
-    log_popup_error,
-    log_popup_warning,
-    log_popup_confirm,
-)
+from wjx.utils.qrcode_utils import decode_qrcode
+from wjx.utils.runtime_paths import _get_resource_path, _get_runtime_directory
 
 from wjx.utils.updater import (
     check_updates_on_startup,
@@ -60,8 +42,6 @@ import wjx.modes.duration_control as duration_control
 from wjx.modes.duration_control import DURATION_CONTROL_STATE as _DURATION_CONTROL_STATE
 
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
-from PIL import Image
-from pyzbar.pyzbar import decode as pyzbar_decode
 
 try:
     import requests
@@ -208,30 +188,6 @@ from wjx.core.question_reorder import reorder as _reorder_impl, detect_reorder_r
 
 
 
-def _get_runtime_directory() -> str:
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-
-
-def _get_resource_path(relative_path: str) -> str:
-    """
-    获取资源文件的完整路径。
-    在 PyInstaller 打包时，资源会被提取到 sys._MEIPASS 目录。
-    在开发时，资源位于项目根目录。
-    """
-    if getattr(sys, "frozen", False):
-        # PyInstaller 打包后，资源在 _MEIPASS 目录中
-        base_path = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
-    else:
-        # 开发环境，资源在项目根目录（wjx 目录的上一级）
-        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    
-    return os.path.join(base_path, relative_path)
-
-
-
-
 def create_playwright_driver(
     headless: bool = False,
     prefer_browsers: Optional[List[str]] = None,
@@ -249,104 +205,18 @@ def create_playwright_driver(
     )
 
 
-url = ""
-
-single_prob: List[Union[List[float], int, float, None]] = []
-droplist_prob: List[Union[List[float], int, float, None]] = []
-multiple_prob: List[List[float]] = []
-matrix_prob: List[Union[List[float], int, float, None]] = []
-scale_prob: List[Union[List[float], int, float, None]] = []
-slider_targets: List[float] = []
-texts: List[List[str]] = []
-texts_prob: List[List[float]] = []
-# 与 texts/texts_prob 对齐，记录每道填空题的具体类型（text / multi_text）
-text_entry_types: List[str] = []
-text_ai_flags: List[bool] = []
-text_titles: List[str] = []
-single_option_fill_texts: List[Optional[List[Optional[str]]]] = []
-droplist_option_fill_texts: List[Optional[List[Optional[str]]]] = []
-multiple_option_fill_texts: List[Optional[List[Optional[str]]]] = []
-
-# 最大线程数限制（确保用户电脑流畅）
-MAX_THREADS = 12
-
-# 浏览器实例并发限制（防止内存爆炸）
-MAX_BROWSER_INSTANCES = 4
-_browser_semaphore: Optional[threading.Semaphore] = None
-_browser_semaphore_lock = threading.Lock()
-
-
-def _get_browser_semaphore(max_instances: int = MAX_BROWSER_INSTANCES) -> threading.Semaphore:
-    """获取或创建浏览器实例信号量，限制同时运行的浏览器数量"""
-    global _browser_semaphore
-    with _browser_semaphore_lock:
-        if _browser_semaphore is None:
-            _browser_semaphore = threading.Semaphore(max_instances)
-        return _browser_semaphore
-
-
-def _reset_browser_semaphore(max_instances: int = MAX_BROWSER_INSTANCES) -> None:
-    """重置信号量（任务开始时调用）"""
-    global _browser_semaphore
-    with _browser_semaphore_lock:
-        _browser_semaphore = threading.Semaphore(max_instances)
-
-target_num = 1
-fail_threshold = 1
-num_threads = 1
-cur_num = 0
-cur_fail = 0
-stop_on_fail_enabled = True
-submit_interval_range_seconds: Tuple[int, int] = (0, 0)
-answer_duration_range_seconds: Tuple[int, int] = (0, 0)
-lock = threading.Lock()
-stop_event = threading.Event()
-duration_control_enabled = False
-duration_control_estimated_seconds = 0
-duration_control_total_duration_seconds = 0
-timed_mode_enabled = False
-timed_mode_refresh_interval = timed_mode.DEFAULT_REFRESH_INTERVAL
-random_proxy_ip_enabled = False
-proxy_ip_pool: List[str] = []
-random_user_agent_enabled = False
-user_agent_pool_keys: List[str] = []
-last_submit_had_captcha = False
-_aliyun_captcha_stop_triggered = False
-_aliyun_captcha_stop_lock = threading.Lock()
-_aliyun_captcha_popup_shown = False
-_target_reached_stop_triggered = False
-_target_reached_stop_lock = threading.Lock()
-_resume_after_aliyun_captcha_stop = False
-_resume_snapshot: Dict[str, Any] = {}
-pause_on_aliyun_captcha = True
-_consecutive_bad_proxy_count = 0
-MAX_CONSECUTIVE_BAD_PROXIES = 5
-_proxy_fetch_lock = threading.Lock()
-
-def _show_aliyun_captcha_popup(message: str) -> None:
-    """在首次检测到阿里云智能验证时弹窗提醒用户。"""
-    global _aliyun_captcha_popup_shown
-    with _aliyun_captcha_stop_lock:
-        if _aliyun_captcha_popup_shown:
-            return
-        _aliyun_captcha_popup_shown = True
-    try:
-        log_popup_warning("智能验证提示", message)
-    except Exception:
-        logging.warning("弹窗提示阿里云智能验证失败", exc_info=True)
-
-# 极速模式：时长控制/随机IP关闭且时间间隔为0时自动启用
 def _is_fast_mode() -> bool:
+    # 极速模式：时长控制/随机IP关闭且时间间隔为0时自动启用
     return (
-        not duration_control_enabled
-        and not random_proxy_ip_enabled
-        and submit_interval_range_seconds == (0, 0)
-        and answer_duration_range_seconds == (0, 0)
+        not state.duration_control_enabled
+        and not state.random_proxy_ip_enabled
+        and state.submit_interval_range_seconds == (0, 0)
+        and state.answer_duration_range_seconds == (0, 0)
     )
 
 
 def _timed_mode_active() -> bool:
-    return bool(timed_mode_enabled)
+    return bool(state.timed_mode_enabled)
 
 
 def _handle_submission_failure(stop_signal: Optional[threading.Event]) -> bool:
@@ -354,104 +224,18 @@ def _handle_submission_failure(stop_signal: Optional[threading.Event]) -> bool:
     递增失败计数；当开启失败止损时超过阈值会触发停止。
     返回 True 表示已触发强制停止。
     """
-    global cur_fail
-    with lock:
-        cur_fail += 1
-        if stop_on_fail_enabled:
-            print(f"已失败{cur_fail}次, 失败次数达到{int(fail_threshold)}次将强制停止")
+    with state.lock:
+        state.cur_fail += 1
+        if state.stop_on_fail_enabled:
+            print(f"已失败{state.cur_fail}次, 失败次数达到{int(state.fail_threshold)}次将强制停止")
         else:
-            print(f"已失败{cur_fail}次（失败止损已关闭）")
-    if stop_on_fail_enabled and cur_fail >= fail_threshold:
+            print(f"已失败{state.cur_fail}次（失败止损已关闭）")
+    if state.stop_on_fail_enabled and state.cur_fail >= state.fail_threshold:
         logging.critical("失败次数过多，强制停止，请检查配置是否正确")
         if stop_signal:
             stop_signal.set()
         return True
     return False
-
-
-def _trigger_aliyun_captcha_stop(
-    gui_instance: Optional[Any],
-    stop_signal: Optional[threading.Event],
-) -> None:
-    """检测到阿里云智能验证时触发全局暂停，并提示用户启用随机 IP。"""
-    global _aliyun_captcha_stop_triggered
-    global _resume_after_aliyun_captcha_stop, _resume_snapshot
-    with _aliyun_captcha_stop_lock:
-        if _aliyun_captcha_stop_triggered:
-            return
-        _aliyun_captcha_stop_triggered = True
-
-    try:
-        _resume_after_aliyun_captcha_stop = True
-        _resume_snapshot = {
-            "url": url,
-            "target": target_num,
-            "cur_num": cur_num,
-            "cur_fail": cur_fail,
-        }
-    except Exception:
-        _resume_after_aliyun_captcha_stop = True
-        _resume_snapshot = {}
-
-    logging.warning("检测到阿里云智能验证，已触发全局暂停。")
-
-    message = (
-        "检测到阿里云智能验证，为避免继续失败提交已暂停所有任务。\n\n"
-        "建议开启/保持随机 IP，并在处理完验证后点击主页的“继续”按钮恢复执行。\n"
-    )
-
-    def _notify():
-        try:
-            if gui_instance and hasattr(gui_instance, "pause_run"):
-                gui_instance.pause_run("触发智能验证")
-        except Exception:
-            logging.debug("阿里云智能验证触发暂停失败", exc_info=True)
-        try:
-            if threading.current_thread() is not threading.main_thread():
-                return
-            if gui_instance and hasattr(gui_instance, "_log_popup_confirm"):
-                confirmed = bool(gui_instance._log_popup_confirm("智能验证提示", message, icon="warning"))
-            else:
-                confirmed = bool(log_popup_confirm("智能验证提示", message, icon="warning"))
-
-            if confirmed and gui_instance:
-                try:
-                    var = getattr(gui_instance, "random_ip_enabled_var", None)
-                    if var is not None and hasattr(var, "set"):
-                        var.set(True)
-                    on_random_ip_toggle(gui_instance)
-                except Exception:
-                    logging.warning("自动启用随机IP失败", exc_info=True)
-        except Exception:
-            logging.warning("弹窗提示用户启用随机IP失败")
-
-    dispatcher = getattr(gui_instance, "_post_to_ui_thread", None) if gui_instance else None
-    if callable(dispatcher):
-        try:
-            dispatcher(_notify)
-            return
-        except Exception:
-            logging.debug("派发阿里云停止事件到主线程失败", exc_info=True)
-    root = getattr(gui_instance, "root", None) if gui_instance else None
-    if root is not None and threading.current_thread() is threading.main_thread():
-        try:
-            root.after(0, _notify)
-            return
-        except Exception:
-            logging.debug("root.after 派发阿里云停止事件失败", exc_info=True)
-    _notify()
-
-
-def _handle_aliyun_captcha_detected(gui_instance: Optional[Any], stop_signal: Optional[threading.Event]) -> None:
-    """
-    统一处理阿里云智能验证命中后的策略：
-    - 默认（pause_on_aliyun_captcha=True）：全局暂停执行并提示用户启用随机 IP；
-    - 关闭该开关：不全局暂停，仅记录告警（可能会导致后续持续失败）。
-    """
-    if pause_on_aliyun_captcha:
-        _trigger_aliyun_captcha_stop(gui_instance, stop_signal)
-        return
-    logging.warning("检测到阿里云智能验证，但已关闭“触发智能验证自动暂停”，将继续尝试后续提交。")
 
 
 def _wait_if_paused(gui_instance: Optional[Any], stop_signal: Optional[threading.Event]) -> None:
@@ -462,45 +246,17 @@ def _wait_if_paused(gui_instance: Optional[Any], stop_signal: Optional[threading
         pass
 
 
-def _record_bad_proxy_and_maybe_pause(gui_instance: Optional[Any]) -> bool:
-    """
-    记录连续无效代理次数；达到阈值时暂停执行以避免继续消耗代理 API 额度。
-    返回 True 表示已触发暂停。
-    """
-    global _consecutive_bad_proxy_count
-    with lock:
-        _consecutive_bad_proxy_count += 1
-        streak = int(_consecutive_bad_proxy_count)
-    if streak >= int(MAX_CONSECUTIVE_BAD_PROXIES):
-        reason = f"代理连续{MAX_CONSECUTIVE_BAD_PROXIES}次不可用，已暂停以防继续扣费"
-        logging.warning(reason)
-        try:
-            if gui_instance and hasattr(gui_instance, "pause_run"):
-                gui_instance.pause_run(reason)
-        except Exception:
-            pass
-        return True
-    return False
-
-
-def _reset_bad_proxy_streak() -> None:
-    global _consecutive_bad_proxy_count
-    with lock:
-        _consecutive_bad_proxy_count = 0
-
-
 def _trigger_target_reached_stop(
     gui_instance: Optional[Any],
     stop_signal: Optional[threading.Event],
 ) -> None:
     """达到目标份数时触发全局立即停止。"""
-    global _target_reached_stop_triggered
-    with _target_reached_stop_lock:
-        if _target_reached_stop_triggered:
+    with state._target_reached_stop_lock:
+        if state._target_reached_stop_triggered:
             if stop_signal:
                 stop_signal.set()
             return
-        _target_reached_stop_triggered = True
+        state._target_reached_stop_triggered = True
 
     if stop_signal:
         stop_signal.set()
@@ -531,345 +287,9 @@ def _trigger_target_reached_stop(
 
 def _sync_full_sim_state_from_globals() -> None:
     """确保时长控制全局变量与模块状态保持一致（主要在 GUI/运行线程之间传递配置时使用）。"""
-    _DURATION_CONTROL_STATE.enabled = bool(duration_control_enabled)
-    _DURATION_CONTROL_STATE.estimated_seconds = int(duration_control_estimated_seconds or 0)
-    _DURATION_CONTROL_STATE.total_duration_seconds = int(duration_control_total_duration_seconds or 0)
-
-
-
-def _infer_option_count(entry: "QuestionEntry") -> int:
-    """
-    当配置中缺少选项数量时，尽可能从已保存的权重/文本推导。
-    优先顺序：已有数量 > 自定义权重 > 概率列表长度 > 文本数量 >（量表题兜底为5）。
-    """
-    def _nested_length(raw: Any) -> Optional[int]:
-        """用于矩阵题：当传入的是按行拆分的权重列表时，返回其中最长的一行长度。"""
-        if not isinstance(raw, list):
-            return None
-        lengths: List[int] = []
-        for item in raw:
-            if isinstance(item, (list, tuple)):
-                lengths.append(len(item))
-        return max(lengths) if lengths else None
-
-    # 矩阵题优先检查按行拆分的权重，避免把“行数”误当成列数
-    if getattr(entry, "question_type", "") == "matrix":
-        nested_len = _nested_length(getattr(entry, "custom_weights", None))
-        if nested_len:
-            return nested_len
-        nested_len = _nested_length(getattr(entry, "probabilities", None))
-        if nested_len:
-            return nested_len
-
-    try:
-        if entry.option_count and entry.option_count > 0:
-            return int(entry.option_count)
-    except Exception:
-        pass
-    try:
-        if entry.custom_weights and len(entry.custom_weights) > 0:
-            return len(entry.custom_weights)
-    except Exception:
-        pass
-    try:
-        if isinstance(entry.probabilities, (list, tuple)) and len(entry.probabilities) > 0:
-            return len(entry.probabilities)
-    except Exception:
-        pass
-    try:
-        if entry.texts and len(entry.texts) > 0:
-            return len(entry.texts)
-    except Exception:
-        pass
-    if getattr(entry, "question_type", "") == "scale":
-        return 5
-    return 0
-
-
-@dataclass
-class QuestionEntry:
-    question_type: str
-    probabilities: Union[List[float], int, None]
-    texts: Optional[List[str]] = None
-    rows: int = 1
-    option_count: int = 0
-    distribution_mode: str = "random"  # random, custom
-    custom_weights: Optional[List[float]] = None
-    question_num: Optional[str] = None
-    question_title: Optional[str] = None
-    ai_enabled: bool = False
-    option_fill_texts: Optional[List[Optional[str]]] = None
-    fillable_option_indices: Optional[List[int]] = None
-    is_location: bool = False
-
-    def summary(self) -> str:
-        def _mode_text(mode: Optional[str]) -> str:
-            return {
-                "random": "完全随机",
-                "custom": "自定义配比",
-            }.get(mode or "", "完全随机")
-
-        if self.question_type in ("text", "multi_text"):
-            raw_samples = self.texts or []
-            if self.question_type == "multi_text":
-                formatted_samples: List[str] = []
-                for sample in raw_samples:
-                    try:
-                        text_value = str(sample).strip()
-                    except Exception:
-                        text_value = ""
-                    if not text_value:
-                        continue
-                    if MULTI_TEXT_DELIMITER in text_value:
-                        parts = [part.strip() for part in text_value.split(MULTI_TEXT_DELIMITER)]
-                        parts = [part for part in parts if part]
-                        formatted_samples.append(" / ".join(parts) if parts else text_value)
-                    else:
-                        formatted_samples.append(text_value)
-                samples = " | ".join(formatted_samples)
-            else:
-                samples = " | ".join(filter(None, raw_samples))
-            preview = samples if samples else "未设置示例内容"
-            if len(preview) > 60:
-                preview = preview[:57] + "..."
-            if self.is_location:
-                label = "位置题"
-            else:
-                label = "多项填空题" if self.question_type == "multi_text" else "填空题"
-            return f"{label}: {preview}"
-
-        if self.question_type == "matrix":
-            mode_text = _mode_text(self.distribution_mode)
-            rows = max(1, self.rows)
-            columns = max(1, self.option_count)
-            return f"{rows} 行 × {columns} 列 - {mode_text}"
-
-        if self.question_type == "multiple" and self.probabilities == -1:
-            return f"{self.option_count} 个选项 - 随机多选"
-
-        if self.probabilities == -1:
-            return f"{self.option_count} 个选项 - 完全随机"
-
-        mode_text = _mode_text(self.distribution_mode)
-        fillable_hint = ""
-        if self.option_fill_texts and any(text for text in self.option_fill_texts if text):
-            fillable_hint = " | 含填空项"
-
-        if self.question_type == "multiple" and self.custom_weights:
-            weights_str = ",".join(f"{int(round(max(w, 0)))}%" for w in self.custom_weights)
-            return f"{self.option_count} 个选项 - 权重 {weights_str}{fillable_hint}"
-
-        if self.distribution_mode == "custom" and self.custom_weights:
-            def _format_ratio(value: float) -> str:
-                rounded = round(value, 1)
-                if abs(rounded - int(rounded)) < 1e-6:
-                    return str(int(rounded))
-                return f"{rounded}".rstrip("0").rstrip(".")
-
-            def _safe_weight(raw_value: Any) -> float:
-                try:
-                    return max(float(raw_value), 0.0)
-                except Exception:
-                    return 0.0
-
-            weights_str = ":".join(_format_ratio(_safe_weight(w)) for w in self.custom_weights)
-            return f"{self.option_count} 个选项 - 配比 {weights_str}{fillable_hint}"
-
-        return f"{self.option_count} 个选项 - {mode_text}{fillable_hint}"
-
-
-from wjx.utils.load_save import ConfigPersistenceMixin, _select_user_agent_from_keys
-
-
-def _get_entry_type_label(entry: QuestionEntry) -> str:
-    if getattr(entry, "is_location", False):
-        return LOCATION_QUESTION_LABEL
-    return QUESTION_TYPE_LABELS.get(entry.question_type, entry.question_type)
-
-
-
-def configure_probabilities(entries: List[QuestionEntry]):
-    global single_prob, droplist_prob, multiple_prob, matrix_prob, scale_prob, slider_targets, texts, texts_prob, text_entry_types
-    global text_ai_flags, text_titles
-    global single_option_fill_texts, droplist_option_fill_texts, multiple_option_fill_texts
-    single_prob = []
-    droplist_prob = []
-    multiple_prob = []
-    matrix_prob = []
-    scale_prob = []
-    slider_targets = []
-    texts = []
-    texts_prob = []
-    text_entry_types = []
-    text_ai_flags = []
-    text_titles = []
-    single_option_fill_texts = []
-    droplist_option_fill_texts = []
-    multiple_option_fill_texts = []
-
-    for entry in entries:
-        # 若配置里未写明选项数，尽量从权重/概率推断，并回写以便后续编辑显示正确数量
-        inferred_count = _infer_option_count(entry)
-        if inferred_count and inferred_count != entry.option_count:
-            entry.option_count = inferred_count
-        probs = _resolve_prob_config(
-            entry.probabilities,
-            getattr(entry, "custom_weights", None),
-            prefer_custom=(getattr(entry, "distribution_mode", None) == "custom"),
-        )
-        if probs is not entry.probabilities:
-            entry.probabilities = probs
-        if entry.question_type == "single":
-            single_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
-            single_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
-        elif entry.question_type == "dropdown":
-            droplist_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
-            droplist_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
-        elif entry.question_type == "multiple":
-            if not isinstance(probs, list):
-                raise ValueError("多选题必须提供概率列表，数值范围0-100")
-            multiple_prob.append([float(value) for value in probs])
-            multiple_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
-        elif entry.question_type == "matrix":
-            rows = max(1, entry.rows)
-            option_count = max(1, _infer_option_count(entry))
-
-            def _normalize_row(raw_row: Any) -> Optional[List[float]]:
-                if not isinstance(raw_row, (list, tuple)):
-                    return None
-                cleaned: List[float] = []
-                for value in raw_row:
-                    try:
-                        cleaned.append(max(0.0, float(value)))
-                    except Exception:
-                        continue
-                if not cleaned:
-                    return None
-                if len(cleaned) < option_count:
-                    cleaned = cleaned + [1.0] * (option_count - len(cleaned))
-                elif len(cleaned) > option_count:
-                    cleaned = cleaned[:option_count]
-                try:
-                    return normalize_probabilities(cleaned)
-                except Exception:
-                    return None
-
-            # 支持按行配置的权重（list[list]），否则退化为对所有行复用同一组
-            row_weights_source: Optional[List[Any]] = None
-            if isinstance(probs, list) and any(isinstance(item, (list, tuple)) for item in probs):
-                row_weights_source = probs
-            elif isinstance(entry.custom_weights, list) and any(isinstance(item, (list, tuple)) for item in entry.custom_weights):  # type: ignore[attr-defined]
-                row_weights_source = entry.custom_weights  # type: ignore[attr-defined]
-
-            if row_weights_source is not None:
-                last_row: Optional[Any] = None
-                for idx in range(rows):
-                    raw_row = row_weights_source[idx] if idx < len(row_weights_source) else last_row
-                    normalized_row = _normalize_row(raw_row)
-                    if normalized_row is None:
-                        normalized_row = [1.0 / option_count] * option_count
-                    matrix_prob.append(normalized_row)
-                    last_row = raw_row if raw_row is not None else last_row
-            elif isinstance(probs, list):
-                normalized = _normalize_row(probs)
-                if normalized is None:
-                    normalized = [1.0 / option_count] * option_count
-                for _ in range(rows):
-                    matrix_prob.append(list(normalized))
-            else:
-                for _ in range(rows):
-                    matrix_prob.append(-1)
-        elif entry.question_type == "scale":
-            scale_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
-        elif entry.question_type == "slider":
-            target_value: Optional[float] = None
-            if isinstance(entry.custom_weights, (list, tuple)) and entry.custom_weights:
-                try:
-                    target_value = float(entry.custom_weights[0])
-                except Exception:
-                    target_value = None
-            if target_value is None:
-                if isinstance(probs, (int, float)):
-                    target_value = float(probs)
-                elif isinstance(probs, list) and probs:
-                    try:
-                        target_value = float(probs[0])
-                    except Exception:
-                        target_value = None
-            if target_value is None:
-                target_value = 50.0
-            slider_targets.append(target_value)
-        elif entry.question_type in ("text", "multi_text"):
-            raw_values = entry.texts or []
-            normalized_values: List[str] = []
-            for item in raw_values:
-                try:
-                    text_value = str(item).strip()
-                except Exception:
-                    text_value = ""
-                if text_value:
-                    normalized_values.append(text_value)
-            ai_enabled = bool(getattr(entry, "ai_enabled", False)) if entry.question_type == "text" else False
-            if not normalized_values:
-                if ai_enabled:
-                    normalized_values = [DEFAULT_FILL_TEXT]
-                else:
-                    raise ValueError("填空题至少需要一个候选答案")
-            if isinstance(probs, list) and len(probs) == len(normalized_values):
-                normalized = normalize_probabilities([float(value) for value in probs])
-            else:
-                normalized = normalize_probabilities([1.0] * len(normalized_values))
-            texts.append(normalized_values)
-            texts_prob.append(normalized)
-            text_entry_types.append(entry.question_type)
-            text_ai_flags.append(ai_enabled)
-            text_titles.append(str(getattr(entry, "question_title", "") or ""))
-
-
-def decode_qrcode(image_source: Union[str, Image.Image]) -> Optional[str]:
-    """
-    解码二维码图片,提取其中的链接
-    
-    参数:
-        image_source: 图片文件路径(str)或PIL Image对象
-    
-    返回:
-        str: 解码出的链接,如果解码失败返回None
-    
-    示例:
-        >>> url = decode_qrcode("qrcode.png")
-        >>> url = decode_qrcode(Image.open("qrcode.png"))
-    """
-    try:
-        # 如果是文件路径,打开图片
-        if isinstance(image_source, str):
-            if not os.path.exists(image_source):
-                raise FileNotFoundError(f"图片文件不存在: {image_source}")
-            image = Image.open(image_source)
-        else:
-            image = image_source
-        
-        # 解码二维码
-        decoded_objects = pyzbar_decode(image)
-        
-        if not decoded_objects:
-            return None
-        
-        # 获取第一个二维码的数据
-        qr_data = decoded_objects[0].data.decode('utf-8')
-        
-        # 验证是否为有效URL
-        if qr_data.startswith(('http://', 'https://', 'www.')):
-            return qr_data
-        
-        return qr_data
-        
-    except Exception as e:
-        logging.error(f"二维码解码失败: {str(e)}")
-        return None
-
-
-
+    _DURATION_CONTROL_STATE.enabled = bool(state.duration_control_enabled)
+    _DURATION_CONTROL_STATE.estimated_seconds = int(state.duration_control_estimated_seconds or 0)
+    _DURATION_CONTROL_STATE.total_duration_seconds = int(state.duration_control_total_duration_seconds or 0)
 
 
 def _driver_element_contains_text_input(element) -> bool:
@@ -1218,7 +638,7 @@ def _build_per_question_delay_plan(question_count: int, target_seconds: float) -
 
 def _simulate_answer_duration_delay(stop_signal: Optional[threading.Event] = None) -> bool:
     # 委托到模块实现，传入当前配置范围以避免模块依赖全局变量
-    return duration_control.simulate_answer_duration_delay(stop_signal, answer_duration_range_seconds)
+    return duration_control.simulate_answer_duration_delay(stop_signal, state.answer_duration_range_seconds)
 
 
 def _human_scroll_after_question(driver: BrowserDriver) -> None:
@@ -1435,7 +855,7 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
     scale_question_index = 0
     slider_question_index = 0
     current_question_number = 0
-    active_stop = stop_signal or stop_event
+    active_stop = stop_signal or state.stop_event
     question_delay_plan: Optional[List[float]] = None
     if _full_simulation_active() and total_question_count > 0:
         target_seconds = _calculate_full_simulation_run_target(total_question_count)
@@ -1495,29 +915,29 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                         driver,
                         current_question_number,
                         vacant_question_index,
-                        texts,
-                        texts_prob,
-                        text_entry_types,
-                        text_ai_flags,
-                        text_titles,
+                        state.texts,
+                        state.texts_prob,
+                        state.text_entry_types,
+                        state.text_ai_flags,
+                        state.text_titles,
                     )
                     vacant_question_index += 1
             elif question_type == "3":
-                _single_impl(driver, current_question_number, single_question_index, single_prob, single_option_fill_texts)
+                _single_impl(driver, current_question_number, single_question_index, state.single_prob, state.single_option_fill_texts)
                 single_question_index += 1
             elif question_type == "4":
-                _multiple_impl(driver, current_question_number, multiple_question_index, multiple_prob, multiple_option_fill_texts)
+                _multiple_impl(driver, current_question_number, multiple_question_index, state.multiple_prob, state.multiple_option_fill_texts)
                 multiple_question_index += 1
             elif question_type == "5":
-                _scale_impl(driver, current_question_number, scale_question_index, scale_prob)
+                _scale_impl(driver, current_question_number, scale_question_index, state.scale_prob)
                 scale_question_index += 1
             elif question_type == "6":
-                matrix_question_index = _matrix_impl(driver, current_question_number, matrix_question_index, matrix_prob)
+                matrix_question_index = _matrix_impl(driver, current_question_number, matrix_question_index, state.matrix_prob)
             elif question_type == "7":
-                _droplist_impl(driver, current_question_number, droplist_question_index, droplist_prob, droplist_option_fill_texts)
+                _droplist_impl(driver, current_question_number, droplist_question_index, state.droplist_prob, state.droplist_option_fill_texts)
                 droplist_question_index += 1
             elif question_type == "8":
-                slider_score = _resolve_slider_score(slider_question_index, slider_targets)
+                slider_score = _resolve_slider_score(slider_question_index, state.slider_targets)
                 _slider_question_impl(driver, current_question_number, slider_score)
                 slider_question_index += 1
             elif is_reorder_question:
@@ -1529,10 +949,10 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                     checkbox_count, radio_count = _count_choice_inputs_driver(question_div)
                     if checkbox_count or radio_count:
                         if checkbox_count >= radio_count:
-                            _multiple_impl(driver, current_question_number, multiple_question_index, multiple_prob, multiple_option_fill_texts)
+                            _multiple_impl(driver, current_question_number, multiple_question_index, state.multiple_prob, state.multiple_option_fill_texts)
                             multiple_question_index += 1
                         else:
-                            _single_impl(driver, current_question_number, single_question_index, single_prob, single_option_fill_texts)
+                            _single_impl(driver, current_question_number, single_question_index, state.single_prob, state.single_option_fill_texts)
                             single_question_index += 1
                         handled = True
 
@@ -1558,11 +978,11 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                             driver,
                             current_question_number,
                             vacant_question_index,
-                            texts,
-                            texts_prob,
-                            text_entry_types,
-                            text_ai_flags,
-                            text_titles,
+                            state.texts,
+                            state.texts_prob,
+                            state.text_entry_types,
+                            state.text_ai_flags,
+                            state.text_titles,
                         )
                         vacant_question_index += 1
                         print(
@@ -1626,8 +1046,7 @@ def submit(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None)
     settle_delay = 0 if fast_mode else SUBMIT_CLICK_SETTLE_DELAY
     pre_submit_delay = 0 if fast_mode else SUBMIT_INITIAL_DELAY
 
-    global last_submit_had_captcha
-    last_submit_had_captcha = False
+    state.last_submit_had_captcha = False
 
     if pre_submit_delay > 0 and _sleep_with_stop(stop_signal, pre_submit_delay):
         return
@@ -1815,54 +1234,6 @@ def _wait_for_post_submit_outcome(
     return "unknown", final_url
 
 
-def _select_proxy_for_session() -> Optional[str]:
-    if not random_proxy_ip_enabled:
-        return None
-    with lock:
-        if proxy_ip_pool:
-            return proxy_ip_pool.pop(0)
-
-    # 代理池为空时，使用全局 fetch 锁避免多线程并发重复请求代理 API（会快速耗尽额度）
-    with _proxy_fetch_lock:
-        with lock:
-            if proxy_ip_pool:
-                return proxy_ip_pool.pop(0)
-
-        expected = max(1, int(num_threads or 1))
-        try:
-            fetched = _fetch_new_proxy_batch(expected_count=expected)
-        except Exception as exc:
-            logging.warning(f"获取随机代理失败：{exc}")
-            return None
-        if not fetched:
-            return None
-
-        extra = fetched[1:]
-        if extra:
-            with lock:
-                for proxy in extra:
-                    if proxy not in proxy_ip_pool:
-                        proxy_ip_pool.append(proxy)
-        return fetched[0]
-
-
-def _select_user_agent_for_session() -> Tuple[Optional[str], Optional[str]]:
-    if not random_user_agent_enabled:
-        return None, None
-    return _select_user_agent_from_keys(user_agent_pool_keys)
-
-
-def _discard_unresponsive_proxy(proxy_address: str) -> None:
-    if not proxy_address:
-        return
-    with lock:
-        try:
-            proxy_ip_pool.remove(proxy_address)
-            logging.debug(f"已移除无响应代理：{proxy_address}")
-        except ValueError:
-            pass
-
-
 def _is_device_quota_limit_page(driver: BrowserDriver) -> bool:
     """检测"设备已达到最大填写次数"提示页。"""
     script = r"""
@@ -1914,12 +1285,11 @@ def _is_device_quota_limit_page(driver: BrowserDriver) -> bool:
 
 
 def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=None):
-    global cur_num, cur_fail
-    
+
     fast_mode = _is_fast_mode()
     timed_mode_active = _timed_mode_active()
     try:
-        timed_refresh_interval = float(timed_mode_refresh_interval or timed_mode.DEFAULT_REFRESH_INTERVAL)
+        timed_refresh_interval = float(state.timed_mode_refresh_interval or timed_mode.DEFAULT_REFRESH_INTERVAL)
     except Exception:
         timed_refresh_interval = timed_mode.DEFAULT_REFRESH_INTERVAL
     if timed_refresh_interval <= 0:
@@ -1928,15 +1298,15 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
     driver: Optional[BrowserDriver] = None
     
     # 获取浏览器实例信号量，限制同时运行的浏览器数量
-    browser_sem = _get_browser_semaphore(min(num_threads, MAX_BROWSER_INSTANCES))
+    browser_sem = state._get_browser_semaphore(min(state.num_threads, state.MAX_BROWSER_INSTANCES))
     sem_acquired = False
     
-    logging.info(f"目标份数: {target_num}, 当前进度: {cur_num}/{target_num}")
+    logging.info(f"目标份数: {state.target_num}, 当前进度: {state.cur_num}/{state.target_num}")
     if timed_mode_active:
         logging.info("定时模式已启用")
-    if random_proxy_ip_enabled:
+    if state.random_proxy_ip_enabled:
         logging.info("随机IP已启用")
-    if random_user_agent_enabled:
+    if state.random_user_agent_enabled:
         logging.info("随机UA已启用")
 
     def _register_driver(instance: BrowserDriver) -> None:
@@ -2003,8 +1373,8 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
         _wait_if_paused(gui_instance, stop_signal)
         if stop_signal.is_set():
             break
-        with lock:
-            if stop_signal.is_set() or (target_num > 0 and cur_num >= target_num):
+        with state.lock:
+            if stop_signal.is_set() or (state.target_num > 0 and state.cur_num >= state.target_num):
                 break
         
         if _full_simulation_active():
@@ -2017,17 +1387,17 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
         
         if driver is None:
             proxy_address = _select_proxy_for_session()
-            if random_proxy_ip_enabled and not proxy_address:
+            if state.random_proxy_ip_enabled and not proxy_address:
                 if _record_bad_proxy_and_maybe_pause(gui_instance):
                     continue
             if proxy_address:
                 if not _proxy_is_responsive(proxy_address):
-                    logging.warning(f"代理无响应：{proxy_address}")
+                    logging.warning(f"代理无响应：{_mask_proxy_for_log(proxy_address)}")
                     _discard_unresponsive_proxy(proxy_address)
                     if stop_signal.is_set():
                         break
                     # 避免代理源异常时进入高频死循环（频繁请求代理/健康检查会拖慢整机）
-                    if random_proxy_ip_enabled:
+                    if state.random_proxy_ip_enabled:
                         if _record_bad_proxy_and_maybe_pause(gui_instance):
                             continue
                     stop_signal.wait(0.8)
@@ -2073,7 +1443,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
         try:
             if stop_signal.is_set():
                 break
-            if not url:
+            if not state.url:
                 logging.error("无法启动：问卷链接为空")
                 driver_had_error = True
                 break
@@ -2082,7 +1452,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 logging.info("[Action Log] 定时模式：开始刷新等待问卷开放")
                 ready = timed_mode.wait_until_open(
                     driver,
-                    url,
+                    state.url,
                     stop_signal,
                     refresh_interval=timed_refresh_interval,
                     logger=logging.info,
@@ -2092,20 +1462,20 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                         stop_signal.set()
                     break
             else:
-                driver.get(url)
+                driver.get(state.url)
                 if stop_signal.is_set():
                     break
             if _is_device_quota_limit_page(driver):
                 logging.warning("检测到“设备已达到最大填写次数”提示页，直接放弃当前浏览器实例并标记为成功。")
-                with lock:
-                    if target_num <= 0 or cur_num < target_num:
-                        cur_num += 1
+                with state.lock:
+                    if state.target_num <= 0 or state.cur_num < state.target_num:
+                        state.cur_num += 1
                         logging.info(
-                            f"[OK/Quota] 已填写{cur_num}份 - 失败{cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
+                            f"[OK/Quota] 已填写{state.cur_num}份 - 失败{state.cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
                         )
-                        if random_proxy_ip_enabled:
+                        if state.random_proxy_ip_enabled:
                             handle_random_ip_submission(gui_instance, stop_signal)
-                        if target_num > 0 and cur_num >= target_num:
+                        if state.target_num > 0 and state.cur_num >= state.target_num:
                             stop_signal.set()
                             _trigger_target_reached_stop(gui_instance, stop_signal)
                     else:
@@ -2118,7 +1488,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             try:
                 visited_urls.add(_normalize_url_for_compare(driver.current_url))
             except Exception:
-                visited_urls.add(_normalize_url_for_compare(url))
+                visited_urls.add(_normalize_url_for_compare(state.url))
 
             while True:
                 initial_url = driver.current_url
@@ -2152,15 +1522,15 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                     break
 
                 # 没有触发验证，直接标记为成功
-                with lock:
-                    if target_num <= 0 or cur_num < target_num:
-                        cur_num += 1
+                with state.lock:
+                    if state.target_num <= 0 or state.cur_num < state.target_num:
+                        state.cur_num += 1
                         logging.info(
-                            f"[OK] 已填写{cur_num}份 - 失败{cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
+                            f"[OK] 已填写{state.cur_num}份 - 失败{state.cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
                         )
-                        if random_proxy_ip_enabled:
+                        if state.random_proxy_ip_enabled:
                             handle_random_ip_submission(gui_instance, stop_signal)
-                        if target_num > 0 and cur_num >= target_num:
+                        if state.target_num > 0 and state.cur_num >= state.target_num:
                             stop_signal.set()
                             _trigger_target_reached_stop(gui_instance, stop_signal)
                     else:
@@ -2242,15 +1612,15 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
 
             if completion_detected:
                 driver_had_error = False
-                with lock:
-                    if target_num <= 0 or cur_num < target_num:
-                        cur_num += 1
+                with state.lock:
+                    if state.target_num <= 0 or state.cur_num < state.target_num:
+                        state.cur_num += 1
                         logging.info(
-                            f"[OK] 已填写{cur_num}份 - 失败{cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
+                            f"[OK] 已填写{state.cur_num}份 - 失败{state.cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
                         )
-                        if random_proxy_ip_enabled:
+                        if state.random_proxy_ip_enabled:
                             handle_random_ip_submission(gui_instance, stop_signal)
-                        if target_num > 0 and cur_num >= target_num:
+                        if state.target_num > 0 and state.cur_num >= state.target_num:
                             stop_signal.set()
                             _trigger_target_reached_stop(gui_instance, stop_signal)
                     else:
@@ -2284,7 +1654,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
         if stop_signal.is_set():
             break
         if not _full_simulation_active():
-            min_wait, max_wait = submit_interval_range_seconds
+            min_wait, max_wait = state.submit_interval_range_seconds
             if max_wait > 0:
                 wait_seconds = min_wait if max_wait == min_wait else random.uniform(min_wait, max_wait)
                 if stop_signal.wait(wait_seconds):

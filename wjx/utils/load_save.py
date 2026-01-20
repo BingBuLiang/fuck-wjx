@@ -13,7 +13,7 @@ from wjx.utils.config import DEFAULT_RANDOM_UA_KEYS, USER_AGENT_PRESETS
 from wjx.network.random_ip import normalize_random_ip_enabled_value
 
 if TYPE_CHECKING:
-    from wjx.engine import QuestionEntry
+    from wjx.core.question_config import QuestionEntry
 
 
 def get_runtime_directory() -> str:
@@ -187,7 +187,7 @@ def serialize_question_entry(entry: QuestionEntry) -> Dict[str, Any]:
 
 def deserialize_question_entry(data: Dict[str, Any]) -> "QuestionEntry":
     """Create a QuestionEntry from a persisted dict."""
-    from wjx.engine import QuestionEntry
+    from wjx.core.question_config import QuestionEntry
     mode_raw = data.get("distribution_mode") or "random"
     if mode_raw == "equal":
         mode_raw = "random"

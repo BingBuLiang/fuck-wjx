@@ -38,7 +38,7 @@ AI_PROVIDERS = {
     },
 }
 
-DEFAULT_SYSTEM_PROMPT = "你是一个问卷填写助手。请根据问题简短回答，答案要自然、合理，不要太长。"
+DEFAULT_SYSTEM_PROMPT = "你是一名有相关使用经验但并非专业人士的普通用户。填写问卷时更多是凭印象和实际体验作答。回答可以简短，也可以有些模糊，不需要追求严谨。"
 
 _DEFAULT_AI_SETTINGS: Dict[str, Any] = {
     "enabled": False,

@@ -3,9 +3,18 @@ import re
 import threading
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QDoubleValidator
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPlainTextEdit
+from PySide6.QtCore import Qt, QTimer, Signal, QEvent
+from PySide6.QtGui import QDoubleValidator, QKeySequence, QGuiApplication
+from PySide6.QtWidgets import (
+    QDialog,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPlainTextEdit,
+    QFileDialog,
+    QLabel,
+    QWidget,
+    QScrollArea,
+)
 from qfluentwidgets import (
     BodyLabel,
     LineEdit,
@@ -18,6 +27,7 @@ from qfluentwidgets import (
 )
 
 from wjx.ui.widgets import StatusPollingMixin
+from wjx.ui.helpers.image_attachments import ImageAttachmentManager
 from wjx.utils.config import CONTACT_API_URL
 from wjx.utils.version import __VERSION__
 
@@ -34,6 +44,7 @@ class ContactDialog(StatusPollingMixin, QDialog):
         self._sendFinished.connect(self._on_send_finished)
         self.setWindowTitle("联系开发者")
         self.resize(720, 520)
+        self._attachments = ImageAttachmentManager(max_count=3, max_size_bytes=10 * 1024 * 1024)
         
         # 初始化状态轮询 Mixin
         self._init_status_polling(status_fetcher, status_formatter)
@@ -81,6 +92,44 @@ class ContactDialog(StatusPollingMixin, QDialog):
         self.message_edit.setPlaceholderText("请描述问题、需求或留言…")
         self.message_edit.setMinimumHeight(180)
         form_layout.addWidget(self.message_edit, 1)
+        self.message_edit.installEventFilter(self)
+
+        # 图片附件区域
+        attachments_box = QVBoxLayout()
+        attachments_box.setSpacing(6)
+        attachments_box.addWidget(BodyLabel("图片附件（最多3张，单张≤10MB，仅图片）：", self))
+
+        attach_toolbar = QHBoxLayout()
+        self.attach_add_btn = PushButton("选择图片", self)
+        self.attach_clear_btn = PushButton("清空附件", self)
+        attach_hint = BodyLabel("支持 Ctrl+V 粘贴图片", self)
+        attach_toolbar.addWidget(self.attach_add_btn)
+        attach_toolbar.addWidget(self.attach_clear_btn)
+        attach_toolbar.addStretch(1)
+        attach_toolbar.addWidget(attach_hint)
+        attachments_box.addLayout(attach_toolbar)
+
+        self.attach_list_layout = QVBoxLayout()
+        self.attach_list_layout.setSpacing(8)
+
+        self.attach_list_container = QWidget(self)
+        self.attach_list_container.setLayout(self.attach_list_layout)
+
+        self.attach_scroll = QScrollArea(self)
+        self.attach_scroll.setWidgetResizable(True)
+        self.attach_scroll.setWidget(self.attach_list_container)
+        self.attach_scroll.setMinimumHeight(140)
+        self.attach_scroll.setMaximumHeight(240)
+        self.attach_scroll.setVisible(False)
+
+        self.attach_placeholder = BodyLabel("暂无附件", self)
+        self.attach_placeholder.setStyleSheet("color: #888; padding: 6px;")
+        self.attach_placeholder.setFixedHeight(32)
+
+        attachments_box.addWidget(self.attach_scroll)
+        attachments_box.addWidget(self.attach_placeholder)
+        form_layout.addLayout(attachments_box)
+        self._render_attachments_ui()
 
         layout.addLayout(form_layout)
 
@@ -111,6 +160,8 @@ class ContactDialog(StatusPollingMixin, QDialog):
 
         cancel_btn.clicked.connect(self.reject)
         self.send_btn.clicked.connect(self._on_send_clicked)
+        self.attach_add_btn.clicked.connect(self._on_choose_files)
+        self.attach_clear_btn.clicked.connect(self._on_clear_attachments)
 
         # set default type
         idx = self.type_combo.findText(default_type)
@@ -126,6 +177,91 @@ class ContactDialog(StatusPollingMixin, QDialog):
         
         # 启动状态查询和定时刷新
         self._start_status_polling()
+
+    def eventFilter(self, obj, event):
+        if obj is self.message_edit and event.type() == QEvent.Type.KeyPress:
+            if event.matches(QKeySequence.StandardKey.Paste):
+                if self._handle_clipboard_image():
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _render_attachments_ui(self):
+        """重新渲染附件列表。"""
+        while self.attach_list_layout.count():
+            item = self.attach_list_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        if not self._attachments.attachments:
+            self.attach_scroll.setVisible(False)
+            self.attach_placeholder.setVisible(True)
+            return
+
+        self.attach_scroll.setVisible(True)
+        self.attach_placeholder.setVisible(False)
+
+        for idx, att in enumerate(self._attachments.attachments):
+            row_widget = QWidget(self)
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(6, 6, 6, 6)
+            row_layout.setSpacing(10)
+
+            thumb_label = QLabel(self)
+            thumb_label.setFixedSize(96, 96)
+            thumb_label.setScaledContents(True)
+            if att.pixmap and not att.pixmap.isNull():
+                thumb_label.setPixmap(att.pixmap)
+            row_layout.addWidget(thumb_label)
+
+            info_label = BodyLabel(f"{att.name} ({round(len(att.data) / 1024, 1)} KB)", self)
+            row_layout.addWidget(info_label, 1)
+
+            remove_btn = PushButton("移除", self)
+            remove_btn.clicked.connect(lambda _=False, i=idx: self._remove_attachment(i))
+            row_layout.addWidget(remove_btn)
+
+            self.attach_list_layout.addWidget(row_widget)
+
+    def _remove_attachment(self, index: int):
+        self._attachments.remove_at(index)
+        self._render_attachments_ui()
+
+    def _on_clear_attachments(self):
+        self._attachments.clear()
+        self._render_attachments_ui()
+
+    def _handle_clipboard_image(self) -> bool:
+        """处理 Ctrl+V 粘贴图片，返回是否消费了事件。"""
+        clipboard = QGuiApplication.clipboard()
+        mime = clipboard.mimeData()
+        if mime is None or not mime.hasImage():
+            return False
+
+        image = clipboard.image()
+        ok, msg = self._attachments.add_qimage(image, "clipboard.png")
+        if ok:
+            InfoBar.success("", "已添加粘贴的图片", parent=self, position=InfoBarPosition.TOP, duration=2000)
+            self._render_attachments_ui()
+        else:
+            InfoBar.error("", msg, parent=self, position=InfoBarPosition.TOP, duration=2500)
+        return True
+
+    def _on_choose_files(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择图片",
+            "",
+            "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif *.webp);;所有文件 (*.*)",
+        )
+        if not paths:
+            return
+        for path in paths:
+            ok, msg = self._attachments.add_file_path(path)
+            if not ok:
+                InfoBar.error("", msg, parent=self, position=InfoBarPosition.TOP, duration=2500)
+                break
+        self._render_attachments_ui()
 
     def closeEvent(self, arg__1):
         """对话框关闭时安全停止线程"""
@@ -275,6 +411,7 @@ class ContactDialog(StatusPollingMixin, QDialog):
             InfoBar.error("", "联系API未配置", parent=self, position=InfoBarPosition.TOP, duration=3000)
             return
         payload = {"message": full_message, "timestamp": datetime.now().isoformat()}
+        files_payload = self._attachments.files_payload()
 
         # 清除焦点，防止邮箱被选中
         self.send_btn.setFocus()
@@ -288,7 +425,10 @@ class ContactDialog(StatusPollingMixin, QDialog):
 
         def _send():
             try:
-                resp = post(api_url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
+                if files_payload:
+                    resp = post(api_url, data=payload, files=files_payload, timeout=20)
+                else:
+                    resp = post(api_url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
                 if resp.status_code == 200:
                     self._sendFinished.emit(True, "")
                 else:

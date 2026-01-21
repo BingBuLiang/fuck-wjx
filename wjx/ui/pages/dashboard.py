@@ -111,7 +111,17 @@ class DashboardPage(QWidget):
         link_layout = QVBoxLayout(link_card)
         link_layout.setContentsMargins(12, 12, 12, 12)
         link_layout.setSpacing(8)
-        link_layout.addWidget(SubtitleLabel("问卷入口", self))
+        
+        # 标题行：左侧是标题，右侧是载入/保存按钮
+        title_row = QHBoxLayout()
+        title_row.addWidget(SubtitleLabel("问卷入口", self))
+        title_row.addStretch(1)
+        self.load_cfg_btn = PushButton("载入配置", self)
+        self.save_cfg_btn = PushButton("保存配置", self)
+        title_row.addWidget(self.load_cfg_btn)
+        title_row.addWidget(self.save_cfg_btn)
+        link_layout.addLayout(title_row)
+        
         link_layout.addWidget(BodyLabel("问卷链接：", self))
         # 创建水平布局：按钮在前，输入框在后
         input_row = QHBoxLayout()
@@ -123,14 +133,12 @@ class DashboardPage(QWidget):
         self.url_edit.setClearButtonEnabled(True)
         input_row.addWidget(self.url_edit, 1)
         link_layout.addLayout(input_row)
+        
+        # 只保留"自动配置问卷"按钮
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         self.parse_btn = PrimaryPushButton("自动配置问卷", self)
-        self.load_cfg_btn = PushButton("载入配置", self)
-        self.save_cfg_btn = PushButton("保存配置", self)
         btn_row.addWidget(self.parse_btn)
-        btn_row.addWidget(self.load_cfg_btn)
-        btn_row.addWidget(self.save_cfg_btn)
         btn_row.addStretch(1)
         link_layout.addLayout(btn_row)
         layout.addWidget(link_card)

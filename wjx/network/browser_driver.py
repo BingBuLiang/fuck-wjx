@@ -208,7 +208,7 @@ class PlaywrightDriver:
     def get(
         self,
         url: str,
-        timeout: int = 12000,
+        timeout: int = 18000,
         wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded",
     ) -> None:
         try:
@@ -369,6 +369,78 @@ def kill_processes_by_pid(pids: Set[int]) -> int:
     return killed
 
 
+def graceful_terminate_process_tree(pids: Set[int], wait_seconds: float = 3.0) -> int:
+    """
+    尝试温和终止指定 PID 及其子进程，避免使用 taskkill。
+    返回被处理的进程数量（不保证全部存活）。
+    """
+    try:
+        import psutil
+    except ImportError:
+        return 0
+
+    unique_pids = [int(p) for p in sorted(set(pids or [])) if int(p) > 0]
+    if not unique_pids:
+        return 0
+
+    procs = []
+    seen = set()
+    for pid in unique_pids:
+        try:
+            proc = psutil.Process(pid)
+            stack = [proc]
+            while stack:
+                cur = stack.pop()
+                if cur.pid in seen:
+                    continue
+                seen.add(cur.pid)
+                procs.append(cur)
+                try:
+                    stack.extend(cur.children(recursive=False))
+                except Exception:
+                    pass
+        except Exception:
+            continue
+
+    for proc in procs:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    gone, alive = psutil.wait_procs(procs, timeout=max(0.1, float(wait_seconds or 0.0)))
+    for proc in alive:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    return len(procs)
+
+
+def _collect_process_tree(root_pid: Optional[int]) -> Set[int]:
+    """收集给定 PID 及其子进程 PID，失败时返回空集合。"""
+    if not root_pid:
+        return set()
+    try:
+        import psutil
+    except ImportError:
+        return {int(root_pid)}
+    try:
+        root = psutil.Process(int(root_pid))
+    except Exception:
+        return {int(root_pid)}
+    pids: Set[int] = {int(root.pid)}
+    try:
+        for child in root.children(recursive=True):
+            try:
+                pids.add(int(child.pid))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return pids
+
+
 def kill_playwright_browser_processes() -> None:
     """Kill Playwright-launched browsers by checking cmdline indicators."""
     try:
@@ -507,13 +579,16 @@ def create_playwright_driver(
             collected_pids: Set[int] = set()
             main_pid = getattr(driver, "browser_pid", None)
             if main_pid:
-                collected_pids.add(int(main_pid))
+                collected_pids.update(_collect_process_tree(main_pid))
             else:
                 try:
                     time.sleep(0.05)
                     after = list_browser_pids()
-                    diff = list(after - pre_launch_pids)[:3]
+                    diff = list(after - pre_launch_pids)[:10]
                     collected_pids.update(diff)
+                    # 尝试进一步补全子进程
+                    for pid in list(collected_pids):
+                        collected_pids.update(_collect_process_tree(pid))
                     if not collected_pids:
                         logging.warning("[Action Log] 未捕获浏览器主 PID，回退到差集依然为空")
                 except Exception:

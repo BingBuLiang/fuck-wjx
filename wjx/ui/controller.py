@@ -24,9 +24,9 @@ from wjx.engine import (
     _extract_survey_title_from_html,
     _normalize_html_text,
 )
-from wjx.network.browser_driver import kill_processes_by_pid, kill_playwright_browser_processes
 from wjx.utils.load_save import RuntimeConfig, load_config, save_config
 from wjx.utils.log_utils import log_popup_confirm, log_popup_error, log_popup_info, log_popup_warning
+from wjx.network.browser_driver import graceful_terminate_process_tree
 from wjx.network.random_ip import (
     _fetch_new_proxy_batch,
     get_effective_proxy_api_url,
@@ -117,17 +117,17 @@ class EngineGuiAdapter:
     def cleanup_browsers(self) -> None:
         drivers = list(self.active_drivers or [])
         self.active_drivers.clear()
-        pids_to_kill: Set[int] = set(self._launched_browser_pids or set())
+        pids_to_wait: Set[int] = set(self._launched_browser_pids or set())
         self._launched_browser_pids.clear()
 
         for driver in drivers:
             try:
                 pid_single = getattr(driver, "browser_pid", None)
                 if pid_single:
-                    pids_to_kill.add(int(pid_single))
+                    pids_to_wait.add(int(pid_single))
                 pid_set = getattr(driver, "browser_pids", None)
                 if pid_set:
-                    pids_to_kill.update(int(p) for p in pid_set)
+                    pids_to_wait.update(int(p) for p in pid_set)
             except Exception:
                 pass
             try:
@@ -135,9 +135,9 @@ class EngineGuiAdapter:
             except Exception:
                 pass
 
-        if pids_to_kill:
+        if pids_to_wait:
             try:
-                kill_processes_by_pid(pids_to_kill)
+                graceful_terminate_process_tree(pids_to_wait, wait_seconds=3.0)
             except Exception:
                 pass
 
@@ -471,21 +471,16 @@ class RunController(QObject):
         self,
         adapter_snapshot: Optional[EngineGuiAdapter] = None,
         delay_seconds: float = 0.0,
-        force_kill_playwright: bool = False,
     ) -> None:
         adapter = adapter_snapshot or self.adapter
+        if not adapter:
+            return
 
         def _cleanup():
-            if adapter:
-                try:
-                    adapter.cleanup_browsers()
-                except Exception:
-                    pass
-            if force_kill_playwright:
-                try:
-                    kill_playwright_browser_processes()
-                except Exception:
-                    pass
+            try:
+                adapter.cleanup_browsers()
+            except Exception:
+                pass
 
         self._cleanup_runner.submit(_cleanup, delay_seconds=delay_seconds)
 
@@ -493,7 +488,6 @@ class RunController(QObject):
         self._submit_cleanup_task(
             adapter_snapshot,
             delay_seconds=STOP_FORCE_WAIT_SECONDS,
-            force_kill_playwright=True,
         )
 
     def stop_run(self):
@@ -550,7 +544,7 @@ class RunController(QObject):
         should_force_cleanup = target > 0 and current >= target and not self._completion_cleanup_done
         if should_force_cleanup:
             self._completion_cleanup_done = True
-            self._submit_cleanup_task(force_kill_playwright=True)
+            self._submit_cleanup_task()
 
     def _cleanup_browsers(self) -> None:
         try:

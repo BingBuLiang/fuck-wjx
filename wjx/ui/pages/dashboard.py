@@ -91,6 +91,8 @@ class DashboardPage(QWidget):
         self.runtime_page = runtime_page
         self._open_wizard_after_parse = False
         self._last_pause_reason = ""
+        self._completion_notified = False
+        self._last_progress = 0
         self._build_ui()
         self.config_drawer = ConfigDrawer(self, self._load_config_from_path)
         self._bind_events()
@@ -397,6 +399,8 @@ class DashboardPage(QWidget):
         except Exception as exc:
             self._toast(str(exc), "error")
             return
+        self._completion_notified = False
+        self._last_progress = 0
         self.controller.start_run(cfg)
 
     def update_status(self, text: str, current: int, target: int):
@@ -406,6 +410,17 @@ class DashboardPage(QWidget):
             progress = min(100, int((current / max(target, 1)) * 100))
         self.progress_bar.setValue(progress)
         self.progress_pct.setText(f"{progress}%")
+        self._last_progress = progress
+        if (
+            target > 0
+            and current >= target
+            and not self._completion_notified
+        ):
+            self._completion_notified = True
+            self._toast("全部份数已完成", "success", duration=5000)
+            self.stop_btn.setEnabled(False)
+            self.start_btn.setEnabled(True)
+            self.start_btn.setText("重新开始")
 
     def on_run_state_changed(self, running: bool):
         self._sync_start_button_state(running=running)
@@ -414,9 +429,20 @@ class DashboardPage(QWidget):
             self.resume_btn.setEnabled(False)
             self.resume_btn.hide()
         if running:
+            self._completion_notified = False
+            self.start_btn.setText("执行中...")
+            self.start_btn.setEnabled(False)
             self._toast("已启动任务", "success", 1500)
         else:
-            self._toast("任务结束", "info", 1500)
+            # 停止后根据进度调整按钮提示
+            if self._completion_notified or self._last_progress >= 100:
+                self.start_btn.setText("重新开始")
+            else:
+                self.start_btn.setText("开始执行")
+            self.start_btn.setEnabled(self._has_question_entries())
+            self.stop_btn.setEnabled(False)
+            if not self._completion_notified:
+                self._toast("任务结束", "info", 1500)
 
     def on_pause_state_changed(self, paused: bool, reason: str = ""):
         self._last_pause_reason = str(reason or "")

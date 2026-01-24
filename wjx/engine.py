@@ -103,9 +103,8 @@ from wjx.network.browser_driver import (
     ProxyConnectionError,
     TimeoutException,
     create_playwright_driver as _browser_create_playwright_driver,
-    kill_playwright_browser_processes as _kill_playwright_browser_processes,
-    kill_processes_by_pid as _kill_processes_by_pid,
     list_browser_pids as _list_browser_pids,
+    graceful_terminate_process_tree,
 )
 
 # 导入拆分后的模块
@@ -1355,10 +1354,10 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             except Exception:
                 pass
             driver = None
-            # 强制清理残留进程
+            # 等待已知 PID 自行退出，避免 taskkill
             if pids_to_kill:
                 try:
-                    _kill_processes_by_pid(pids_to_kill)
+                    graceful_terminate_process_tree(pids_to_kill, wait_seconds=3.0)
                 except Exception:
                     pass
         # 释放信号量

@@ -180,6 +180,11 @@ class LogPage(QWidget):
         if cursor.hasSelection():
             return
 
+        scrollbar = self.log_view.verticalScrollBar()
+        old_value = scrollbar.value()
+        old_max = scrollbar.maximum()
+        was_at_bottom = old_value >= old_max - 10
+
         records = LOG_BUFFER_HANDLER.get_records()
         if not records:
             if self._force_full_refresh:
@@ -187,12 +192,6 @@ class LogPage(QWidget):
                 self._force_full_refresh = False
             self._last_seen_record = None
             return
-
-        # 保存滚动位置
-        scrollbar = self.log_view.verticalScrollBar()
-        old_value = scrollbar.value()
-        old_max = scrollbar.maximum()
-        was_at_bottom = old_value >= old_max - 10
 
         if not self._force_full_refresh and self._last_seen_record is not None:
             last_index = -1
@@ -212,6 +211,14 @@ class LogPage(QWidget):
 
                 if was_at_bottom:
                     self.log_view.moveCursor(QTextCursor.MoveOperation.End)
+                else:
+                    # 保持用户当前位置，不要自动跳到底部
+                    new_max = scrollbar.maximum()
+                    if old_max > 0:
+                        ratio = old_value / old_max
+                        scrollbar.setValue(int(ratio * new_max))
+                    else:
+                        scrollbar.setValue(old_value)
                 return
 
         lines = []

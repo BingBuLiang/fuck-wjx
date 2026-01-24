@@ -59,6 +59,7 @@ class LogPage(QWidget):
         self._current_filter = None
         self._force_full_refresh = True
         self._last_seen_record = None
+        self._stick_to_bottom = True  # 用户是否希望自动跟随最新日志
         self._build_ui()
         self._bind_events()
         self._load_last_session_logs()
@@ -110,6 +111,7 @@ class LogPage(QWidget):
         font = QFont("Consolas", 10)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.log_view.setFont(font)
+        self.log_view.verticalScrollBar().valueChanged.connect(self._on_scrollbar_value_changed)
         try:
             if LOG_BUFFER_CAPACITY and int(LOG_BUFFER_CAPACITY) > 0:
                 self.log_view.document().setMaximumBlockCount(int(LOG_BUFFER_CAPACITY))
@@ -183,7 +185,7 @@ class LogPage(QWidget):
         scrollbar = self.log_view.verticalScrollBar()
         old_value = scrollbar.value()
         old_max = scrollbar.maximum()
-        was_at_bottom = old_value >= old_max - 10
+        stick_to_bottom = self._stick_to_bottom
 
         records = LOG_BUFFER_HANDLER.get_records()
         if not records:
@@ -209,16 +211,10 @@ class LogPage(QWidget):
                     self.log_view.appendPlainText(text)
                 self._last_seen_record = records[-1]
 
-                if was_at_bottom:
+                if stick_to_bottom:
                     self.log_view.moveCursor(QTextCursor.MoveOperation.End)
                 else:
-                    # 保持用户当前位置，不要自动跳到底部
-                    new_max = scrollbar.maximum()
-                    if old_max > 0:
-                        ratio = old_value / old_max
-                        scrollbar.setValue(int(ratio * new_max))
-                    else:
-                        scrollbar.setValue(old_value)
+                    self._restore_scroll_position(scrollbar, old_value, old_max)
                 return
 
         lines = []
@@ -234,12 +230,10 @@ class LogPage(QWidget):
         self._force_full_refresh = False
 
         # 恢复滚动位置
-        if was_at_bottom:
+        if stick_to_bottom:
             self.log_view.moveCursor(QTextCursor.MoveOperation.End)
-        elif old_max > 0:
-            # 按比例恢复滚动位置
-            ratio = old_value / old_max
-            scrollbar.setValue(int(ratio * scrollbar.maximum()))
+        else:
+            self._restore_scroll_position(scrollbar, old_value, old_max)
 
     def _copy_to_clipboard(self):
         """复制日志到剪贴板"""
@@ -303,6 +297,23 @@ class LogPage(QWidget):
     @staticmethod
     def _resolve_log_colors():
         return LOG_COLORS_DARK if isDarkTheme() else LOG_COLORS_LIGHT
+
+    def _on_scrollbar_value_changed(self, value):
+        """记录用户是否滚到最底部，决定是否自动跟随新日志"""
+        scrollbar = self.log_view.verticalScrollBar()
+        self._stick_to_bottom = value >= scrollbar.maximum() - 2
+
+    @staticmethod
+    def _restore_scroll_position(scrollbar, old_value, old_max):
+        """在非自动跟随时，尽量保持当前阅读位置"""
+        new_max = scrollbar.maximum()
+        if new_max < old_max:
+            # 有截断（比如达到最大行数），等比例向上补偿
+            target = max(0, old_value - (old_max - new_max))
+        else:
+            # 只追加了新日志，保持当前位置不要被拖到底
+            target = old_value
+        scrollbar.setValue(min(max(target, 0), new_max))
 
     def _load_last_session_logs(self):
         """加载上次会话的日志"""

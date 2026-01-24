@@ -100,6 +100,7 @@ from wjx.network.browser_driver import (
     NoSuchElementException,
     PlaywrightDriver,
     PlaywrightElement,
+    ProxyConnectionError,
     TimeoutException,
     create_playwright_driver as _browser_create_playwright_driver,
     kill_playwright_browser_processes as _kill_playwright_browser_processes,
@@ -1632,6 +1633,20 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 continue
 
             driver_had_error = True
+            if _handle_submission_failure(stop_signal):
+                break
+        except ProxyConnectionError as exc:
+            driver_had_error = True
+            if stop_signal.is_set():
+                break
+            logging.warning(f"代理隧道连接失败：{exc}")
+            if proxy_address:
+                _discard_unresponsive_proxy(proxy_address)
+            if state.random_proxy_ip_enabled and proxy_address:
+                if _record_bad_proxy_and_maybe_pause(gui_instance):
+                    break
+                stop_signal.wait(0.8)
+                continue
             if _handle_submission_failure(stop_signal):
                 break
         except EmptySurveySubmissionError:

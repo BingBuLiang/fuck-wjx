@@ -24,7 +24,7 @@ from wjx.engine import (
     _extract_survey_title_from_html,
     _normalize_html_text,
 )
-from wjx.network.browser_driver import kill_processes_by_pid
+from wjx.network.browser_driver import kill_processes_by_pid, kill_playwright_browser_processes
 from wjx.utils.load_save import RuntimeConfig, load_config, save_config
 from wjx.utils.log_utils import log_popup_confirm, log_popup_error, log_popup_info, log_popup_warning
 from wjx.network.random_ip import (
@@ -166,6 +166,7 @@ class RunController(QObject):
         self.on_ip_counter: Optional[Callable[[int, int, bool, bool], None]] = None
         self.card_code_provider: Optional[Callable[[], Optional[str]]] = None
         self._cleanup_runner = CleanupRunner()
+        self._completion_cleanup_done = False
 
     # -------------------- Parsing --------------------
     def parse_survey(self, url: str):
@@ -386,6 +387,7 @@ class RunController(QObject):
         )
         self.adapter.random_ip_enabled_var.set(config.random_ip_enabled)
         self._paused_state = False
+        self._completion_cleanup_done = False
         
         logging.info(f"配置题目概率分布（共{len(config.question_entries)}题）")
         try:
@@ -465,14 +467,34 @@ class RunController(QObject):
         self._status_timer.stop()
         self._emit_status()
 
-    def _schedule_cleanup(self, adapter_snapshot: Optional[EngineGuiAdapter] = None) -> None:
+    def _submit_cleanup_task(
+        self,
+        adapter_snapshot: Optional[EngineGuiAdapter] = None,
+        delay_seconds: float = 0.0,
+        force_kill_playwright: bool = False,
+    ) -> None:
         adapter = adapter_snapshot or self.adapter
 
         def _cleanup():
             if adapter:
-                adapter.cleanup_browsers()
+                try:
+                    adapter.cleanup_browsers()
+                except Exception:
+                    pass
+            if force_kill_playwright:
+                try:
+                    kill_playwright_browser_processes()
+                except Exception:
+                    pass
 
-        self._cleanup_runner.submit(_cleanup, delay_seconds=STOP_FORCE_WAIT_SECONDS)
+        self._cleanup_runner.submit(_cleanup, delay_seconds=delay_seconds)
+
+    def _schedule_cleanup(self, adapter_snapshot: Optional[EngineGuiAdapter] = None) -> None:
+        self._submit_cleanup_task(
+            adapter_snapshot,
+            delay_seconds=STOP_FORCE_WAIT_SECONDS,
+            force_kill_playwright=True,
+        )
 
     def stop_run(self):
         if not self.running:
@@ -524,6 +546,11 @@ class RunController(QObject):
         if paused != self._paused_state:
             self._paused_state = paused
             self.pauseStateChanged.emit(bool(paused), str(reason or ""))
+
+        should_force_cleanup = target > 0 and current >= target and not self._completion_cleanup_done
+        if should_force_cleanup:
+            self._completion_cleanup_done = True
+            self._submit_cleanup_task(force_kill_playwright=True)
 
     def _cleanup_browsers(self) -> None:
         try:

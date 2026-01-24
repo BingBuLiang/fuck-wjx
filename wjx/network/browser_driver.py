@@ -37,6 +37,10 @@ class TimeoutException(Exception):
     pass
 
 
+class ProxyConnectionError(Exception):
+    pass
+
+
 class By:
     CSS_SELECTOR = "css"
     XPATH = "xpath"
@@ -51,6 +55,20 @@ def _build_selector(by: str, value: str) -> str:
             return value
         return f"#{value}"
     return value
+
+
+_PROXY_TUNNEL_ERRORS = (
+    "ERR_TUNNEL_CONNECTION_FAILED",
+    "ERR_PROXY_CONNECTION_FAILED",
+    "ERR_NO_SUPPORTED_PROXIES",
+)
+
+
+def _is_proxy_tunnel_error(exc: Exception) -> bool:
+    message = str(exc)
+    if not message:
+        return False
+    return any(code in message for code in _PROXY_TUNNEL_ERRORS)
 
 
 class PlaywrightElement:
@@ -190,7 +208,7 @@ class PlaywrightDriver:
     def get(
         self,
         url: str,
-        timeout: int = 60000,
+        timeout: int = 12000,
         wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded",
     ) -> None:
         try:
@@ -203,9 +221,13 @@ class PlaywrightDriver:
             self._page.goto(url, wait_until=wait_until, timeout=timeout)
             return
         except PlaywrightTimeoutError as exc:
-            logging.warning("Page.goto timeout after %d ms, retrying with longer wait: %s", timeout, exc)
-
-        self._page.goto(url, wait_until="load", timeout=timeout * 2)
+            logging.warning("Page.goto timeout after %d ms: %s", timeout, exc)
+            raise
+        except Exception as exc:
+            if _is_proxy_tunnel_error(exc):
+                logging.warning("Page.goto proxy tunnel failure: %s", exc)
+                raise ProxyConnectionError(str(exc)) from exc
+            raise
 
     @property
     def current_url(self) -> str:
@@ -434,11 +456,7 @@ def create_playwright_driver(
                 x, y = window_position
                 launch_args["args"].append(f"--window-position={x},{y}")
 
-            # 当使用 context 级别代理时，必须在 launch 时设置一个占位的全局代理
-            # 参考: https://playwright.dev/python/docs/network#http-proxy
-            if normalized_proxy:
-                launch_args["proxy"] = {"server": "http://per-context"}
-            else:
+            if not normalized_proxy:
                 # 没有指定代理时，添加 --no-proxy-server 绕过系统代理
                 launch_args["args"].append("--no-proxy-server")
 

@@ -12,7 +12,7 @@ from qfluentwidgets import (
     CardWidget,
     FluentIcon,
     MessageBox,
-    PushButton,
+    PrimaryPushButton,
     SubtitleLabel,
     TransparentToolButton,
     isDarkTheme,
@@ -58,10 +58,11 @@ class ConfigDrawer(QWidget):
         card_layout.addLayout(header)
 
         link_row = QHBoxLayout()
+        self.folder_btn = PrimaryPushButton(FluentIcon.FOLDER, "打开配置文件夹", self.card)
+        self.folder_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.folder_btn.setFixedHeight(32)
+        link_row.addWidget(self.folder_btn)
         link_row.addStretch(1)
-        self.folder_link = BodyLabel("打开配置文件夹", self.card)
-        self.folder_link.setCursor(Qt.CursorShape.PointingHandCursor)
-        link_row.addWidget(self.folder_link)
         card_layout.addLayout(link_row)
 
         self.hint_label = BodyLabel("双击配置文件即可载入", self.card)
@@ -85,7 +86,7 @@ class ConfigDrawer(QWidget):
         self._slide_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         self.close_btn.clicked.connect(self.close_drawer)
-        self.folder_link.mousePressEvent = lambda _e: self._open_config_folder()
+        self.folder_btn.clicked.connect(self._open_config_folder)
         self.list_widget.itemDoubleClicked.connect(self._handle_item_triggered)
 
         self._update_empty_state()
@@ -157,7 +158,6 @@ class ConfigDrawer(QWidget):
             )
         )
         self.list_widget.setStyleSheet(f"background-color: {card_bg}; border: none;")
-        self.folder_link.setStyleSheet(f"color: {link_color}; background: transparent;")
 
     def open_drawer(self):
         """从右侧滑入显示抽屉。"""

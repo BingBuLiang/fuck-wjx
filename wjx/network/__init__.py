@@ -5,6 +5,7 @@ from wjx.network.browser_driver import (
     NoSuchElementException,
     PlaywrightDriver,
     PlaywrightElement,
+    ProxyConnectionError,
     TimeoutException,
     create_playwright_driver,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "NoSuchElementException",
     "PlaywrightDriver",
     "PlaywrightElement",
+    "ProxyConnectionError",
     "TimeoutException",
     "create_playwright_driver",
     "on_random_ip_toggle",

@@ -7,7 +7,7 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, QThread, QTimer, QSettings, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, QSettings, Signal, QCoreApplication, QMetaObject
 from PySide6.QtGui import QColor, QIcon, QGuiApplication, QPixmap
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
@@ -599,6 +599,9 @@ class MainWindow(FluentWindow):
     def _dispatch_to_ui(self, func):
         if self.thread() == QThread.currentThread():
             return func()
+        # 若未启动 Qt 事件循环，直接执行以避免死锁
+        if QCoreApplication.instance() is None:
+            return func()
         done = threading.Event()
         result: Dict[str, Any] = {}
 
@@ -608,8 +611,14 @@ class MainWindow(FluentWindow):
             finally:
                 done.set()
 
+        # 使用 QTimer.singleShot 在主线程中执行回调
+        from PySide6.QtCore import QTimer
         QTimer.singleShot(0, _wrapper)
-        done.wait()
+        
+        if not done.wait(timeout=5):
+            import logging
+            logging.warning("UI 调度超时，放弃执行回调以避免阻塞")
+            return None
         return result.get("value")
 
     def _toast(self, text: str, level: str = "info", duration: int = 2000):

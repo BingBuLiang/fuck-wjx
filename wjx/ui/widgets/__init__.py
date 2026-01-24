@@ -5,6 +5,7 @@ from .status_polling_mixin import StatusPollingMixin
 from .contact_form import ContactForm
 from .full_width_infobar import FullWidthInfoBar
 from .log_highlighter import LogHighlighter
+from .config_drawer import ConfigDrawer
 
 __all__ = [
     "NoWheelSlider",
@@ -14,4 +15,5 @@ __all__ = [
     "FullWidthInfoBar",
     "LogHighlighter",
     "ContactForm",
+    "ConfigDrawer",
 ]

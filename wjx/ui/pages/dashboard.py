@@ -32,6 +32,7 @@ from qfluentwidgets import (
     MessageBox,
 )
 
+from wjx.ui.widgets import ConfigDrawer
 from wjx.ui.widgets.no_wheel import NoWheelSlider, NoWheelSpinBox
 from wjx.ui.controller import RunController
 from wjx.ui.dialogs.card_unlock import CardUnlockDialog
@@ -91,6 +92,7 @@ class DashboardPage(QWidget):
         self._open_wizard_after_parse = False
         self._last_pause_reason = ""
         self._build_ui()
+        self.config_drawer = ConfigDrawer(self, self._load_config_from_path)
         self._bind_events()
         self._sync_start_button_state()
 
@@ -116,8 +118,10 @@ class DashboardPage(QWidget):
         title_row = QHBoxLayout()
         title_row.addWidget(SubtitleLabel("问卷入口", self))
         title_row.addStretch(1)
+        self.config_list_btn = PushButton("配置列表", self)
         self.load_cfg_btn = PushButton("载入配置", self)
         self.save_cfg_btn = PushButton("保存配置", self)
+        title_row.addWidget(self.config_list_btn)
         title_row.addWidget(self.load_cfg_btn)
         title_row.addWidget(self.save_cfg_btn)
         link_layout.addLayout(title_row)
@@ -266,6 +270,7 @@ class DashboardPage(QWidget):
 
     def _bind_events(self):
         self.parse_btn.clicked.connect(self._on_parse_clicked)
+        self.config_list_btn.clicked.connect(self._on_show_config_list)
         self.load_cfg_btn.clicked.connect(self._on_load_config)
         self.save_cfg_btn.clicked.connect(self._on_save_config)
         self.qr_btn.clicked.connect(self._on_qr_clicked)
@@ -283,6 +288,13 @@ class DashboardPage(QWidget):
         self.wizard_action.triggered.connect(self._open_question_wizard)
         try:
             self.question_page.entriesChanged.connect(self._on_question_entries_changed)
+        except Exception:
+            pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        try:
+            self.config_drawer.sync_to_parent()
         except Exception:
             pass
 
@@ -314,6 +326,12 @@ class DashboardPage(QWidget):
         self._open_wizard_after_parse = True
         self.controller.parse_survey(url)
 
+    def _on_show_config_list(self):
+        try:
+            self.config_drawer.open_drawer()
+        except Exception as exc:
+            self._toast(f"无法打开配置列表：{exc}", "error")
+
     def _on_qr_clicked(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择二维码图片", get_runtime_directory(), "含有二维码的图片 (*.png *.jpg *.jpeg *.bmp)")
         if not path:
@@ -331,6 +349,14 @@ class DashboardPage(QWidget):
             os.makedirs(configs_dir, exist_ok=True)
         path, _ = QFileDialog.getOpenFileName(self, "载入配置", configs_dir, "JSON 文件 (*.json);;所有文件 (*.*)")
         if not path:
+            return
+        self._load_config_from_path(path)
+
+    def _load_config_from_path(self, path: str):
+        if not path:
+            return
+        if not os.path.exists(path):
+            self._toast("文件不存在，可能已被删除", "warning")
             return
         try:
             cfg = self.controller.load_saved_config(path)

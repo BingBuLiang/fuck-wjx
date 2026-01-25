@@ -1294,7 +1294,8 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
         timed_refresh_interval = timed_mode.DEFAULT_REFRESH_INTERVAL
     if timed_refresh_interval <= 0:
         timed_refresh_interval = timed_mode.DEFAULT_REFRESH_INTERVAL
-    preferred_browsers = list(BROWSER_PREFERENCE)
+    base_browser_preference = list(getattr(state, "browser_preference", []) or BROWSER_PREFERENCE)
+    preferred_browsers = list(base_browser_preference)
     driver: Optional[BrowserDriver] = None
     
     # 获取浏览器实例信号量，限制同时运行的浏览器数量
@@ -1435,7 +1436,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                     break
                 continue
             
-            preferred_browsers = [active_browser] + [b for b in BROWSER_PREFERENCE if b != active_browser]
+            preferred_browsers = [active_browser] + [b for b in base_browser_preference if b != active_browser]
             _register_driver(driver)
             driver.set_window_size(550, 650)
 

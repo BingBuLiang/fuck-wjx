@@ -1,8 +1,9 @@
 """运行参数设置页面 - 使用 SettingCard 组件重构"""
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import Qt, QThread, QSize
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -47,6 +48,7 @@ from wjx.ui.workers.ai_test_worker import AITestWorker
 from wjx.utils.load_save import RuntimeConfig
 from wjx.utils.config import USER_AGENT_PRESETS
 from wjx.utils.ai_service import AI_PROVIDERS, get_ai_settings, save_ai_settings, DEFAULT_SYSTEM_PROMPT
+from wjx.utils.runtime_paths import _get_resource_path
 
 
 class SpinBoxSettingCard(SettingCard):
@@ -527,9 +529,33 @@ class TimeRangeSettingCard(SettingCard):
 class RuntimePage(ScrollArea):
     """独立的运行参数/开关页，方便在侧边栏查看。"""
 
+    BROWSER_OPTION_MAP = {
+        "auto": {
+            "text": "自动",
+            "preference": [],
+            "hint": "优先 Edge，缺失回落 Chrome/Chromium",
+        },
+        "edge": {
+            "text": "Edge",
+            "preference": ["edge"],
+            "hint": "仅使用 Edge",
+        },
+        "chrome": {
+            "text": "Chrome",
+            "preference": ["chrome", "edge", "chromium"],
+            "hint": "优先 Chrome，缺失回落 Edge/Chromium",
+        },
+        "chromium": {
+            "text": "Chromium",
+            "preference": ["chromium", "edge", "chrome"],
+            "hint": "内置 Chromium（无需系统浏览器）",
+        },
+    }
+
     def __init__(self, controller: RunController, parent=None):
         super().__init__(parent)
         self.controller = controller
+        self._browser_icons = self._load_browser_icons()
         self.view = QWidget(self)
         self.view.setStyleSheet("background: transparent;")
         self.setWidget(self.view)
@@ -543,6 +569,7 @@ class RuntimePage(ScrollArea):
         self._build_ui()
         self._bind_events()
         self._sync_random_ua(self.random_ua_card.isChecked())
+        self._sync_browser_icon()
 
     def _build_ui(self):
         layout = QVBoxLayout(self.view)
@@ -560,6 +587,40 @@ class RuntimePage(ScrollArea):
             FluentIcon.APPLICATION, "并发浏览器", "同时运行的浏览器数量 (1-12)",
             min_val=1, max_val=12, default=2, parent=run_group
         )
+        self.browser_card = SettingCard(
+            FluentIcon.GLOBE,
+            "调用浏览器",
+            "选择用于自动化的浏览器，Edge 缺失时可改用 Chrome 或内置 Chromium",
+            parent=run_group,
+        )
+        self.browser_combo = ComboBox(self.browser_card)
+        self.browser_combo.setFixedWidth(170)
+        self.browser_combo.setStyleSheet(
+            "QPushButton { padding-left: 14px; padding-right: 12px; text-align: left; }"
+        )
+        for key, option in self.BROWSER_OPTION_MAP.items():
+            icon = self._browser_icons.get(key)
+            text = option.get("text", key)
+            if icon:
+                # 显式使用命名参数，避免参数顺序差异导致文本被当成 QIcon
+                self.browser_combo.addItem(text, userData=key, icon=icon)
+            else:
+                self.browser_combo.addItem(text, userData=key)
+            hint = option.get("hint")
+            if hint:
+                idx = self.browser_combo.count() - 1
+                if idx >= 0:
+                    try:
+                        self.browser_combo.setItemData(idx, hint, Qt.ItemDataRole.ToolTipRole)  # PySide6
+                    except TypeError:
+                        self.browser_combo.setItemData(idx, hint)  # 兼容旧版 qfluentwidgets 签名
+        self.browser_card.hBoxLayout.addWidget(
+            self.browser_combo,
+            0,
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
+        )
+        self.browser_card.hBoxLayout.addSpacing(16)
+        self.browser_combo.currentIndexChanged.connect(self._sync_browser_icon)
         spin_width = self.target_card.suggestSpinBoxWidthForDigits(4)
         self.target_card.setSpinBoxWidth(spin_width)
         self.thread_card.setSpinBoxWidth(spin_width)
@@ -579,6 +640,7 @@ class RuntimePage(ScrollArea):
 
         run_group.addSettingCard(self.target_card)
         run_group.addSettingCard(self.thread_card)
+        run_group.addSettingCard(self.browser_card)
         run_group.addSettingCard(self.fail_stop_card)
         run_group.addSettingCard(self.pause_on_aliyun_card)
         layout.addWidget(run_group)
@@ -866,6 +928,81 @@ class RuntimePage(ScrollArea):
         except Exception:
             pass
 
+    def _load_browser_icons(self) -> Dict[str, QIcon]:
+        icons: Dict[str, QIcon] = {}
+        candidates = {
+            "edge": [
+                "assets/browser-icons/edge.png",
+                "assets/browser-icons/edge.svg",
+            ],
+            "chrome": [
+                "assets/browser-icons/chrome.png",
+                "assets/browser-icons/chrome.svg",
+            ],
+            "chromium": [
+                "assets/browser-icons/chromium.png",
+                "assets/browser-icons/chromium.svg",
+            ],
+        }
+        for key, rel_paths in candidates.items():
+            for rel_path in rel_paths:
+                try:
+                    abs_path = _get_resource_path(rel_path)
+                    icon = QIcon(abs_path)
+                    if icon and not icon.isNull():
+                        icons[key] = icon
+                        break
+                except Exception:
+                    continue
+        return icons
+
+    def _get_selected_browser_preference(self) -> List[str]:
+        idx = self.browser_combo.currentIndex()
+        key = str(self.browser_combo.itemData(idx)) if idx >= 0 else "auto"
+        option = self.BROWSER_OPTION_MAP.get(key) or self.BROWSER_OPTION_MAP["auto"]
+        prefs = option.get("preference") or []
+        return list(prefs)
+
+    def _apply_browser_preference(self, prefs: Optional[List[str]]) -> None:
+        normalized = [str(x or "").strip().lower() for x in (prefs or []) if str(x or "").strip()]
+        target_key = "auto" if not normalized else None
+        if normalized:
+            for key, option in self.BROWSER_OPTION_MAP.items():
+                option_pref = [str(p).lower() for p in option.get("preference") or []]
+                if normalized == option_pref:
+                    target_key = key
+                    break
+            if target_key is None:
+                first = normalized[0]
+                for key, option in self.BROWSER_OPTION_MAP.items():
+                    option_pref = option.get("preference") or []
+                    if option_pref and str(option_pref[0]).lower() == first:
+                        target_key = key
+                        break
+        if target_key is None:
+            target_key = "auto"
+        idx = self.browser_combo.findData(target_key)
+        if idx >= 0:
+            self.browser_combo.setCurrentIndex(idx)
+        elif self.browser_combo.count() > 0:
+            self.browser_combo.setCurrentIndex(0)
+        self._sync_browser_icon()
+
+    def _sync_browser_icon(self):
+        """让当前选中项的图标显示在下拉框按钮上"""
+        idx = self.browser_combo.currentIndex()
+        key = str(self.browser_combo.itemData(idx)) if idx >= 0 else ""
+        icon = self._browser_icons.get(key)
+        if (not icon or icon.isNull()) and idx >= 0:
+            # 兜底：用显示文本匹配图标（防止 userData 丢失）
+            text_key = (self.browser_combo.itemText(idx) or "").strip().lower()
+            icon = self._browser_icons.get(text_key)
+        if icon and not icon.isNull():
+            self.browser_combo.setIcon(icon)
+            self.browser_combo.setIconSize(QSize(20, 20))
+        else:
+            self.browser_combo.setIcon(QIcon())
+
     def _set_ai_controls_blocked(self, blocked: bool):
         try:
             self.ai_enabled_card.switchButton.blockSignals(blocked)
@@ -1151,6 +1288,7 @@ class RuntimePage(ScrollArea):
     def update_config(self, cfg: RuntimeConfig):
         cfg.target = max(1, self.target_spin.value())
         cfg.threads = max(1, self.thread_spin.value())
+        cfg.browser_preference = self._get_selected_browser_preference()
         cfg.submit_interval = (
             max(0, self.interval_min_seconds),
             max(self.interval_min_seconds, self.interval_max_seconds),
@@ -1188,6 +1326,10 @@ class RuntimePage(ScrollArea):
     def apply_config(self, cfg: RuntimeConfig):
         self.target_spin.setValue(max(1, cfg.target))
         self.thread_spin.setValue(max(1, cfg.threads))
+        try:
+            self._apply_browser_preference(getattr(cfg, "browser_preference", None))
+        except Exception:
+            pass
 
         interval_min_seconds = max(0, cfg.submit_interval[0])
         self.interval_min_seconds = interval_min_seconds
@@ -1212,6 +1354,7 @@ class RuntimePage(ScrollArea):
         self.random_ip_switch.setChecked(cfg.random_ip_enabled)
         self.random_ip_switch.blockSignals(False)
         self.random_ua_switch.setChecked(cfg.random_ua_enabled)
+        self._sync_browser_icon()
 
         active = set(cfg.random_ua_keys or [])
         for key, cb in self.ua_checkboxes.items():

@@ -27,6 +27,7 @@ MAX_THREADS = 12
 MAX_BROWSER_INSTANCES = 4
 _browser_semaphore: Optional[threading.Semaphore] = None
 _browser_semaphore_lock = threading.Lock()
+browser_preference: List[str] = []
 
 
 def _get_browser_semaphore(max_instances: int = MAX_BROWSER_INSTANCES) -> threading.Semaphore:

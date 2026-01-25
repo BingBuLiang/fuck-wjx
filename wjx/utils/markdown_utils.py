@@ -11,6 +11,9 @@ def strip_markdown(text: str) -> str:
     text = re.sub(r'!\[.*?\]\[.*?\]', '', text)
     # 移除 HTML img 标签
     text = re.sub(r'<img[^>]*/?>', '', text, flags=re.IGNORECASE)
+    # 移除仅指向本页锚点的链接，避免 Qt 输出 “link # is undefined”
+    text = re.sub(r'\[([^\]]+)\]\(#.*?\)', r'\1', text)
+    text = re.sub(r'<a[^>]+href="#[^"]*"[^>]*>(.*?)</a>', r'\1', text, flags=re.IGNORECASE | re.DOTALL)
     # 移除分隔线
     text = re.sub(r'^---+\s*$', '', text, flags=re.MULTILINE)
     # 移除删除线标记 ~~text~~ -> text

@@ -9,7 +9,7 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from wjx.utils.config import DEFAULT_RANDOM_UA_KEYS, USER_AGENT_PRESETS
+from wjx.utils.config import DEFAULT_RANDOM_UA_KEYS, USER_AGENT_PRESETS, BROWSER_PREFERENCE
 from wjx.network.random_ip import normalize_random_ip_enabled_value
 
 if TYPE_CHECKING:
@@ -103,6 +103,7 @@ class RuntimeConfig:
     url: str = ""
     target: int = 1
     threads: int = 1
+    browser_preference: List[str] = field(default_factory=list)
     submit_interval: Tuple[int, int] = (0, 0)  # (min_seconds, max_seconds)
     answer_duration: Tuple[int, int] = (0, 0)
     timed_mode_enabled: bool = False
@@ -280,10 +281,29 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
             max_seconds = min_seconds
         return min_seconds, max_seconds
 
+    def _browser_pref_list(value: Any) -> List[str]:
+        allowed = set(BROWSER_PREFERENCE) | {"edge", "chrome", "chromium"}
+        prefs: List[str] = []
+        raw_list: List[Any] = []
+        if isinstance(value, str):
+            raw_list = [value]
+        elif isinstance(value, (list, tuple)):
+            raw_list = list(value)
+        if not raw_list:
+            return prefs
+        for item in raw_list:
+            name = str(item or "").strip().lower()
+            if not name or name not in allowed:
+                continue
+            if name not in prefs:
+                prefs.append(name)
+        return prefs
+
     config = RuntimeConfig()
     config.url = str(raw.get("url") or "")
     config.target = _as_int(raw.get("target") or raw.get("target_num") or 1, 1)
     config.threads = _as_int(raw.get("threads") or raw.get("num_threads") or 1, 1)
+    config.browser_preference = _browser_pref_list(raw.get("browser_preference") or raw.get("preferred_browser"))
 
     submit_interval = raw.get("submit_interval")
     config.submit_interval = _tuple_pair(submit_interval)

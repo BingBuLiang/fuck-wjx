@@ -95,8 +95,8 @@ PANED_MIN_LEFT_WIDTH = 360
 PANED_MIN_RIGHT_WIDTH = 280
 
 # ==================== 浏览器配置 ====================
-# 浏览器选择优先级
-BROWSER_PREFERENCE = ["edge"]
+# 浏览器选择优先级（默认优先 Edge，不存在则回落到 Chrome/内置 Chromium）
+BROWSER_PREFERENCE = ["edge", "chrome", "chromium"]
 # 无头模式窗口尺寸 (宽x高)
 HEADLESS_WINDOW_SIZE = "1920,1080"
 

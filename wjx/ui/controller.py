@@ -365,6 +365,7 @@ class RunController(QObject):
         state.url = config.url
         state.target_num = config.target
         state.num_threads = min(config.threads, state.MAX_THREADS)
+        state.browser_preference = list(getattr(config, "browser_preference", []) or [])
         state.fail_threshold = fail_threshold
         state.cur_num = getattr(state, "cur_num", 0)
         state.cur_fail = getattr(state, "cur_fail", 0)

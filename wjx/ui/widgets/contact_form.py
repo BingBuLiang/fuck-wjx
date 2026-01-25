@@ -374,7 +374,7 @@ class ContactForm(StatusPollingMixin, QWidget):
     def _validate_email(self, email: str) -> bool:
         if not email:
             return True
-        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
         return re.match(pattern, email) is not None
 
     def _on_send_clicked(self):
@@ -409,9 +409,9 @@ class ContactForm(StatusPollingMixin, QWidget):
             return
 
         version_str = __VERSION__
-        full_message = f"来源：fuck-wjx v{version_str}\\n类型：{mtype}\\n"
+        full_message = f"来源：fuck-wjx v{version_str}\n类型：{mtype}\n"
         if email:
-            full_message += f"联系邮箱： {email}\\n"
+            full_message += f"联系邮箱： {email}\n"
         full_message += f"消息：{message}"
 
         api_url = CONTACT_API_URL

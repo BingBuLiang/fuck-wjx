@@ -1,5 +1,5 @@
 """联系开发者对话框"""
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QDialog, QVBoxLayout
 
 from wjx.ui.widgets.contact_form import ContactForm
@@ -31,8 +31,12 @@ class ContactDialog(QDialog):
 
         # 让对话框控制轮询生命周期，避免关闭时线程残留
         self.form.start_status_polling()
-        self.form.sendSucceeded.connect(self.accept)
+        self.form.sendSucceeded.connect(self._on_send_succeeded)
         self.form.cancelRequested.connect(self.reject)
+
+    def _on_send_succeeded(self):
+        """发送成功后延迟关闭，让InfoBar有时间显示"""
+        QTimer.singleShot(2800, self.accept)
 
     def closeEvent(self, event):
         self.form.stop_status_polling()

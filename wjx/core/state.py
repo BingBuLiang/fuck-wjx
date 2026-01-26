@@ -21,10 +21,10 @@ droplist_option_fill_texts: List[Optional[List[Optional[str]]]] = []
 multiple_option_fill_texts: List[Optional[List[Optional[str]]]] = []
 
 # 最大线程数限制（确保用户电脑流畅）
-MAX_THREADS = 12
+MAX_THREADS = 8
 
 # 浏览器实例并发限制（防止内存爆炸）
-MAX_BROWSER_INSTANCES = 4
+MAX_BROWSER_INSTANCES = 6
 _browser_semaphore: Optional[threading.Semaphore] = None
 _browser_semaphore_lock = threading.Lock()
 browser_preference: List[str] = []

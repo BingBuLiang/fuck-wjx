@@ -236,6 +236,10 @@ class DashboardPage(QWidget):
         # 新增题目
         self.add_action = Action(FluentIcon.ADD, "新增题目")
         self.command_bar.addAction(self.add_action)
+
+        # 编辑选中
+        self.edit_action = Action(FluentIcon.EDIT, "编辑选中")
+        self.command_bar.addAction(self.edit_action)
         
         # 删除选中
         self.del_action = Action(FluentIcon.DELETE, "删除选中")
@@ -316,6 +320,7 @@ class DashboardPage(QWidget):
         # CommandBar Actions
         self.select_all_action.triggered.connect(self._toggle_select_all_action)
         self.add_action.triggered.connect(self._show_add_question_dialog)
+        self.edit_action.triggered.connect(self._edit_selected_entries)
         self.del_action.triggered.connect(self._delete_selected_entries)
         self.wizard_action.triggered.connect(self._open_question_wizard)
         try:
@@ -671,6 +676,22 @@ class DashboardPage(QWidget):
 
     def _open_question_wizard(self):
         if self._run_question_wizard(self.question_page.entries, self.question_page.questions_info):
+            self._refresh_entry_table()
+
+    def _edit_selected_entries(self):
+        selected_rows = self._checked_rows()
+        if not selected_rows:
+            self._toast("请先勾选要编辑的题目", "warning")
+            return
+        entries = self.question_page.get_entries()
+        info = self.question_page.questions_info or []
+        selected_rows = [row for row in sorted(set(selected_rows)) if 0 <= row < len(entries)]
+        if not selected_rows:
+            self._toast("未找到可编辑的题目", "warning")
+            return
+        selected_entries = [entries[row] for row in selected_rows]
+        selected_info = [info[row] if row < len(info) else {} for row in selected_rows]
+        if self._run_question_wizard(selected_entries, selected_info):
             self._refresh_entry_table()
 
     def _apply_wizard_results(self, entries: List[QuestionEntry], dlg: QuestionWizardDialog) -> None:

@@ -724,6 +724,18 @@ class QuestionPage(ScrollArea):
         ai_toggle.setToolTip("开启后该题每次填写都会调用 AI")
         layout.addWidget(ai_toggle)
 
+        def _resolve_q_type() -> str:
+            idx = type_combo.currentIndex()
+            if 0 <= idx < len(TYPE_CHOICES):
+                return TYPE_CHOICES[idx][0]
+            return type_combo.currentData() or "single"
+
+        def _resolve_strategy() -> str:
+            idx = strategy_combo.currentIndex()
+            if 0 <= idx < len(STRATEGY_CHOICES):
+                return STRATEGY_CHOICES[idx][0]
+            return strategy_combo.currentData() or "random"
+
         def set_text_area_enabled(enabled: bool):
             text_area_widget.setEnabled(enabled)
 
@@ -788,10 +800,8 @@ class QuestionPage(ScrollArea):
                 slider_labels.append(value_label)
 
         def do_update_visibility():
-            type_idx = type_combo.currentIndex()
-            strategy_idx = strategy_combo.currentIndex()
-            q_type = TYPE_CHOICES[type_idx][0] if 0 <= type_idx < len(TYPE_CHOICES) else "single"
-            strategy = STRATEGY_CHOICES[strategy_idx][0] if 0 <= strategy_idx < len(STRATEGY_CHOICES) else "random"
+            q_type = _resolve_q_type()
+            strategy = _resolve_strategy()
             is_text = q_type in ("text", "multi_text")
             is_custom = strategy == "custom"
             is_single_text = q_type == "text"
@@ -832,8 +842,7 @@ class QuestionPage(ScrollArea):
                 rebuild_sliders()
 
         def on_option_changed():
-            strategy_idx = strategy_combo.currentIndex()
-            strategy = STRATEGY_CHOICES[strategy_idx][0] if 0 <= strategy_idx < len(STRATEGY_CHOICES) else "random"
+            strategy = _resolve_strategy()
             if strategy == "custom":
                 rebuild_sliders()
 
@@ -862,9 +871,9 @@ class QuestionPage(ScrollArea):
         ok_btn.clicked.connect(dialog.accept)
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            q_type = type_combo.currentData() or "single"
+            q_type = _resolve_q_type()
             option_count = max(1, option_spin.value())
-            strategy = "random" if q_type in ("matrix", "order") else (strategy_combo.currentData() or "random")
+            strategy = "random" if q_type in ("matrix", "order") else _resolve_strategy()
             rows = max(1, row_count_spin.value()) if q_type == "matrix" else 1
 
             if q_type in ("text", "multi_text"):

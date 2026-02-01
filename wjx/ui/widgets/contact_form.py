@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QPlainTextEdit,
     QFileDialog,
     QLabel,
     QScrollArea,
@@ -28,12 +27,65 @@ from qfluentwidgets import (
     Action,
     FluentIcon,
     RoundMenu,
+    PlainTextEdit,
 )
 
 from wjx.ui.widgets.status_polling_mixin import StatusPollingMixin
 from wjx.ui.helpers.image_attachments import ImageAttachmentManager
 from wjx.utils.app.config import CONTACT_API_URL
 from wjx.utils.app.version import __VERSION__
+
+
+class PasteOnlyLineEdit(LineEdit):
+    """只显示 Fluent 风格“复制 / 粘贴 / 全选”菜单的 LineEdit。"""
+
+    def __init__(self, parent=None, on_paste: Optional[Callable[[QWidget], bool]] = None):
+        super().__init__(parent)
+        self._on_paste = on_paste
+
+    def contextMenuEvent(self, event):
+        menu = RoundMenu(parent=self)
+        copy_action = Action(FluentIcon.COPY, "复制", parent=menu)
+        copy_action.setEnabled(self.hasSelectedText())
+        copy_action.triggered.connect(self.copy)
+        paste_action = Action(FluentIcon.PASTE, "粘贴", parent=menu)
+
+        def _do_paste():
+            if self._on_paste and self._on_paste(self):
+                return
+            self.paste()
+
+        menu.addAction(copy_action)
+        paste_action.triggered.connect(_do_paste)
+        menu.addAction(paste_action)
+        menu.exec(event.globalPos())
+        event.accept()
+
+
+class PasteOnlyPlainTextEdit(PlainTextEdit):
+    """只显示 Fluent 风格“复制 / 粘贴 / 全选”菜单的 PlainTextEdit，兼容外部粘贴处理。"""
+
+    def __init__(self, parent=None, on_paste: Optional[Callable[[QWidget], bool]] = None):
+        super().__init__(parent)
+        self._on_paste = on_paste
+
+    def contextMenuEvent(self, event):
+        menu = RoundMenu(parent=self)
+        copy_action = Action(FluentIcon.COPY, "复制", parent=menu)
+        copy_action.setEnabled(self.textCursor().hasSelection())
+        copy_action.triggered.connect(self.copy)
+        paste_action = Action(FluentIcon.PASTE, "粘贴", parent=menu)
+
+        def _do_paste():
+            if self._on_paste and self._on_paste(self):
+                return
+            self.paste()
+
+        menu.addAction(copy_action)
+        paste_action.triggered.connect(_do_paste)
+        menu.addAction(paste_action)
+        menu.exec(event.globalPos())
+        event.accept()
 
 
 class ContactForm(StatusPollingMixin, QWidget):
@@ -73,11 +125,9 @@ class ContactForm(StatusPollingMixin, QWidget):
         form_layout.setContentsMargins(0, 0, 0, 0)
         self.email_label = BodyLabel("您的邮箱（选填，如果希望收到回复的话）：", self)
         form_layout.addWidget(self.email_label)
-        self.email_edit = LineEdit(self)
+        self.email_edit = PasteOnlyLineEdit(self)
         self.email_edit.setPlaceholderText("name@example.com")
         form_layout.addWidget(self.email_edit)
-        # 邮箱输入框：右键只保留 Fluent 风格“粘贴”
-        self._install_paste_menu(self.email_edit)
 
         form_layout.addWidget(BodyLabel("消息类型（可选）：", self))
         self.type_combo = ComboBox(self)
@@ -105,13 +155,11 @@ class ContactForm(StatusPollingMixin, QWidget):
 
         self.message_label = BodyLabel("请输入您的消息：", self)
         form_layout.addWidget(self.message_label)
-        self.message_edit = QPlainTextEdit(self)
+        self.message_edit = PasteOnlyPlainTextEdit(self, self._on_context_paste)
         self.message_edit.setPlaceholderText("请描述问题、需求或留言…")
         self.message_edit.setMinimumHeight(180)
         form_layout.addWidget(self.message_edit, 1)
         self.message_edit.installEventFilter(self)
-        # 消息输入框：右键只保留 Fluent 风格“粘贴”，并兼容图片粘贴
-        self._install_paste_menu(self.message_edit, self._on_context_paste)
 
         # 图片附件区域
         attachments_box = QVBoxLayout()
@@ -207,25 +255,6 @@ class ContactForm(StatusPollingMixin, QWidget):
             if self._handle_clipboard_image():
                 return True
         return False
-
-    def _install_paste_menu(self, target: QWidget, on_paste: Optional[Callable[[QWidget], bool]] = None):
-        """为目标输入控件挂载仅含“粘贴”的圆角菜单。"""
-        target.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-
-        def _show_menu(pos):
-            menu = RoundMenu(parent=target)
-            paste_action = Action(FluentIcon.PASTE, "粘贴", parent=menu)
-
-            def _do_paste():
-                if on_paste and on_paste(target):
-                    return
-                target.paste()
-
-            paste_action.triggered.connect(_do_paste)
-            menu.addAction(paste_action)
-            menu.exec(target.mapToGlobal(pos))
-
-        target.customContextMenuRequested.connect(_show_menu)
 
     def showEvent(self, event):
         super().showEvent(event)

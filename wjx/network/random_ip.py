@@ -542,6 +542,31 @@ def _mask_card_code(code: str) -> str:
     return f"{code[:3]}***{code[-3:]}"
 
 
+def _summarize_http_response(response: Any) -> str:
+    """提取关键信息用于日志，避免长篇输出。"""
+    try:
+        status = f"HTTP {getattr(response, 'status_code', '?')}"
+        reason = getattr(response, "reason", "") or ""
+        headers = getattr(response, "headers", {}) or {}
+        interesting_keys = ("cf-ray", "server", "content-type", "content-length", "date")
+        header_parts = []
+        for key in interesting_keys:
+            val = headers.get(key) or headers.get(key.title())
+            if val:
+                header_parts.append(f"{key}={val}")
+        header_text = "; ".join(header_parts) if header_parts else "no-key-headers"
+        body = ""
+        try:
+            body = (response.text or "").strip()
+        except Exception:
+            body = "<unreadable body>"
+        if body and len(body) > 300:
+            body = body[:300] + "...(truncated)"
+        return f"{status} {reason}; headers: {header_text}; body: {body or '<empty>'}"
+    except Exception as exc:  # pragma: no cover
+        return f"无法摘要响应: {exc}"
+
+
 def _b64url_decode(data: str) -> bytes:
     padding = "=" * (-len(data) % 4)
     return base64.urlsafe_b64decode((data + padding).encode("utf-8"))
@@ -862,16 +887,16 @@ def _validate_card(card_code: str) -> tuple[bool, Optional[int]]:
         return False, None
 
     if response.status_code == 400:
-        logging.warning("卡密验证失败：卡密无效或已被使用")
+        logging.warning(f"卡密验证失败：卡密无效或已被使用 | {_summarize_http_response(response)}")
         return False, None
     if not response.ok:
-        logging.error(f"卡密验证接口异常: HTTP {response.status_code}")
+        logging.error(f"卡密验证接口异常: {_summarize_http_response(response)}")
         return False, None
 
     try:
         data = response.json()
     except Exception as exc:
-        logging.error(f"解析卡密验证响应失败: {exc}")
+        logging.error(f"解析卡密验证响应失败: {exc} | {_summarize_http_response(response)}")
         return False, None
 
     token = str(data.get("token") or "").strip()

@@ -85,8 +85,6 @@ def submit(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None)
     settle_delay = 0 if fast_mode else SUBMIT_CLICK_SETTLE_DELAY
     pre_submit_delay = 0 if fast_mode else SUBMIT_INITIAL_DELAY
 
-    state.last_submit_had_captcha = False
-
     if pre_submit_delay > 0 and _sleep_with_stop(stop_signal, pre_submit_delay):
         return
     if stop_signal and stop_signal.is_set():
@@ -214,63 +212,6 @@ def _page_looks_like_wjx_questionnaire(driver: BrowserDriver) -> bool:
         return bool(driver.execute_script(script))
     except Exception:
         return False
-
-
-def _wait_for_post_submit_outcome(
-    driver: BrowserDriver,
-    initial_url: str,
-    max_wait: float,
-    poll_interval: float,
-    stop_signal: Optional[threading.Event] = None,
-) -> Tuple[Literal["complete", "followup", "unknown"], str]:
-    """
-    等待提交后的结果：
-    - complete：进入完成页
-    - followup：按选项分流跳转到下一份问卷
-    - unknown：未识别
-    """
-    deadline = time.time() + max(0.0, float(max_wait or 0.0))
-    initial_norm = _normalize_url_for_compare(initial_url)
-    while time.time() < deadline:
-        if stop_signal and stop_signal.is_set():
-            break
-        try:
-            current_url = driver.current_url
-        except Exception:
-            current_url = ""
-        current_lower = str(current_url).lower()
-        if "complete" in current_lower:
-            return "complete", str(current_url)
-        try:
-            if duration_control.is_survey_completion_page(driver):
-                return "complete", str(current_url)
-        except Exception:
-            pass
-
-        current_norm = _normalize_url_for_compare(str(current_url))
-        if current_norm and current_norm != initial_norm:
-            if _looks_like_wjx_survey_url(current_norm) and _page_looks_like_wjx_questionnaire(driver):
-                return "followup", str(current_url)
-
-        time.sleep(max(0.02, float(poll_interval or 0.1)))
-
-    try:
-        final_url = str(driver.current_url)
-    except Exception:
-        final_url = ""
-
-    # 最后再检查一次 URL 是否包含 complete
-    if "complete" in final_url.lower():
-        return "complete", final_url
-
-    # 也检查一下页面内容
-    try:
-        if duration_control.is_survey_completion_page(driver):
-            return "complete", final_url
-    except Exception:
-        pass
-
-    return "unknown", final_url
 
 
 def _is_device_quota_limit_page(driver: BrowserDriver) -> bool:

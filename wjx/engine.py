@@ -47,7 +47,6 @@ from wjx.core.engine.submission import (
     _looks_like_wjx_survey_url,
     _normalize_url_for_compare,
     _page_looks_like_wjx_questionnaire,
-    _wait_for_post_submit_outcome,
     submit,
 )
 from wjx.core.survey.parser import (
@@ -113,7 +112,6 @@ __all__ = [
     "_is_wjx_domain",
     "_looks_like_wjx_survey_url",
     "_page_looks_like_wjx_questionnaire",
-    "_wait_for_post_submit_outcome",
     "_is_device_quota_limit_page",
     "run",
     "TYPE_OPTIONS",

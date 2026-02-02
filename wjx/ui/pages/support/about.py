@@ -1,20 +1,17 @@
 """关于页面"""
 import threading
-import subprocess
 import webbrowser
 import os
 import sys
 import requests
-from typing import Optional
 from datetime import datetime
 
-from PySide6.QtCore import QTimer, Signal, Qt
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QApplication,
     QSizePolicy,
 )
 from qfluentwidgets import (
@@ -30,8 +27,6 @@ from qfluentwidgets import (
     InfoBar,
     InfoBarIcon,
     InfoBarPosition,
-    MessageBox,
-    ProgressBar,
     ImageLabel,
     CardWidget,
     StrongBodyLabel,
@@ -48,104 +43,6 @@ def get_resource_path(relative_path: str) -> str:
     if meipass:
         return os.path.join(meipass, relative_path)
     return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))), relative_path)
-
-
-class DownloadProgressDialog(MessageBox):
-    """下载进度对话框"""
-    
-    _progressUpdated = Signal(int, int)  # downloaded, total
-    _downloadFinished = Signal(str)  # file_path or empty on error
-    
-    def __init__(self, parent=None):
-        super().__init__("正在下载更新", "", parent)
-        self._downloaded_file = None
-        self._last_downloaded = 0
-        self._last_time = datetime.now()
-        self._speed = 0.0
-        self._progressUpdated.connect(self._update_progress)
-        self._downloadFinished.connect(self._on_download_finished)
-        
-        # 隐藏默认按钮和按钮区域
-        self.yesButton.hide()
-        self.cancelButton.hide()
-        self.buttonGroup.hide()
-        
-        # 清除默认内容
-        self.textLayout.removeWidget(self.contentLabel)
-        self.contentLabel.hide()
-        
-        # 进度信息
-        self.status_label = BodyLabel("正在连接服务器...", self)
-        self.textLayout.addWidget(self.status_label)
-        
-        # 进度条
-        self.progress_bar = ProgressBar(self)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFixedWidth(400)
-        self.textLayout.addWidget(self.progress_bar)
-        
-        # 进度文本
-        self.progress_label = BodyLabel("0%", self)
-        self.progress_label.setStyleSheet("color: #888;")
-        self.textLayout.addWidget(self.progress_label)
-        
-        # 调整对话框高度
-        self.widget.setFixedHeight(160)
-    
-    def _format_speed(self, speed: float) -> str:
-        if speed >= 1024 * 1024:
-            return f"{speed / 1024 / 1024:.1f} MB/s"
-        elif speed >= 1024:
-            return f"{speed / 1024:.1f} KB/s"
-        return f"{speed:.0f} B/s"
-    
-    def _update_progress(self, downloaded: int, total: int):
-        now = datetime.now()
-        elapsed = (now - self._last_time).total_seconds()
-        if elapsed >= 0.5:  # 每0.5秒更新一次速度
-            self._speed = (downloaded - self._last_downloaded) / elapsed
-            self._last_downloaded = downloaded
-            self._last_time = now
-        
-        speed_str = self._format_speed(self._speed)
-        if total > 0:
-            percent = int(downloaded * 100 / total)
-            self.progress_bar.setValue(percent)
-            self.progress_label.setText(f"{percent}% ({downloaded / 1024 / 1024:.1f} MB / {total / 1024 / 1024:.1f} MB)")
-            self.status_label.setText(f"正在下载... {speed_str}")
-        else:
-            self.status_label.setText(f"正在下载... ({downloaded / 1024 / 1024:.1f} MB) {speed_str}")
-    
-    def _on_download_finished(self, file_path: str):
-        self._downloaded_file = file_path
-        if file_path:
-            self.progress_bar.setValue(100)
-            self.status_label.setText("下载完成！")
-            self.progress_label.setText("100%")
-        else:
-            self.progress_bar.error()
-            self.status_label.setText("下载失败")
-        QTimer.singleShot(500, self.accept)
-    
-    def start_download(self, update_info: dict):
-        """开始下载"""
-        def _do_download():
-            try:
-                from wjx.utils.update.updater import UpdateManager
-                file_path = UpdateManager.download_update(
-                    update_info["download_url"],
-                    update_info["file_name"],
-                    progress_callback=lambda d, t: self._progressUpdated.emit(d, t)
-                )
-                self._downloadFinished.emit(file_path or "")
-            except Exception:
-                self._downloadFinished.emit("")
-        
-        threading.Thread(target=_do_download, daemon=True).start()
-    
-    def get_downloaded_file(self) -> Optional[str]:
-        return self._downloaded_file
 
 
 class AboutPage(ScrollArea):
@@ -169,8 +66,6 @@ class AboutPage(ScrollArea):
         self.view.setStyleSheet("QWidget#view { background: transparent; }")
         
         self._checking_update = False
-        self._progress_dlg: Optional[DownloadProgressDialog] = None
-        self._downloaded_file_result: Optional[str] = None
         
         self._build_ui()
 
@@ -357,45 +252,6 @@ class AboutPage(ScrollArea):
             show_update_notification(win)
         else:
             InfoBar.success("", f"当前已是最新版本 v{__VERSION__}", parent=win, position=InfoBarPosition.TOP, duration=3000)
-
-    def _start_download(self, update_info: dict):
-        """开始下载更新并显示进度"""
-        win = self.window()
-        self._progress_dlg = DownloadProgressDialog(win)
-        self._progress_dlg.finished.connect(self._on_progress_dialog_closed)
-        self._progress_dlg.start_download(update_info)
-        self._progress_dlg.show()
-
-    def _on_progress_dialog_closed(self):
-        """进度对话框关闭后处理"""
-        if self._progress_dlg is None:
-            return
-        self._downloaded_file_result = self._progress_dlg.get_downloaded_file()
-        self._progress_dlg.deleteLater()
-        self._progress_dlg = None
-        QTimer.singleShot(200, self._show_download_result_delayed)
-
-    def _show_download_result_delayed(self):
-        """延迟显示下载结果"""
-        self._show_download_result(self._downloaded_file_result)
-
-    def _show_download_result(self, downloaded_file: Optional[str]):
-        """显示下载结果"""
-        win = self.window()
-        if downloaded_file:
-            from wjx.utils.update.updater import UpdateManager
-            box = MessageBox("更新完成", f"新版本已下载到:\n{downloaded_file}\n\n是否立即运行新版本？", win)
-            box.yesButton.setText("立即运行")
-            box.cancelButton.setText("稍后")
-            UpdateManager.schedule_running_executable_deletion(downloaded_file)
-            if box.exec():
-                try:
-                    subprocess.Popen([downloaded_file])
-                    QApplication.quit()
-                except Exception as exc:
-                    InfoBar.error("", f"启动失败: {exc}", parent=win, position=InfoBarPosition.TOP, duration=3000)
-        else:
-            InfoBar.error("", "下载失败，请稍后重试", parent=win, position=InfoBarPosition.TOP, duration=3000)
 
     def _on_update_error(self, error_msg: str):
         """处理更新检查错误（在主线程中执行）"""

@@ -306,17 +306,6 @@ class UpdateManager:
                 return None
 
     @staticmethod
-    def restart_application():
-        """重启应用程序（开发模式下脚本重启）"""
-        try:
-            python_exe = sys.executable
-            script_path = os.path.abspath(__file__)
-            subprocess.Popen([python_exe, script_path])
-            sys.exit(0)
-        except Exception as exc:
-            logging.error(f"重启应用失败: {exc}")
-
-    @staticmethod
     def cleanup_old_executables(exclude_path: str):
         """删除目录下旧版本的 exe 文件（保留 exclude_path 本体）。"""
         if not exclude_path:

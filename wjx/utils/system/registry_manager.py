@@ -27,12 +27,6 @@ class RegistryManager:
     REGISTRY_KEY_LIMIT = "RandomIPQuotaLimit"
     
     @staticmethod
-    def _get_registry_hkey() -> Optional[int]:
-        if winreg is None:
-            return None
-        return winreg.HKEY_CURRENT_USER
-    
-    @staticmethod
     def read_submit_count() -> int:
         if winreg is None:
             return 0
@@ -72,13 +66,6 @@ class RegistryManager:
         new_count = current + 1
         RegistryManager.write_submit_count(new_count)
         return new_count
-    
-    @staticmethod
-    def reset_submit_count() -> bool:
-        result = RegistryManager.write_submit_count(0)
-        if result:
-            logging.info("随机IP提交计数已重置为 0")
-        return result
     
     @staticmethod
     def is_quota_unlimited() -> bool:

@@ -167,7 +167,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 else:
                     _reset_bad_proxy_streak()
 
-            ua_value, ua_label = _select_user_agent_for_session()
+            ua_value, _ = _select_user_agent_for_session()
 
             # 获取信号量，限制同时运行的浏览器实例数量
             if not sem_acquired:
@@ -257,7 +257,6 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 if should_stop_after_quota:
                     break
                 continue
-            followup_hops = 0
             visited_urls: Set[str] = set()
             try:
                 visited_urls.add(_normalize_url_for_compare(driver.current_url))
@@ -265,7 +264,6 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 visited_urls.add(_normalize_url_for_compare(state.url))
 
             while True:
-                initial_url = driver.current_url
                 if stop_signal.is_set():
                     break
                 finished = brush(driver, stop_signal=stop_signal)

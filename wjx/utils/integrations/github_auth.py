@@ -225,31 +225,6 @@ class GitHubAuth:
         except Exception:
             pass
     
-    def verify_token(self) -> bool:
-        """验证 token 是否有效"""
-        if not self._access_token:
-            return False
-        
-        try:
-            resp = requests.get(
-                GITHUB_USER_API_URL,
-                headers={
-                    "Authorization": f"Bearer {self._access_token}",
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28"
-                },
-                timeout=30
-            )
-            if resp.status_code == 200:
-                self._user_info = resp.json()
-                self._save_token()
-                return True
-            else:
-                self._clear_token()
-                return False
-        except Exception:
-            return False
-    
     def logout(self):
         """登出"""
         self._clear_token()

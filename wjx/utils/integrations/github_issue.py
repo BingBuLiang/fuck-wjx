@@ -14,7 +14,6 @@ from wjx.utils.app.version import GITHUB_OWNER, GITHUB_REPO
 
 # GitHub API 配置
 GITHUB_ISSUES_API_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/issues"
-GITHUB_LABELS_API_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/labels"
 
 
 class GitHubIssueError(Exception):
@@ -79,36 +78,6 @@ def create_issue(
             raise GitHubIssueError(f"创建 Issue 失败: {resp.status_code}")
     except requests.RequestException as e:
         raise GitHubIssueError(f"网络请求失败: {e}")
-
-
-def get_repo_labels(access_token: str) -> List[Dict[str, Any]]:
-    """
-    获取仓库的标签列表
-    
-    Args:
-        access_token: GitHub access token
-        
-    Returns:
-        标签列表
-    """
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28"
-    }
-    
-    try:
-        resp = requests.get(
-            GITHUB_LABELS_API_URL,
-            headers=headers,
-            timeout=30
-        )
-        
-        if resp.status_code == 200:
-            return resp.json()
-        return []
-    except Exception:
-        return []
 
 
 # 预定义的 Issue 类型

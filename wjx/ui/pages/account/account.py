@@ -28,7 +28,6 @@ from qfluentwidgets import (
     AvatarWidget,
     IconWidget,
     MessageBox,
-    StateToolTip,
 )
 
 from wjx.utils.integrations.github_auth import (

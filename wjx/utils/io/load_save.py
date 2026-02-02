@@ -124,7 +124,6 @@ class RuntimeConfig:
     ai_model: str = ""
     ai_system_prompt: str = ""
     question_entries: List[QuestionEntry] = field(default_factory=list)
-    layout_hint: Optional[int] = None  # e.g. splitter position
 
 
 def serialize_question_entry(entry: QuestionEntry) -> Dict[str, Any]:
@@ -346,7 +345,6 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     config.random_ua_keys = _filter_valid_user_agent_keys(selected_ua_keys or [])
     config.fail_stop_enabled = bool(raw.get("fail_stop_enabled", True))
     config.pause_on_aliyun_captcha = bool(raw.get("pause_on_aliyun_captcha", True))
-    config.layout_hint = raw.get("layout_hint", raw.get("paned_position"))
 
     ai_keys = {
         "ai_enabled",

@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import time
 import re
-from dataclasses import dataclass
 from typing import Callable, Optional
 
 from wjx.network.browser_driver import BrowserDriver
@@ -36,12 +35,6 @@ _ENDED_KEYWORDS = (
     "已暂停",
     "本次答题已结束",
 )
-
-
-@dataclass
-class TimedModeState:
-    enabled: bool = False
-    refresh_interval: float = DEFAULT_REFRESH_INTERVAL
 
 
 def _extract_body_text(driver: BrowserDriver) -> str:

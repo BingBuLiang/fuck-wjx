@@ -12,29 +12,6 @@ from typing import Any, Callable, Deque, List, Optional
 from wjx.utils.app.config import LOG_BUFFER_CAPACITY, LOG_FORMAT, LOG_DIR_NAME
 
 
-LOG_LIGHT_THEME = {
-    "background": "#ffffff",
-    "foreground": "#1e1e1e",
-    "insert": "#1e1e1e",
-    "select_bg": "#cfe8ff",
-    "select_fg": "#1e1e1e",
-    "highlight_bg": "#d9d9d9",
-    "highlight_color": "#a6a6a6",
-    "info_color": "#1e1e1e",
-}
-
-LOG_DARK_THEME = {
-    "background": "#292929",
-    "foreground": "#ffffff",
-    "insert": "#ffffff",
-    "select_bg": "#333333",
-    "select_fg": "#ffffff",
-    "highlight_bg": "#1e1e1e",
-    "highlight_color": "#3c3c3c",
-    "info_color": "#f0f0f0",
-}
-
-
 ORIGINAL_STDOUT = sys.stdout
 ORIGINAL_STDERR = sys.stderr
 ORIGINAL_EXCEPTHOOK = sys.excepthook

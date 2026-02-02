@@ -125,11 +125,6 @@ _CFG = {
     "e": "aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL0NoYXJsZXNQaWthY2h1L2ZyZWVwcm94eS9tYXN0ZXIvcHJveGllcy5qc29u",
 }
 
-# ==================== UI 界面配置 ====================
-# 左右面板最小宽度
-PANED_MIN_LEFT_WIDTH = 360
-PANED_MIN_RIGHT_WIDTH = 280
-
 # ==================== 浏览器配置 ====================
 # 浏览器选择优先级（默认优先 Edge，不存在则回落到 Chrome/内置 Chromium）
 BROWSER_PREFERENCE = ["edge", "chrome", "chromium"]
@@ -177,7 +172,6 @@ LOG_REFRESH_INTERVAL_MS = 1000
 
 # ==================== 资源路径配置 ====================
 APP_ICON_RELATIVE_PATH = "icon.ico"
-QQ_GROUP_QR_RELATIVE_PATH = os.path.join("assets", "QQ_group.jpg")
 
 # ==================== 提交行为配置 ====================
 # 提交前初始延迟（秒）
@@ -188,9 +182,6 @@ SUBMIT_CLICK_SETTLE_DELAY = 0.25
 POST_SUBMIT_URL_MAX_WAIT = 0.5
 # 提交后 URL 变化检测轮询间隔（秒）
 POST_SUBMIT_URL_POLL_INTERVAL = 0.1
-# 提交后若按选项跳转到“下一份问卷”，最多自动跟随的问卷数量
-# 说明：部分问卷会在最后一题按选项分流到新的问卷链接；此处限制用于防止异常循环跳转。
-POST_SUBMIT_FOLLOWUP_MAX_HOPS = 5
 # 判定提交成功后，关闭浏览器实例前的缓冲等待（秒）
 # 目的：避免过早关闭页面导致提交请求尚未发送/尚未完成就被中断。
 POST_SUBMIT_CLOSE_GRACE_SECONDS = 1.2
@@ -198,11 +189,9 @@ POST_SUBMIT_CLOSE_GRACE_SECONDS = 1.2
 STOP_FORCE_WAIT_SECONDS = 1.5
 
 # ==================== 代理配置 ====================
-PROXY_LIST_FILENAME = "ips.txt"
 PROXY_MAX_PROXIES = 80
 PROXY_HEALTH_CHECK_URL = "https://www.wjx.cn"
 PROXY_HEALTH_CHECK_TIMEOUT = 15
-PROXY_HEALTH_CHECK_MAX_DURATION = 45
 _RANDOM_IP_API_ENV_KEY = "RANDOM_IP_API_URL"
 PROXY_REMOTE_URL = _resolve_env_value(_RANDOM_IP_API_ENV_KEY, _r(_CFG["a"]))
 
@@ -211,7 +200,6 @@ CONTACT_API_URL = _resolve_env_value("CONTACT_API_URL", _r(_CFG["b"]))
 CARD_VALIDATION_ENDPOINT = _resolve_env_value("CARD_VALIDATION_ENDPOINT", _r(_CFG["c"]))
 STATUS_ENDPOINT = _resolve_env_value("STATUS_ENDPOINT", _r(_CFG["d"]))
 PIKACHU_PROXY_API = _resolve_env_value("PIKACHU_PROXY_API", _r(_CFG["e"]))
-CARD_TOKEN_SECRET = _resolve_env_value("CARD_TOKEN_SECRET", "")
 
 
 # ==================== 时长控制配置 ====================

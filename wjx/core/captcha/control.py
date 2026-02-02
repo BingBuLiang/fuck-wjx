@@ -29,18 +29,6 @@ def _trigger_aliyun_captcha_stop(
             return
         state._aliyun_captcha_stop_triggered = True
 
-    try:
-        state._resume_after_aliyun_captcha_stop = True
-        state._resume_snapshot = {
-            "url": state.url,
-            "target": state.target_num,
-            "cur_num": state.cur_num,
-            "cur_fail": state.cur_fail,
-        }
-    except Exception:
-        state._resume_after_aliyun_captcha_stop = True
-        state._resume_snapshot = {}
-
     logging.warning("检测到阿里云智能验证，已触发全局暂停。")
 
     message = (

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import random
-import subprocess
 import sys
 import time
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
@@ -257,26 +256,11 @@ class PlaywrightDriver:
         except Exception:
             pass
 
-    def set_window_position(self, x: int, y: int) -> None:
-        try:
-            self._page.evaluate(f"window.moveTo({x}, {y});")
-        except Exception:
-            pass
-
-    def maximize_window(self) -> None:
-        try:
-            self._page.set_viewport_size({"width": 1280, "height": 900})
-        except Exception:
-            pass
-
     def refresh(self) -> None:
         try:
             self._page.reload(wait_until="domcontentloaded")
         except Exception:
             pass
-
-    def execute_cdp_cmd(self, *_args, **_kwargs):
-        return None
 
     def quit(self) -> None:
         try:
@@ -319,56 +303,6 @@ def list_browser_pids() -> Set[int]:
     return pids
 
 
-def kill_processes_by_pid(pids: Set[int]) -> int:
-    unique_pids = [int(p) for p in sorted(set(pids or [])) if int(p) > 0]
-    if not unique_pids:
-        return 0
-
-    attempted = 0
-
-    def _chunk(seq: List[int], size: int) -> List[List[int]]:
-        return [seq[i : i + size] for i in range(0, len(seq), size)]
-
-    if sys.platform.startswith("win"):
-        chunk_size = 24
-        for batch in _chunk(unique_pids, chunk_size):
-            if not batch:
-                continue
-            args = ["taskkill", "/T", "/F"]
-            for pid in batch:
-                args.extend(["/PID", str(pid)])
-            try:
-                subprocess.run(
-                    args,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                    timeout=6,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-                attempted += len(batch)
-            except Exception as exc:
-                logging.debug("taskkill 批量清理失败: %s", exc, exc_info=True)
-        if attempted:
-            logging.info("按 PID 已请求终止 %d 个浏览器进程", attempted)
-        return attempted
-
-    killed = 0
-    try:
-        import psutil
-    except Exception:
-        return 0
-    for pid in unique_pids:
-        try:
-            psutil.Process(pid).kill()
-            killed += 1
-        except Exception as exc:
-            logging.debug("按 PID 清理浏览器失败 pid=%s: %s", pid, exc, exc_info=True)
-    if killed:
-        logging.info("按 PID 共终止 %d 个浏览器进程", killed)
-    return killed
-
-
 def graceful_terminate_process_tree(pids: Set[int], wait_seconds: float = 3.0) -> int:
     """
     尝试温和终止指定 PID 及其子进程，避免使用 taskkill。
@@ -408,7 +342,7 @@ def graceful_terminate_process_tree(pids: Set[int], wait_seconds: float = 3.0) -
         except Exception:
             pass
 
-    gone, alive = psutil.wait_procs(procs, timeout=max(0.1, float(wait_seconds or 0.0)))
+    _, alive = psutil.wait_procs(procs, timeout=max(0.1, float(wait_seconds or 0.0)))
     for proc in alive:
         try:
             proc.kill()
@@ -439,55 +373,6 @@ def _collect_process_tree(root_pid: Optional[int]) -> Set[int]:
     except Exception:
         pass
     return pids
-
-
-def kill_playwright_browser_processes() -> None:
-    """Kill Playwright-launched browsers by checking cmdline indicators."""
-    try:
-        import psutil
-    except ImportError:
-        logging.warning("psutil 未安装，无法快速清理浏览器进程")
-        return
-
-    killed_count = 0
-    playwright_indicators = [
-        "playwright",
-        "ms-playwright",
-        "playwright_chromium",
-        "playwright_firefox",
-        "playwright_webkit",
-    ]
-    browser_names = {"msedge.exe", "chrome.exe", "chromium.exe"}
-    indicators = [x.lower() for x in playwright_indicators if x]
-
-    try:
-        for proc in psutil.process_iter(["pid", "name"]):
-            try:
-                proc_info = proc.info or {}
-                proc_name = (proc_info.get("name") or "").lower()
-                if proc_name not in browser_names:
-                    continue
-                try:
-                    cmdline = proc.cmdline()
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                    continue
-                if not cmdline:
-                    continue
-                cmdline_str = " ".join(cmdline).lower()
-                if not any(ind in cmdline_str for ind in indicators):
-                    continue
-                try:
-                    proc.kill()
-                    killed_count += 1
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                    continue
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                continue
-    except Exception as exc:
-        logging.warning("清理浏览器进程时出错: %s", exc)
-
-    if killed_count > 0:
-        logging.info("共终止 %d 个 Playwright 浏览器进程", killed_count)
 
 
 def create_playwright_driver(
@@ -535,7 +420,6 @@ def create_playwright_driver(
             browser_instance = pw.chromium.launch(**launch_args)
 
             context_args: Dict[str, Any] = {}
-            proxy_for_logging = normalized_proxy
             if normalized_proxy:
                 proxy_settings: Dict[str, Any] = {"server": normalized_proxy}
                 try:
@@ -545,14 +429,13 @@ def create_playwright_driver(
                         if parsed.port:
                             server += f":{parsed.port}"
                         proxy_settings["server"] = server
-                        proxy_for_logging = server
                     if parsed.username:
                         proxy_settings["username"] = parsed.username
                     if parsed.password:
                         proxy_settings["password"] = parsed.password
                 except Exception:
-                    proxy_for_logging = normalized_proxy
-                
+                    pass
+
                 if get_proxy_source() in (PROXY_SOURCE_DEFAULT, PROXY_SOURCE_CUSTOM) and "username" not in proxy_settings:
                     try:
                         decoded = base64.b64decode(_PA).decode("utf-8")

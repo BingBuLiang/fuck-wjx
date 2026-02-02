@@ -43,7 +43,6 @@ STATUS_TIMEOUT_SECONDS = 5
 _quota_limit_dialog_shown = False
 _proxy_api_url_override: Optional[str] = None
 _proxy_area_code_override: Optional[str] = None
-_CUSTOM_PROXY_CONFIG_FILENAME = "custom_ip.json"
 # 代理源常量
 PROXY_SOURCE_DEFAULT = "default"  # 默认代理源
 PROXY_SOURCE_PIKACHU = "pikachu"  # 皮卡丘代理站
@@ -258,70 +257,6 @@ def _get_runtime_directory(base_dir: Optional[str] = None) -> str:
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(current_dir)
     return parent_dir or current_dir
-
-
-def get_custom_proxy_api_config_path(base_dir: Optional[str] = None) -> str:
-    runtime_dir = _get_runtime_directory(base_dir)
-    return os.path.join(runtime_dir, _CUSTOM_PROXY_CONFIG_FILENAME)
-
-
-def _extract_custom_proxy_api(data: Any) -> str:
-    if isinstance(data, dict):
-        raw = data.get("random_proxy_api") or data.get("api") or data.get("url")
-    else:
-        raw = data
-    try:
-        return str(raw).strip()
-    except Exception:
-        return ""
-
-
-def load_custom_proxy_api_config(
-    config_path: Optional[str] = None,
-    base_dir: Optional[str] = None,
-) -> str:
-    path = os.fspath(config_path) if config_path else get_custom_proxy_api_config_path(base_dir)
-    try:
-        with open(path, "r", encoding="utf-8") as fp:
-            data = json.load(fp)
-    except FileNotFoundError:
-        return ""
-    except Exception as exc:
-        logging.error(f"加载自定义随机IP接口失败: {exc}")
-        return ""
-    api_value = _extract_custom_proxy_api(data)
-    cleaned_api = _validate_proxy_api_url(api_value)
-    set_proxy_api_override(cleaned_api)
-    return cleaned_api
-
-
-def save_custom_proxy_api_config(
-    api_url: Optional[str],
-    config_path: Optional[str] = None,
-    base_dir: Optional[str] = None,
-) -> str:
-    path = os.fspath(config_path) if config_path else get_custom_proxy_api_config_path(base_dir)
-    cleaned = _validate_proxy_api_url(api_url)
-    if not cleaned:
-        return reset_custom_proxy_api_config(config_path=path)
-    effective = set_proxy_api_override(cleaned)
-    payload = {"random_proxy_api": cleaned}
-    with open(path, "w", encoding="utf-8") as fp:
-        json.dump(payload, fp, ensure_ascii=False, indent=2)
-    return effective
-
-
-def reset_custom_proxy_api_config(
-    config_path: Optional[str] = None,
-    base_dir: Optional[str] = None,
-) -> str:
-    path = os.fspath(config_path) if config_path else get_custom_proxy_api_config_path(base_dir)
-    try:
-        if os.path.exists(path):
-            os.remove(path)
-    except Exception:
-        logging.debug("删除自定义随机IP配置失败", exc_info=True)
-    return set_proxy_api_override(None)
 
 
 def get_status() -> Any:
@@ -847,11 +782,6 @@ def refresh_ip_counter_display(gui: Any):
     # 达到上限时自动关闭随机IP开关
     if not unlimited and not custom_api and count >= limit:
         _set_random_ip_enabled(gui, False)
-
-
-def reset_ip_counter(gui: Any = None):
-    RegistryManager.reset_submit_count()
-    refresh_ip_counter_display(gui)
 
 
 def _validate_card(card_code: str) -> tuple[bool, Optional[int]]:

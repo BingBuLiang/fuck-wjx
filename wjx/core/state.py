@@ -39,13 +39,6 @@ def _get_browser_semaphore(max_instances: int = MAX_BROWSER_INSTANCES) -> thread
         return _browser_semaphore
 
 
-def _reset_browser_semaphore(max_instances: int = MAX_BROWSER_INSTANCES) -> None:
-    """重置信号量（任务开始时调用）"""
-    global _browser_semaphore
-    with _browser_semaphore_lock:
-        _browser_semaphore = threading.Semaphore(max_instances)
-
-
 target_num = 1
 fail_threshold = 1
 num_threads = 1
@@ -65,14 +58,11 @@ random_proxy_ip_enabled = False
 proxy_ip_pool: List[str] = []
 random_user_agent_enabled = False
 user_agent_pool_keys: List[str] = []
-last_submit_had_captcha = False
 _aliyun_captcha_stop_triggered = False
 _aliyun_captcha_stop_lock = threading.Lock()
 _aliyun_captcha_popup_shown = False
 _target_reached_stop_triggered = False
 _target_reached_stop_lock = threading.Lock()
-_resume_after_aliyun_captcha_stop = False
-_resume_snapshot: Dict[str, Any] = {}
 pause_on_aliyun_captcha = True
 _consecutive_bad_proxy_count = 0
 MAX_CONSECUTIVE_BAD_PROXIES = 5

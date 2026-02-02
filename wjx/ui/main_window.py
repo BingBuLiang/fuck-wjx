@@ -7,7 +7,7 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, QThread, QTimer, QSettings, Signal, QCoreApplication, QMetaObject
+from PySide6.QtCore import Qt, QThread, QTimer, QSettings, Signal, QCoreApplication
 from PySide6.QtGui import QColor, QIcon, QGuiApplication, QPixmap
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
@@ -754,7 +754,6 @@ class MainWindow(FluentWindow):
         from qfluentwidgets import InfoBarIcon, CaptionLabel, IndeterminateProgressBar
         from PySide6.QtWidgets import QWidget, QVBoxLayout
         
-        self._download_total_size = total_size
         self._download_indeterminate = show_spinner or total_size == 0
         
         # 创建右下角InfoBar（使用蓝色主题色）

@@ -608,13 +608,6 @@ class RunController(QObject):
             self._completion_cleanup_done = True
             self._schedule_cleanup()
 
-    def _cleanup_browsers(self) -> None:
-        try:
-            if self.adapter:
-                self.adapter.cleanup_browsers()
-        except Exception:
-            pass
-
     # -------------------- Persistence --------------------
     def load_saved_config(self, path: Optional[str] = None) -> RuntimeConfig:
         cfg = load_config(path)

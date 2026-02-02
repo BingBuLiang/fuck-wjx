@@ -94,10 +94,6 @@ class ConfigDrawer(QWidget):
         self._overlay.hide()
         self.hide()
 
-    def set_on_select(self, callback: Optional[Callable[[str], None]]):
-        """设置选择回调。"""
-        self._on_select = callback
-
     def _update_empty_state(self):
         has_items = self.list_widget.count() > 0
         self.list_widget.setVisible(has_items)
@@ -141,12 +137,10 @@ class ConfigDrawer(QWidget):
             panel_bg = "#1f1f1f"
             card_bg = "#2a2a2a"
             border = "#333333"
-            link_color = "#93c5fd"
         else:
             panel_bg = "#f4f4f5"
             card_bg = "#ffffff"
             border = "#e5e7eb"
-            link_color = "#2563eb"
         self.setStyleSheet(
             "#configDrawer {{ background-color: {bg}; }}\n"
             "#configDrawer QLabel {{ background: transparent; }}\n"

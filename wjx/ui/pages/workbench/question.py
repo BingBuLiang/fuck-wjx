@@ -1000,9 +1000,6 @@ class QuestionPage(ScrollArea):
 
         # 配置详情 - 显示有意义的摘要
         detail = ""
-        def _has_nested_weights(raw: Any) -> bool:
-            return isinstance(raw, list) and any(isinstance(item, (list, tuple)) for item in raw)
-
         if entry.question_type in ("text", "multi_text"):
             texts = entry.texts or []
             if texts:

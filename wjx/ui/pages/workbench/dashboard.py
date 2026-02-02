@@ -70,9 +70,6 @@ class _PasteOnlyMenu(QObject):
 
 def _question_summary(entry: QuestionEntry) -> str:
     """生成题目配置摘要"""
-    def _has_nested_weights(raw: Any) -> bool:
-        return isinstance(raw, list) and any(isinstance(item, (list, tuple)) for item in raw)
-
     if entry.question_type in ("text", "multi_text"):
         texts = entry.texts or []
         if texts:

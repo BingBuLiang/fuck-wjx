@@ -17,7 +17,6 @@ class DurationControlState:
     estimated_seconds: int = 0
     total_duration_seconds: int = 0
     schedule: Deque[float] = field(default_factory=deque)
-    end_timestamp: float = 0.0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def active(self) -> bool:
@@ -29,21 +28,12 @@ class DurationControlState:
                 self.schedule.clear()
             except Exception:
                 self.schedule = deque()
-            self.end_timestamp = 0.0
-
-    def disable(self) -> None:
-        with self._lock:
-            self.enabled = False
-            self.estimated_seconds = 0
-            self.total_duration_seconds = 0
-        self.reset_runtime()
 
     def prepare_schedule(self, run_count: int, total_duration_seconds: int) -> Deque[float]:
         schedule: Deque[float] = deque()
         if run_count <= 0:
             with self._lock:
                 self.schedule = schedule
-                self.end_timestamp = 0.0
             return schedule
 
         now = time.time()
@@ -52,10 +42,8 @@ class DurationControlState:
         if total_span <= 0:
             for idx in range(run_count):
                 schedule.append(now + idx * 5)
-            end_ts = now + run_count * 5
             with self._lock:
                 self.schedule = schedule
-                self.end_timestamp = end_ts
             return schedule
 
         base_interval = total_span / max(1, run_count)
@@ -70,10 +58,8 @@ class DurationControlState:
         for offset in offsets:
             schedule.append(now + offset)
 
-        end_ts = now + total_span
         with self._lock:
             self.schedule = schedule
-            self.end_timestamp = end_ts
         return schedule
 
     def wait_for_next_slot(self, stop_signal: threading.Event) -> bool:
@@ -155,27 +141,6 @@ def simulate_answer_duration_delay(
         return bool(interrupted and stop_signal.is_set())
     time.sleep(wait_seconds)
     return False
-
-
-def get_post_submit_wait_params(need_watch_submit: bool, fast_mode: bool) -> Tuple[float, float]:
-    """计算提交后用于检测页面跳转的最大等待时间与轮询间隔。"""
-    try:
-        from wjx.utils.app.config import POST_SUBMIT_URL_MAX_WAIT, POST_SUBMIT_URL_POLL_INTERVAL
-    except Exception:
-        POST_SUBMIT_URL_MAX_WAIT = 10.0
-        POST_SUBMIT_URL_POLL_INTERVAL = 0.2
-
-    base_wait = float(POST_SUBMIT_URL_MAX_WAIT)
-    # 即使在极速模式下，也需要足够的时间等待页面跳转到完成页
-    # 将最小等待时间从 0.2-0.25 秒增加到 2.0 秒，避免误判为失败
-    min_fast_wait = 2.0
-    if DURATION_CONTROL_STATE.enabled:
-        max_wait = base_wait if not need_watch_submit else (min_fast_wait if fast_mode else min(base_wait, 3.0))
-        poll_interval = 0.05 if fast_mode else float(POST_SUBMIT_URL_POLL_INTERVAL)
-    else:
-        max_wait = base_wait if not need_watch_submit else (min_fast_wait if fast_mode else base_wait)
-        poll_interval = 0.05 if fast_mode else float(POST_SUBMIT_URL_POLL_INTERVAL)
-    return float(max_wait), float(poll_interval)
 
 
 def is_survey_completion_page(driver: Any) -> bool:

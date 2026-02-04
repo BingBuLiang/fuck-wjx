@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import QObject, Qt, QThread
 from PySide6.QtWidgets import QSizePolicy, QPlainTextEdit, QVBoxLayout, QWidget
 from qfluentwidgets import (
     ComboBox,
@@ -25,7 +25,7 @@ from wjx.utils.integrations.ai_service import AI_PROVIDERS, DEFAULT_SYSTEM_PROMP
 from wjx.utils.io.load_save import RuntimeConfig
 
 
-class RuntimeAISection:
+class RuntimeAISection(QObject):
     _PROVIDER_DOCS = {
         "deepseek": "https://api-docs.deepseek.com/zh-cn/",
         "qwen": "https://help.aliyun.com/zh/model-studio/get-api-key",
@@ -35,6 +35,7 @@ class RuntimeAISection:
     }
 
     def __init__(self, parent_view: QWidget, owner: QWidget):
+        super().__init__(parent_view)
         self._owner = owner
         self.group = SettingCardGroup("AI 填空助手", parent_view)
         self._ai_loading = False

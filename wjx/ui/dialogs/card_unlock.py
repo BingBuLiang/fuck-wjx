@@ -126,8 +126,8 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
-        self.contact_btn = PushButton("联系", self)
-        self.donate_btn = PushButton("捐助", self)
+        self.contact_btn = PushButton("联系", self, FluentIcon.MESSAGE)
+        self.donate_btn = PushButton("捐助", self, FluentIcon.HEART)
         btn_row.addWidget(self.contact_btn)
         btn_row.addWidget(self.donate_btn)
         btn_row.addStretch(1)
@@ -146,7 +146,7 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
         action_row = QHBoxLayout()
         action_row.addStretch(1)
         self.cancel_btn = PushButton("取消", self)
-        self.ok_btn = PrimaryPushButton("验证", self)
+        self.ok_btn = PrimaryPushButton("验证", self, FluentIcon.COMPLETED)
         # 验证按钮旁的转圈动画（放在右边）
         self.validate_spinner = IndeterminateProgressRing(self)
         self.validate_spinner.setFixedSize(20, 20)
@@ -290,8 +290,22 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
                     self._password_visible = not self._password_visible
                     if self._password_visible:
                         self.card_edit.setEchoMode(QLineEdit.EchoMode.Normal)
+                        try:
+                            btn.setIcon(FluentIcon.VIEW)
+                        except Exception:
+                            pass
                     else:
                         self.card_edit.setEchoMode(QLineEdit.EchoMode.Password)
+                        try:
+                            btn.setIcon(FluentIcon.HIDE)
+                        except Exception:
+                            pass
+                
+                # 默认使用“隐藏”图标
+                try:
+                    btn.setIcon(FluentIcon.HIDE)
+                except Exception:
+                    pass
                 
                 btn.clicked.connect(toggle_password)
         except Exception:

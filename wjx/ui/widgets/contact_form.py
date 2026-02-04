@@ -112,6 +112,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         self._init_status_polling(status_fetcher, status_formatter)
         self._attachments = ImageAttachmentManager(max_count=3, max_size_bytes=10 * 1024 * 1024)
         self._current_message_type: str = ""
+        self._current_has_email: bool = False
         self._polling_started = False
         self._auto_clear_on_success = auto_clear_on_success
         self._manage_polling = manage_polling
@@ -443,6 +444,7 @@ class ContactForm(StatusPollingMixin, QWidget):
 
     def _on_send_clicked(self):
         email = (self.email_edit.text() or "").strip()
+        self._current_has_email = bool(email)
 
         QTimer.singleShot(10, lambda: self.email_edit.setSelection(0, 0))
         QTimer.singleShot(10, lambda: self.send_btn.setFocus())
@@ -526,6 +528,8 @@ class ContactForm(StatusPollingMixin, QWidget):
                 msg = "发送成功！请留意邮件信息！"
             else:
                 msg = "消息已成功发送！"
+            if getattr(self, "_current_has_email", False):
+                msg += " 开发者将于6小时内回复"
             InfoBar.success("", msg, parent=self, position=InfoBarPosition.TOP, duration=2500)
             if current_type == "白嫖卡密（？）":
                 self._apply_whitepiao_unlock()

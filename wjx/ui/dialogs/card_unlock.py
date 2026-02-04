@@ -15,6 +15,7 @@ from qfluentwidgets import (
     IndeterminateProgressRing,
     Action,
     FluentIcon,
+    MessageBox,
     RoundMenu,
     InfoBar,
     InfoBarPosition,
@@ -95,7 +96,7 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
         steps_layout.setContentsMargins(12, 10, 12, 10)
         steps_layout.setSpacing(4)
         
-        step1 = BodyLabel("1. 捐助任意金额（多少都行）", steps_card)
+        step1 = BodyLabel("1. 捐助任意金额（🥹多少都行）", steps_card)
         step2 = BodyLabel("2. 在「联系」中找到开发者，并留下联系邮箱", steps_card)
         step3 = BodyLabel("3. 输入卡密后即可解锁大额随机IP提交额度，不够用可继续免费申请", steps_card)
         step4 = BodyLabel("4. 你也可以通过自己的口才白嫖卡密（误）", steps_card)
@@ -208,6 +209,19 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
             webbrowser.open(ISSUE_FEEDBACK_URL)
 
     def _open_donate(self):
+        confirm_box = MessageBox(
+            "确认捐助",
+            "请确保已经在本地充分测试并确认功能可正常使用后，再获取随机 IP 服务。\n\n是否继续打开捐助页？",
+            self,
+        )
+        # 按钮文案改为中文，避免英文残留
+        try:
+            confirm_box.yesButton.setText("继续")
+            confirm_box.cancelButton.setText("取消")
+        except Exception:
+            pass
+        if not confirm_box.exec():
+            return
         try:
             payment_path = os.path.join(get_assets_directory(), "payment.png")
             if os.path.exists(payment_path):

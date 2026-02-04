@@ -1,7 +1,7 @@
 """日志页面"""
 import os
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPlainTextEdit, QApplication
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPlainTextEdit
 from PySide6.QtGui import QFont, QTextCursor
 from qfluentwidgets import (
     SubtitleLabel,
@@ -80,7 +80,6 @@ class LogPage(QWidget):
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
 
-        self.copy_btn = PushButton("复制到剪贴板", self, FIF.COPY)
         self.save_btn = PushButton("导出到文件", self, FIF.SAVE)
 
         # 日志级别筛选
@@ -89,13 +88,9 @@ class LogPage(QWidget):
         for text, _ in LOG_LEVELS:
             self.level_combo.addItem(text)
 
-        self.refresh_btn = PushButton("重载日志", self, FIF.SYNC)
-
-        toolbar.addWidget(self.copy_btn)
         toolbar.addWidget(self.save_btn)
         toolbar.addStretch(1)
         toolbar.addWidget(self.level_combo)
-        toolbar.addWidget(self.refresh_btn)
         layout.addLayout(toolbar)
 
         # 日志显示区域
@@ -129,8 +124,6 @@ class LogPage(QWidget):
         layout.addWidget(self.log_view, 1)
 
     def _bind_events(self):
-        self.refresh_btn.clicked.connect(self.force_refresh_logs)
-        self.copy_btn.clicked.connect(self._copy_to_clipboard)
         self.save_btn.clicked.connect(self.save_logs)
         self.level_combo.currentIndexChanged.connect(self._on_filter_changed)
 
@@ -143,11 +136,6 @@ class LogPage(QWidget):
     def _on_filter_changed(self, index):
         """日志级别筛选变化"""
         self._current_filter = LOG_LEVELS[index][1] if index < len(LOG_LEVELS) else None
-        self._force_full_refresh = True
-        self.refresh_logs()
-
-    def force_refresh_logs(self):
-        """强制全量刷新（用户主动点击重载时调用）"""
         self._force_full_refresh = True
         self.refresh_logs()
 
@@ -234,18 +222,6 @@ class LogPage(QWidget):
             self.log_view.moveCursor(QTextCursor.MoveOperation.End)
         else:
             self._restore_scroll_position(scrollbar, old_value, old_max)
-
-    def _copy_to_clipboard(self):
-        """复制日志到剪贴板"""
-        text = self.log_view.toPlainText()
-        if text:
-            QApplication.clipboard().setText(text)
-            InfoBar.success(
-                "", "已复制到剪贴板",
-                parent=self.window(),
-                position=InfoBarPosition.TOP,
-                duration=2000
-            )
 
     def save_logs(self):
         try:

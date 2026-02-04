@@ -56,7 +56,7 @@ def _is_wjx_domain(url_value: str) -> bool:
 
 
 class BoolVar:
-    """Tiny stand-in for tkinter.BooleanVar."""
+    """简单的布尔状态封装，用于 UI 适配。"""
 
     def __init__(self, value: bool = False):
         self._value = bool(value)
@@ -89,7 +89,7 @@ class EngineGuiAdapter:
         self._pause_reason = ""
 
     def _post_to_ui_thread(self, callback: Callable[[], None]) -> None:
-        """Expose a Tk-style dispatcher hook expected by engine helpers."""
+        """提供 UI 线程派发钩子，供引擎辅助逻辑调用。"""
         try:
             self._dispatcher(callback)
         except Exception:

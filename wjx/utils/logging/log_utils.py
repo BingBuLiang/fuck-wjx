@@ -213,7 +213,7 @@ def register_popup_handler(handler: Optional[Callable[[str, str, str], Any]]) ->
 def _dispatch_popup(kind: str, title: str, message: str, default: Any = None) -> Any:
     """
     Send popup requests to the registered handler. Falls back to logging only
-    when no UI handler is available to keep engine code decoupled from Tk/Qt.
+    when no UI handler is available to keep engine code decoupled from GUI/Qt.
     """
     logging.log(
         logging.INFO if kind in {"info", "confirm"} else logging.ERROR if kind == "error" else logging.WARNING,

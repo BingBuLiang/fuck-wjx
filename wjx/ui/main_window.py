@@ -524,6 +524,9 @@ class MainWindow(FluentWindow):
     def apply_topmost_state(self, checked: bool, show: bool = False):
         """应用窗口置顶状态，并刷新无边框特效以保留圆角。"""
         flags = self.windowFlags()
+        already_checked = bool(flags & Qt.WindowType.WindowStaysOnTopHint)
+        if already_checked == checked:
+            return
         if checked:
             flags |= Qt.WindowType.WindowStaysOnTopHint
         else:

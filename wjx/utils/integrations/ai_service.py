@@ -6,18 +6,6 @@ from typing import Optional, Dict, Any
 
 # AI 服务提供商配置
 AI_PROVIDERS = {
-    "openai": {
-        "label": "ChatGPT",
-        "base_url": "https://api.openai.com/v1",
-        "models": ["gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-mini", "gpt-5-nano"],
-        "default_model": "gpt-5-mini",
-    },
-    "gemini": {
-        "label": "Gemini",
-        "base_url": "https://generativelanguage.googleapis.com/v1beta",
-        "models": ["gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
-        "default_model": "gemini-3-flash-preview",
-    },
     "deepseek": {
         "label": "DeepSeek",
         "base_url": "https://api.deepseek.com/v1",
@@ -29,6 +17,18 @@ AI_PROVIDERS = {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "models": ["qwen3-max", "qwen-flash", "qwen-plus", "qwen-turbo", "qwen-turbo-latest"],
         "default_model": "qwen-flash",
+    },
+    "openai": {
+        "label": "ChatGPT",
+        "base_url": "https://api.openai.com/v1",
+        "models": ["gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-mini", "gpt-5-nano"],
+        "default_model": "gpt-5-mini",
+    },
+    "gemini": {
+        "label": "Gemini",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta",
+        "models": ["gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+        "default_model": "gemini-3-flash-preview",
     },
     "custom": {
         "label": "自定义 (OpenAI 兼容)",
@@ -42,7 +42,7 @@ DEFAULT_SYSTEM_PROMPT = "你是一名有相关使用经验但并非专业人士�
 
 _DEFAULT_AI_SETTINGS: Dict[str, Any] = {
     "enabled": False,
-    "provider": "openai",
+    "provider": "deepseek",
     "api_key": "",
     "base_url": "",
     "model": "",

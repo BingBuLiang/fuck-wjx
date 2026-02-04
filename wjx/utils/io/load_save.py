@@ -118,7 +118,7 @@ class RuntimeConfig:
     fail_stop_enabled: bool = True
     pause_on_aliyun_captcha: bool = True
     ai_enabled: bool = False
-    ai_provider: str = "openai"
+    ai_provider: str = "deepseek"
     ai_api_key: str = ""
     ai_base_url: str = ""
     ai_model: str = ""
@@ -358,7 +358,7 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     config._ai_config_present = has_ai_keys
     if has_ai_keys:
         config.ai_enabled = bool(raw.get("ai_enabled", False))
-        config.ai_provider = str(raw.get("ai_provider") or "openai")
+        config.ai_provider = str(raw.get("ai_provider") or "deepseek")
         config.ai_api_key = str(raw.get("ai_api_key") or "")
         config.ai_base_url = str(raw.get("ai_base_url") or "")
         config.ai_model = str(raw.get("ai_model") or "")

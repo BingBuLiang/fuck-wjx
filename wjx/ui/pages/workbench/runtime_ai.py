@@ -73,7 +73,7 @@ class RuntimeAISection:
         self.ai_provider_combo.setMinimumWidth(200)
         for key, provider in AI_PROVIDERS.items():
             self.ai_provider_combo.addItem(provider.get("label", key), userData=key)
-        saved_provider = ai_config.get("provider") or "openai"
+        saved_provider = ai_config.get("provider") or "deepseek"
         idx = self.ai_provider_combo.findData(saved_provider)
         if idx >= 0:
             self.ai_provider_combo.setCurrentIndex(idx)
@@ -115,10 +115,15 @@ class RuntimeAISection:
             "选择或输入模型名称",
             self.group,
         )
+        self.ai_model_combo = ComboBox(self.ai_model_card)
+        self.ai_model_combo.setMinimumWidth(200)
+        self.ai_model_combo.addItem("deepseek-chat")
+        self.ai_model_combo.addItem("deepseek-reasoner")
         self.ai_model_edit = LineEdit(self.ai_model_card)
         self.ai_model_edit.setMinimumWidth(200)
         self.ai_model_edit.setPlaceholderText("gpt-3.5-turbo")
         self.ai_model_edit.setText(ai_config.get("model") or "")
+        self.ai_model_card.hBoxLayout.addWidget(self.ai_model_combo, 0, Qt.AlignmentFlag.AlignRight)
         self.ai_model_card.hBoxLayout.addWidget(self.ai_model_edit, 0, Qt.AlignmentFlag.AlignRight)
         self.ai_model_card.hBoxLayout.addSpacing(16)
         self.group.addSettingCard(self.ai_model_card)
@@ -173,16 +178,17 @@ class RuntimeAISection:
         self.ai_apikey_edit.editingFinished.connect(self._on_ai_apikey_changed)
         self.ai_baseurl_edit.editingFinished.connect(self._on_ai_baseurl_changed)
         self.ai_model_edit.editingFinished.connect(self._on_ai_model_changed)
+        self.ai_model_combo.currentIndexChanged.connect(self._on_ai_model_combo_changed)
         self.ai_test_card.clicked.connect(self._on_ai_test_clicked)
         self.ai_prompt_edit.textChanged.connect(self._on_ai_prompt_changed)
 
     def update_config(self, cfg: RuntimeConfig):
         cfg.ai_enabled = bool(self.ai_enabled_card.switchButton.isChecked())
         idx = self.ai_provider_combo.currentIndex()
-        cfg.ai_provider = str(self.ai_provider_combo.itemData(idx)) if idx >= 0 else "openai"
+        cfg.ai_provider = str(self.ai_provider_combo.itemData(idx)) if idx >= 0 else "deepseek"
         cfg.ai_api_key = self.ai_apikey_edit.text().strip()
         cfg.ai_base_url = self.ai_baseurl_edit.text().strip()
-        cfg.ai_model = self.ai_model_edit.text().strip()
+        cfg.ai_model = self._get_current_model_value()
         cfg.ai_system_prompt = self._ai_system_prompt or DEFAULT_SYSTEM_PROMPT
 
     def apply_config(self, cfg: RuntimeConfig):
@@ -202,25 +208,40 @@ class RuntimeAISection:
     def _update_ai_visibility(self):
         """根据选择的提供商更新 AI 配置项的可见性"""
         idx = self.ai_provider_combo.currentIndex()
-        provider_key = str(self.ai_provider_combo.itemData(idx)) if idx >= 0 else "openai"
+        provider_key = str(self.ai_provider_combo.itemData(idx)) if idx >= 0 else "deepseek"
         is_custom = provider_key == "custom"
         self.ai_baseurl_card.setVisible(is_custom)
         provider_config = AI_PROVIDERS.get(provider_key, {})
         default_model = provider_config.get("default_model", "")
         self.ai_model_edit.setPlaceholderText(default_model or "模型名称")
 
+        is_deepseek = provider_key == "deepseek"
+        self.ai_model_combo.setVisible(is_deepseek)
+        self.ai_model_edit.setVisible(not is_deepseek)
+        if is_deepseek:
+            current_model = self._get_current_model_value().strip()
+            if not current_model:
+                current_model = "deepseek-chat"
+                if not self._ai_loading:
+                    save_ai_settings(model=current_model)
+            combo_idx = self.ai_model_combo.findText(current_model)
+            if combo_idx >= 0:
+                self.ai_model_combo.setCurrentIndex(combo_idx)
+            else:
+                self.ai_model_combo.setCurrentIndex(0)
+
     def _apply_ai_config(self, cfg: RuntimeConfig):
         ai_config_present = getattr(cfg, "_ai_config_present", False)
         if not ai_config_present:
             ai_config = get_ai_settings()
             cfg.ai_enabled = bool(ai_config.get("enabled"))
-            cfg.ai_provider = str(ai_config.get("provider") or "openai")
+            cfg.ai_provider = str(ai_config.get("provider") or "deepseek")
             cfg.ai_api_key = str(ai_config.get("api_key") or "")
             cfg.ai_base_url = str(ai_config.get("base_url") or "")
             cfg.ai_model = str(ai_config.get("model") or "")
             cfg.ai_system_prompt = str(ai_config.get("system_prompt") or DEFAULT_SYSTEM_PROMPT)
         if not getattr(cfg, "ai_provider", ""):
-            cfg.ai_provider = "openai"
+            cfg.ai_provider = "deepseek"
         if not getattr(cfg, "ai_system_prompt", ""):
             cfg.ai_system_prompt = DEFAULT_SYSTEM_PROMPT
 
@@ -234,7 +255,15 @@ class RuntimeAISection:
             self.ai_provider_combo.setCurrentIndex(0)
         self.ai_apikey_edit.setText(cfg.ai_api_key or "")
         self.ai_baseurl_edit.setText(cfg.ai_base_url or "")
-        self.ai_model_edit.setText(cfg.ai_model or "")
+        current_model = (cfg.ai_model or "").strip()
+        if not current_model and cfg.ai_provider == "deepseek":
+            current_model = "deepseek-chat"
+        self.ai_model_edit.setText(current_model)
+        combo_idx = self.ai_model_combo.findText(current_model)
+        if combo_idx >= 0:
+            self.ai_model_combo.setCurrentIndex(combo_idx)
+        else:
+            self.ai_model_combo.setCurrentIndex(0)
         self._ai_system_prompt = cfg.ai_system_prompt or DEFAULT_SYSTEM_PROMPT
         self.ai_prompt_edit.setPlainText(self._ai_system_prompt)
         self._update_ai_visibility()
@@ -268,9 +297,15 @@ class RuntimeAISection:
         if self._ai_loading:
             return
         idx = self.ai_provider_combo.currentIndex()
-        provider_key = str(self.ai_provider_combo.itemData(idx)) if idx >= 0 else "openai"
+        provider_key = str(self.ai_provider_combo.itemData(idx)) if idx >= 0 else "deepseek"
         save_ai_settings(provider=provider_key)
         self._update_ai_visibility()
+        if provider_key != "deepseek":
+            if self.ai_model_edit.isVisible():
+                current_model = self.ai_model_edit.text().strip()
+                if current_model in {"deepseek-chat", "deepseek-reasoner"}:
+                    self.ai_model_edit.setText("")
+                    save_ai_settings(model="")
         provider_config = AI_PROVIDERS.get(provider_key, {})
         InfoBar.success(
             "",
@@ -296,7 +331,22 @@ class RuntimeAISection:
         """模型变化"""
         if self._ai_loading:
             return
+        if not self.ai_model_edit.isVisible():
+            return
         save_ai_settings(model=self.ai_model_edit.text())
+
+    def _on_ai_model_combo_changed(self):
+        """DeepSeek 模型变化"""
+        if self._ai_loading:
+            return
+        if not self.ai_model_combo.isVisible():
+            return
+        save_ai_settings(model=self._get_current_model_value())
+
+    def _get_current_model_value(self) -> str:
+        if self.ai_model_combo.isVisible():
+            return self.ai_model_combo.currentText().strip()
+        return self.ai_model_edit.text().strip()
 
     def _on_ai_prompt_changed(self):
         """系统提示词变化"""
@@ -315,7 +365,7 @@ class RuntimeAISection:
             enabled=True,
             api_key=self.ai_apikey_edit.text(),
             base_url=self.ai_baseurl_edit.text(),
-            model=self.ai_model_edit.text(),
+            model=self._get_current_model_value(),
             system_prompt=self._ai_system_prompt,
         )
         self._set_ai_test_loading(True)

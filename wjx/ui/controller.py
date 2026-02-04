@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import logging
+from urllib.parse import urlparse
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -34,6 +36,23 @@ from wjx.network.random_ip import (
     is_custom_proxy_api_active,
 )
 from wjx.utils.system.registry_manager import RegistryManager
+
+
+def _is_wjx_domain(url_value: str) -> bool:
+    """仅接受 wjx.cn 及子域名。"""
+    if not url_value:
+        return False
+    text = str(url_value).strip()
+    if not text:
+        return False
+    # 若缺少协议，urlparse 取 netloc 为空，尝试补全协议再解析
+    candidate = text if "://" in text else f"http://{text}"
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
+        return False
+    host = (parsed.netloc or "").split(":", 1)[0].lower()
+    return bool(host == "wjx.cn" or host.endswith(".wjx.cn"))
 
 
 class BoolVar:
@@ -197,16 +216,22 @@ class RunController(QObject):
         if not url:
             self.surveyParseFailed.emit("请填写问卷链接")
             return
+        normalized_url = str(url or "").strip()
+        if not _is_wjx_domain(normalized_url):
+            logging.warning("收到非问卷星域名链接：%r", normalized_url)
+            self.surveyParseFailed.emit("仅支持问卷星链接")
+            return
 
         def _worker():
             try:
-                info, title = self._parse_questions(url)
+                info, title = self._parse_questions(normalized_url)
                 self.questions_info = info
                 self.question_entries = self._build_default_entries(info)
-                self.config.url = url
+                self.config.url = normalized_url
                 self.surveyParsed.emit(info, title or "")
             except Exception as exc:
-                self.surveyParseFailed.emit(str(exc) or "解析失败，请稍后重试")
+                friendly = str(exc) or "解析失败，请稍后重试"
+                self.surveyParseFailed.emit(friendly)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -220,7 +245,8 @@ class RunController(QObject):
                 html = resp.text
                 info = parse_survey_questions_from_html(html)
                 title = _extract_survey_title_from_html(html) or title
-            except Exception:
+            except Exception as exc:
+                logging.exception("使用 requests 获取问卷失败，url=%r", url)
                 info = None
         if info is None:
             driver = None
@@ -231,6 +257,9 @@ class RunController(QObject):
                 page_source = driver.page_source
                 info = parse_survey_questions_from_html(page_source)
                 title = _extract_survey_title_from_html(page_source) or title
+            except Exception as exc:
+                logging.exception("使用 Playwright 获取问卷失败，url=%r", url)
+                info = None
             finally:
                 try:
                     if driver:
@@ -238,7 +267,7 @@ class RunController(QObject):
                 except Exception:
                     pass
         if not info:
-            raise RuntimeError("无法解析问卷，请确认链接是否正确或问卷已开放")
+            raise RuntimeError("无法打开问卷链接，请确认链接有效且网络正常")
         normalized_title = _normalize_html_text(title) if title else ""
         return info, normalized_title
 

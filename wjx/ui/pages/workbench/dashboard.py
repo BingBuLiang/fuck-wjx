@@ -352,9 +352,29 @@ class DashboardPage(QWidget):
         if not url:
             self._toast("请粘贴问卷链接", "warning")
             return
+        if not self._is_wjx_domain(url):
+            self._toast("仅支持问卷星链接", "error")
+            return
         self._toast("正在解析问卷...", "info", duration=1800)
         self._open_wizard_after_parse = True
         self.controller.parse_survey(url)
+
+    @staticmethod
+    def _is_wjx_domain(url: str) -> bool:
+        """前端轻量域名白名单：wjx.cn 及其子域。"""
+        if not url:
+            return False
+        text = str(url).strip()
+        if not text:
+            return False
+        candidate = text if "://" in text else f"http://{text}"
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(candidate)
+        except Exception:
+            return False
+        host = (parsed.netloc or "").split(":", 1)[0].lower()
+        return bool(host == "wjx.cn" or host.endswith(".wjx.cn"))
 
     def _on_show_config_list(self):
         try:

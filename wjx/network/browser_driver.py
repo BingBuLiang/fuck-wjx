@@ -27,7 +27,6 @@ from wjx.network.random_ip import (
     PROXY_SOURCE_CUSTOM,
 )
 
-# 默认代理账号密码（base64 编码的 "username:password"），允许环境变量覆盖以便部署时替换
 _PROXY_AUTH_B64 = "MTgxNzAxMTk4MDg6dFdKNWhMRG9Id3JIZ1RraWowelk="
 
 

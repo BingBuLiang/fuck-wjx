@@ -117,7 +117,6 @@ def _r(s: str) -> str:
     except Exception:
         return ""
 
-# 编码后的默认端点（base64），保留原值以兼容历史配置。
 _DEFAULT_RANDOM_IP_API_B64 = "aHR0cHM6Ly9zZXJ2aWNlLmlwemFuLmNvbS9jb3JlLWV4dHJhY3Q/bnVtPTEmbm89MjAyNjAxMTI1NzIzNzY0OTA4NzQmbWludXRlPTEmZm9ybWF0PWpzb24mcmVwZWF0PTEmcHJvdG9jb2w9MSZwb29sPW9yZGluYXJ5Jm1vZGU9YXV0aCZzZWNyZXQ9cGY3MDZ2azc3a2tubG8="
 _DEFAULT_CONTACT_API_B64 = "aHR0cHM6Ly9ib3QuaHVuZ3J5bTAudG9w"
 _DEFAULT_CARD_VALIDATION_B64 = "aHR0cHM6Ly9hcGktd2p4Lmh1bmdyeW0wLnRvcC9hcGkvY2FyZC92ZXJpZnk="

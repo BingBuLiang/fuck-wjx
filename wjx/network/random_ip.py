@@ -869,10 +869,13 @@ def show_card_validation_dialog(gui: Any = None) -> bool:
         return False
     ok, quota = _validate_card(str(card_code) if card_code else "")
     if ok:
-        limit_val = max(1, int(quota or _PREMIUM_RANDOM_IP_LIMIT))
-        RegistryManager.write_quota_limit(limit_val)
+        quota_to_add = max(1, int(quota or _PREMIUM_RANDOM_IP_LIMIT))
+        # 读取当前额度上限，在此基础上增加
+        current_limit = get_random_ip_limit()
+        new_limit = current_limit + quota_to_add
+        RegistryManager.write_quota_limit(new_limit)
         RegistryManager.set_quota_unlimited(False)
-        _invoke_popup(gui, "info", "验证成功", f"卡密验证通过，已解锁{limit_val} 额度。")
+        _invoke_popup(gui, "info", "验证成功", f"卡密验证通过，已增加 {quota_to_add} 额度（当前总额度：{new_limit}）。")
         return True
     _invoke_popup(gui, "error", "验证失败", "卡密验证失败，请检查后重试。")
     return False

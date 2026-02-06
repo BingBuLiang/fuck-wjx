@@ -671,12 +671,15 @@ class DashboardPage(QWidget):
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        # 验证成功后处理解锁逻辑：设置400份额度上限（不重置已用额度）
+        # 验证成功后处理解锁逻辑：在原有额度基础上增加卡密提供的额度
         if dialog.get_validation_result():
-            from wjx.network.random_ip import _PREMIUM_RANDOM_IP_LIMIT
+            from wjx.network.random_ip import _PREMIUM_RANDOM_IP_LIMIT, get_random_ip_limit
             quota = dialog.get_validation_quota()
-            limit_val = max(1, int(quota or _PREMIUM_RANDOM_IP_LIMIT))
-            RegistryManager.write_quota_limit(limit_val)
+            quota_to_add = max(1, int(quota or _PREMIUM_RANDOM_IP_LIMIT))
+            # 读取当前额度上限，在此基础上增加
+            current_limit = get_random_ip_limit()
+            new_limit = current_limit + quota_to_add
+            RegistryManager.write_quota_limit(new_limit)
             RegistryManager.set_quota_unlimited(False)
             refresh_ip_counter_display(self.controller.adapter)
             self.random_ip_cb.setChecked(True)

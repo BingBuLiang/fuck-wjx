@@ -25,6 +25,7 @@ from wjx.core.questions.utils import (
     get_fill_text_from_config,
     fill_option_additional_text,
 )
+from wjx.core.stats.collector import stats_collector
 
 # 缓存检测到的多选限制
 _DETECTED_MULTI_LIMITS: Dict[Tuple[str, int], Optional[int]] = {}
@@ -341,6 +342,8 @@ def multiple(driver: BrowserDriver, current: int, index: int, multiple_prob_conf
             driver.find_element(By.CSS_SELECTOR, selector).click()
             fill_value = get_fill_text_from_config(fill_entries, option_idx)
             fill_option_additional_text(driver, current, option_idx, fill_value)
+        # 记录统计数据
+        stats_collector.record_multiple_choice(current, selected_indices)
         return
 
     if len(option_elements) != len(selection_probabilities):
@@ -393,3 +396,6 @@ def multiple(driver: BrowserDriver, current: int, index: int, multiple_prob_conf
         driver.find_element(By.CSS_SELECTOR, selector).click()
         fill_value = get_fill_text_from_config(fill_entries, option_idx)
         fill_option_additional_text(driver, current, option_idx, fill_value)
+
+    # 记录统计数据
+    stats_collector.record_multiple_choice(current, selected_indices)

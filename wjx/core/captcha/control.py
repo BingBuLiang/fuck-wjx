@@ -31,17 +31,24 @@ def _trigger_aliyun_captcha_stop(
 
     logging.warning("检测到阿里云智能验证，已触发全局暂停。")
 
+    # 关键兜底：先立即停止所有工作线程，再做 UI 提示。
+    # 避免 UI 线程忙/派发超时时没有真正停下。
+    if stop_signal and not stop_signal.is_set():
+        stop_signal.set()
+        logging.warning("智能验证命中：已设置 stop_signal，任务将立即停止")
+    try:
+        if gui_instance and hasattr(gui_instance, "pause_run"):
+            gui_instance.pause_run("触发智能验证")
+            logging.warning("智能验证命中：已调用 pause_run")
+    except Exception:
+        logging.debug("阿里云智能验证触发暂停失败", exc_info=True)
+
     message = (
-        "检测到阿里云智能验证，为避免继续失败提交已暂停所有任务。\n\n"
-        "建议开启/保持随机 IP，并在处理完验证后点击主页的“继续”按钮恢复执行。\n"
+        "检测到阿里云智能验证，为避免继续失败提交已停止所有任务。\n\n"
+        "建议开启/保持随机 IP，并在处理完验证后重新启动任务。\n"
     )
 
     def _notify():
-        try:
-            if gui_instance and hasattr(gui_instance, "pause_run"):
-                gui_instance.pause_run("触发智能验证")
-        except Exception:
-            logging.debug("阿里云智能验证触发暂停失败", exc_info=True)
         try:
             if threading.current_thread() is not threading.main_thread():
                 return
@@ -61,7 +68,9 @@ def _trigger_aliyun_captcha_stop(
         except Exception:
             logging.warning("弹窗提示用户启用随机IP失败")
 
-    dispatcher = getattr(gui_instance, "_post_to_ui_thread", None) if gui_instance else None
+    dispatcher = getattr(gui_instance, "_post_to_ui_thread_async", None) if gui_instance else None
+    if not callable(dispatcher):
+        dispatcher = getattr(gui_instance, "_post_to_ui_thread", None) if gui_instance else None
     if callable(dispatcher):
         try:
             dispatcher(_notify)

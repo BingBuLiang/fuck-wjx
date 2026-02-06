@@ -551,6 +551,7 @@ class MainWindow(FluentWindow):
         self.controller.runStateChanged.connect(self.dashboard.on_run_state_changed)
         self.controller.statusUpdated.connect(self.dashboard.update_status)
         self.controller.pauseStateChanged.connect(self.dashboard.on_pause_state_changed)
+        self.controller.cleanupFinished.connect(self.dashboard.on_cleanup_finished)
         self.controller.on_ip_counter = self.dashboard.update_random_ip_counter
 
     def _register_popups(self):

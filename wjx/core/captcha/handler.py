@@ -72,7 +72,11 @@ def handle_aliyun_captcha(
         """检测页面/iframe 中是否出现可见的"智能验证/开始验证"按钮或文案。"""
         script = r"""
             (() => {
-                const texts = ['智能验证', '开始验证', '点击开始智能验证'];
+                const texts = [
+                    '智能验证', '开始验证', '点击开始智能验证',
+                    '需要安全校验', '请重新提交', '安全校验',
+                    '验证', '人机验证', '滑动验证'
+                ];
                 const visible = (el) => {
                     if (!el) return false;
                     const style = window.getComputedStyle(el);
@@ -81,7 +85,7 @@ def handle_aliyun_captcha(
                     return rect.width > 0 && rect.height > 0;
                 };
                 const checkDoc = (doc) => {
-                    const nodes = doc.querySelectorAll('button, a, span, div');
+                    const nodes = doc.querySelectorAll('button, a, span, div, p');
                     for (const el of nodes) {
                         if (!visible(el)) continue;
                         const txt = (el.innerText || el.textContent || '').trim();

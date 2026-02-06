@@ -4,6 +4,7 @@ from typing import List, Union
 
 from wjx.network.browser_driver import By, BrowserDriver
 from wjx.core.questions.utils import weighted_index, normalize_probabilities
+from wjx.core.stats.collector import stats_collector
 
 
 def matrix(driver: BrowserDriver, current: int, index: int, matrix_prob_config: List) -> int:
@@ -40,4 +41,6 @@ def matrix(driver: BrowserDriver, current: int, index: int, matrix_prob_config: 
         driver.find_element(
             By.CSS_SELECTOR, f"#drv{current}_{row_index} > td:nth-child({selected_column})"
         ).click()
+        # 记录统计数据：行索引 (0-based)，列索引 (0-based，减去表头偏移)
+        stats_collector.record_matrix_choice(current, row_index - 1, selected_column - 2)
     return index

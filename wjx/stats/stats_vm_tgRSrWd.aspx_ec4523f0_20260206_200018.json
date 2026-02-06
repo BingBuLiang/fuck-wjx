@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "survey_url": "https://v.wjx.cn/vm/tgRSrWd.aspx",
+  "survey_title": null,
+  "created_at": "2026-02-06T19:58:50.569413",
+  "updated_at": "2026-02-06T20:00:18.551990",
+  "total_submissions": 12,
+  "failed_submissions": 0,
+  "questions": {
+    "1": {
+      "question_type": "single",
+      "question_title": null,
+      "total_responses": 13,
+      "options": {
+        "1": {
+          "count": 13,
+          "text": ""
+        }
+      }
+    },
+    "3": {
+      "question_type": "slider",
+      "question_title": null,
+      "total_responses": 12,
+      "options": {
+        "99": {
+          "count": 2,
+          "text": ""
+        },
+        "97": {
+          "count": 4,
+          "text": ""
+        },
+        "30": {
+          "count": 1,
+          "text": ""
+        },
+        "78": {
+          "count": 1,
+          "text": ""
+        },
+        "96": {
+          "count": 1,
+          "text": ""
+        },
+        "95": {
+          "count": 1,
+          "text": ""
+        },
+        "100": {
+          "count": 1,
+          "text": ""
+        },
+        "64": {
+          "count": 1,
+          "text": ""
+        }
+      }
+    },
+    "4": {
+      "question_type": "scale",
+      "question_title": null,
+      "total_responses": 12,
+      "options": {
+        "10": {
+          "count": 12,
+          "text": ""
+        }
+      }
+    },
+    "5": {
+      "question_type": "text",
+      "question_title": null,
+      "total_responses": 12,
+      "options": {},
+      "text_answers": {
+        "无": 12
+      }
+    },
+    "6": {
+      "question_type": "multiple",
+      "question_title": null,
+      "total_responses": 24,
+      "options": {
+        "1": {
+          "count": 12,
+          "text": ""
+        },
+        "2": {
+          "count": 12,
+          "text": ""
+        }
+      }
+    },
+    "7": {
+      "question_type": "matrix",
+      "question_title": null,
+      "total_responses": 24,
+      "options": {},
+      "rows": {
+        "0": {
+          "4": 12
+        },
+        "1": {
+          "4": 12
+        }
+      }
+    },
+    "8": {
+      "question_type": "scale",
+      "question_title": null,
+      "total_responses": 12,
+      "options": {
+        "4": {
+          "count": 12,
+          "text": ""
+        }
+      }
+    },
+    "9": {
+      "question_type": "scale",
+      "question_title": null,
+      "total_responses": 12,
+      "options": {
+        "4": {
+          "count": 12,
+          "text": ""
+        }
+      }
+    }
+  }
+}

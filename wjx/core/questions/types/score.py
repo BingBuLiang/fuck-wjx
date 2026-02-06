@@ -4,6 +4,7 @@ from typing import List
 
 from wjx.network.browser_driver import By, BrowserDriver
 from wjx.core.questions.utils import weighted_index
+from wjx.core.stats.collector import stats_collector
 
 
 def _is_valid_score_option(element) -> bool:
@@ -81,3 +82,5 @@ def score(driver: BrowserDriver, current: int, index: int, score_prob_config: Li
             driver.execute_script("arguments[0].click();", target)
         except Exception:
             pass
+    # 记录统计数据
+    stats_collector.record_scale_choice(current, selected_index)

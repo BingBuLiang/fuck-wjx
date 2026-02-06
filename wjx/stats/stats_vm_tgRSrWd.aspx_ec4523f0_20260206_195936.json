@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "survey_url": "https://v.wjx.cn/vm/tgRSrWd.aspx",
+  "survey_title": null,
+  "created_at": "2026-02-06T19:58:50.569413",
+  "updated_at": "2026-02-06T19:59:36.332117",
+  "total_submissions": 6,
+  "failed_submissions": 0,
+  "questions": {
+    "1": {
+      "question_type": "single",
+      "question_title": null,
+      "total_responses": 6,
+      "options": {
+        "1": {
+          "count": 6,
+          "text": ""
+        }
+      }
+    },
+    "3": {
+      "question_type": "slider",
+      "question_title": null,
+      "total_responses": 6,
+      "options": {
+        "99": {
+          "count": 2,
+          "text": ""
+        },
+        "97": {
+          "count": 2,
+          "text": ""
+        },
+        "30": {
+          "count": 1,
+          "text": ""
+        },
+        "78": {
+          "count": 1,
+          "text": ""
+        }
+      }
+    },
+    "4": {
+      "question_type": "scale",
+      "question_title": null,
+      "total_responses": 6,
+      "options": {
+        "10": {
+          "count": 6,
+          "text": ""
+        }
+      }
+    },
+    "5": {
+      "question_type": "text",
+      "question_title": null,
+      "total_responses": 6,
+      "options": {},
+      "text_answers": {
+        "无": 6
+      }
+    },
+    "6": {
+      "question_type": "multiple",
+      "question_title": null,
+      "total_responses": 12,
+      "options": {
+        "1": {
+          "count": 6,
+          "text": ""
+        },
+        "2": {
+          "count": 6,
+          "text": ""
+        }
+      }
+    },
+    "7": {
+      "question_type": "matrix",
+      "question_title": null,
+      "total_responses": 12,
+      "options": {},
+      "rows": {
+        "0": {
+          "4": 6
+        },
+        "1": {
+          "4": 6
+        }
+      }
+    },
+    "8": {
+      "question_type": "scale",
+      "question_title": null,
+      "total_responses": 6,
+      "options": {
+        "4": {
+          "count": 6,
+          "text": ""
+        }
+      }
+    },
+    "9": {
+      "question_type": "scale",
+      "question_title": null,
+      "total_responses": 6,
+      "options": {
+        "4": {
+          "count": 6,
+          "text": ""
+        }
+      }
+    }
+  }
+}

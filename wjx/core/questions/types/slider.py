@@ -3,6 +3,7 @@ import random
 from typing import List, Optional, Union
 
 from wjx.network.browser_driver import By, BrowserDriver, NoSuchElementException
+from wjx.core.stats.collector import stats_collector
 
 
 def _set_slider_input_value(driver: BrowserDriver, current: int, value: Union[int, float]) -> None:
@@ -162,3 +163,7 @@ def slider_question(driver: BrowserDriver, current: int, score: Optional[float] 
         except Exception:
             pass
     _set_slider_input_value(driver, current, target_value)
+    # 记录统计数据（将目标值映射为索引，按step计算）
+    if step_value > 0 and max_value > min_value:
+        step_index = int(round((target_value - min_value) / step_value))
+        stats_collector.record_slider_choice(current, step_index)

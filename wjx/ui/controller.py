@@ -77,11 +77,13 @@ class EngineGuiAdapter:
         stop_signal: threading.Event,
         card_code_provider: Optional[Callable[[], Optional[str]]] = None,
         on_ip_counter: Optional[Callable[[int, int, bool, bool], None]] = None,
+        async_dispatcher: Optional[Callable[[Callable[[], None]], None]] = None,
     ):
         self.random_ip_enabled_var = BoolVar(False)
         self.active_drivers: List[Any] = []
         self._launched_browser_pids: Set[int] = set()
         self._dispatcher = dispatcher
+        self._async_dispatcher = async_dispatcher or dispatcher
         self._stop_signal = stop_signal
         self._card_code_provider = card_code_provider
         self.update_random_ip_counter = on_ip_counter
@@ -100,20 +102,8 @@ class EngineGuiAdapter:
 
     def _post_to_ui_thread_async(self, callback: Callable[[], None]) -> None:
         """Fire-and-forget UI dispatch to avoid blocking worker threads."""
-        if QCoreApplication.instance() is None:
-            try:
-                callback()
-            except Exception:
-                pass
-            return
-        if threading.current_thread() is threading.main_thread():
-            try:
-                callback()
-            except Exception:
-                pass
-            return
         try:
-            QTimer.singleShot(0, callback)
+            self._async_dispatcher(callback)
         except Exception:
             try:
                 callback()
@@ -190,6 +180,8 @@ class RunController(QObject):
     runFailed = Signal(str)
     statusUpdated = Signal(str, int, int)
     pauseStateChanged = Signal(bool, str)
+    cleanupFinished = Signal()
+    _uiCallbackQueued = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -198,7 +190,11 @@ class RunController(QObject):
         self.question_entries: List[QuestionEntry] = []
         self.stop_event = threading.Event()
         self.worker_threads: List[threading.Thread] = []
-        self.adapter = EngineGuiAdapter(self._dispatch_to_ui, self.stop_event)
+        self.adapter = EngineGuiAdapter(
+            self._dispatch_to_ui,
+            self.stop_event,
+            async_dispatcher=self._dispatch_to_ui_async,
+        )
         self.running = False
         self._paused_state = False
         self._status_timer = QTimer(self)
@@ -209,6 +205,38 @@ class RunController(QObject):
         self._cleanup_runner = CleanupRunner()
         self._completion_cleanup_done = False
         self._cleanup_scheduled = False
+        self._uiCallbackQueued.connect(self._execute_ui_callback)
+
+    def _execute_ui_callback(self, callback: object) -> None:
+        if not callable(callback):
+            return
+        try:
+            callback()
+        except Exception:
+            logging.debug("执行 UI 回调失败", exc_info=True)
+
+    def _dispatch_to_ui_async(self, callback: Callable[[], None]) -> None:
+        if not callable(callback):
+            return
+        if QCoreApplication.instance() is None:
+            try:
+                callback()
+            except Exception:
+                pass
+            return
+        if threading.current_thread() is threading.main_thread():
+            try:
+                callback()
+            except Exception:
+                pass
+            return
+        try:
+            self._uiCallbackQueued.emit(callback)
+        except Exception:
+            try:
+                callback()
+            except Exception:
+                pass
 
     # -------------------- Parsing --------------------
     def parse_survey(self, url: str):
@@ -411,7 +439,7 @@ class RunController(QObject):
                 done.set()
 
         # 将回调派发到控制器所属线程（主线程）
-        QTimer.singleShot(0, _run)
+        self._dispatch_to_ui_async(_run)
         if not done.wait(timeout=3):
             try:
                 import logging
@@ -451,10 +479,19 @@ class RunController(QObject):
     def start_run(self, config: RuntimeConfig):
         import logging
         logging.info("收到启动请求")
-        
+
         if self.running:
             logging.warning("任务已在运行中，忽略重复启动请求")
             return
+
+        # 仅在确认要启动新一轮任务时再重置全局进度状态
+        # 避免“正在运行时误点开始”把当前任务状态清零。
+        state.cur_num = 0
+        state.cur_fail = 0
+        state.target_num = max(1, int(getattr(config, "target", 1) or 1))
+        state._target_reached_stop_triggered = False
+        state._aliyun_captcha_stop_triggered = False
+        state._aliyun_captcha_popup_shown = False
         if not getattr(config, "question_entries", None):
             logging.error("未配置任何题目，无法启动")
             self.runFailed.emit('未配置任何题目，无法开始执行（请先在"题目配置"页添加/配置题目）')
@@ -470,6 +507,7 @@ class RunController(QObject):
             self.stop_event,
             card_code_provider=getattr(self, "card_code_provider", None),
             on_ip_counter=getattr(self, "on_ip_counter", None),
+            async_dispatcher=self._dispatch_to_ui_async,
         )
         self.adapter.random_ip_enabled_var.set(config.random_ip_enabled)
         self._paused_state = False
@@ -546,7 +584,7 @@ class RunController(QObject):
 
     def _on_run_finished(self, adapter_snapshot: Optional[EngineGuiAdapter] = None):
         if threading.current_thread() is not threading.main_thread():
-            QTimer.singleShot(0, lambda: self._on_run_finished(adapter_snapshot))
+            self._dispatch_to_ui_async(lambda: self._on_run_finished(adapter_snapshot))
             return
         self._schedule_cleanup(adapter_snapshot)
         self.running = False
@@ -568,6 +606,8 @@ class RunController(QObject):
                 adapter.cleanup_browsers()
             except Exception:
                 pass
+            finally:
+                self._dispatch_to_ui_async(self.cleanupFinished.emit)
 
         self._cleanup_runner.submit(_cleanup, delay_seconds=delay_seconds)
 

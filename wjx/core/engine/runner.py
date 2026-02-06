@@ -22,6 +22,8 @@ from wjx.core.engine.runtime_control import (
     _wait_if_paused,
 )
 from wjx.core.engine.submission import _is_device_quota_limit_page, _normalize_url_for_compare
+from wjx.core.stats.collector import stats_collector
+from wjx.core.stats.persistence import save_stats
 from wjx.network.browser_driver import (
     BrowserDriver,
     ProxyConnectionError,
@@ -43,6 +45,30 @@ from wjx.utils.app.config import (
     POST_SUBMIT_URL_POLL_INTERVAL,
 )
 from wjx.utils.logging.log_utils import log_suppressed_exception
+
+
+def _submission_blocked_by_security_check(driver: BrowserDriver) -> bool:
+    """检测提交后是否出现“需要安全校验/请重新提交”等拦截提示。"""
+    script = r"""
+        return (() => {
+            const text = (document.body?.innerText || '').replace(/\s+/g, '');
+            if (!text) return false;
+            const markers = [
+                '需要安全校验',
+                '请重新提交',
+                '安全校验',
+                '安全验证',
+                '智能验证',
+                '人机验证',
+                '滑动验证',
+            ];
+            return markers.some(marker => text.includes(marker));
+        })();
+    """
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
 
 
 def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=None):
@@ -71,6 +97,10 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
         logging.info("随机IP已启用")
     if state.random_user_agent_enabled:
         logging.info("随机UA已启用")
+
+    # 初始化统计会话
+    if state.url:
+        stats_collector.start_session(state.url)
 
     def _register_driver(instance: BrowserDriver) -> None:
         if gui_instance and hasattr(gui_instance, 'active_drivers'):
@@ -240,6 +270,14 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                         logging.info(
                             f"[OK/Quota] 已填写{state.cur_num}份 - 失败{state.cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
                         )
+                        # 记录统计并保存
+                        stats_collector.record_submission_success()
+                        try:
+                            current_stats = stats_collector.get_current_stats()
+                            if current_stats:
+                                save_stats(current_stats)
+                        except Exception:
+                            pass
                         should_handle_random_ip = state.random_proxy_ip_enabled
                         if state.target_num > 0 and state.cur_num >= state.target_num:
                             trigger_target_stop = True
@@ -276,17 +314,26 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 if stop_signal.wait(post_submit_wait):
                     break
 
-                # 检查是否触发阿里云验证
+                # 检查是否触发阿里云验证（强制检测，确保不漏检）
                 aliyun_detected = False
                 if not stop_signal.is_set():
                     try:
-                        aliyun_detected = handle_aliyun_captcha(
+                        # 使用 raise_on_detect=True，让异常直接抛出到外层 except 处理
+                        handle_aliyun_captcha(
                             driver,
-                            timeout=2,
+                            timeout=3,
                             stop_signal=stop_signal,
-                            raise_on_detect=False,
+                            raise_on_detect=True,
                         )
-                    except Exception:
+                        # 如果没抛异常，说明未检测到验证码
+                        aliyun_detected = False
+                    except AliyunCaptchaBypassError:
+                        # 检测到阿里云验证码，触发全局停止
+                        aliyun_detected = True
+                        logging.warning("提交后检测到阿里云智能验证，触发全局暂停")
+                    except Exception as exc:
+                        # 其他异常也视为可能的验证码问题，记录日志但不中断
+                        logging.warning(f"验证码检测过程出现异常：{exc}")
                         aliyun_detected = False
 
                 if aliyun_detected:
@@ -294,7 +341,65 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                     _handle_aliyun_captcha_detected(gui_instance, stop_signal)
                     break
 
-                # 没有触发验证，直接标记为成功
+                # 补充检测：未命中阿里云控件时，也要识别“需要安全校验/请重新提交”等拦截文案
+                if not stop_signal.is_set() and _submission_blocked_by_security_check(driver):
+                    driver_had_error = True
+                    logging.warning("提交后检测到安全校验拦截提示，触发全局暂停")
+                    _handle_aliyun_captcha_detected(gui_instance, stop_signal)
+                    break
+
+                # 只有确认进入完成页，才允许计为成功，避免“未完成却记成功”的误判
+                completion_detected = False
+                wait_seconds = max(3.0, float(POST_SUBMIT_URL_MAX_WAIT or 0.0) * 6.0)
+                poll_interval = max(0.05, float(POST_SUBMIT_URL_POLL_INTERVAL or 0.1))
+                wait_deadline = time.time() + wait_seconds
+                while time.time() < wait_deadline:
+                    if stop_signal.is_set():
+                        break
+                    try:
+                        current_url = driver.current_url
+                    except Exception:
+                        current_url = ""
+                    if "complete" in str(current_url).lower():
+                        completion_detected = True
+                        break
+                    try:
+                        if duration_control.is_survey_completion_page(driver):
+                            completion_detected = True
+                            break
+                    except Exception as exc:
+                        log_suppressed_exception("runner.post_submit_wait is_survey_completion_page", exc)
+
+                    if _submission_blocked_by_security_check(driver):
+                        driver_had_error = True
+                        logging.warning("提交后等待完成页期间命中安全校验提示，触发全局暂停")
+                        _handle_aliyun_captcha_detected(gui_instance, stop_signal)
+                        break
+                    time.sleep(poll_interval)
+
+                if driver_had_error or stop_signal.is_set():
+                    break
+
+                if not completion_detected:
+                    try:
+                        handle_aliyun_captcha(
+                            driver,
+                            timeout=3,
+                            stop_signal=stop_signal,
+                            raise_on_detect=True,
+                        )
+                    except AliyunCaptchaBypassError:
+                        driver_had_error = True
+                        logging.warning("提交后未进入完成页且检测到阿里云智能验证，触发全局暂停")
+                        _handle_aliyun_captcha_detected(gui_instance, stop_signal)
+                        break
+                    except Exception as exc:
+                        logging.warning(f"提交后补充验证码检测异常：{exc}")
+
+                if not completion_detected:
+                    raise TimeoutException("提交后未检测到完成页")
+
+                # 确认未触发验证，标记为成功
                 should_handle_random_ip = False
                 trigger_target_stop = False
                 should_break = False
@@ -304,6 +409,14 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                         logging.info(
                             f"[OK] 已填写{state.cur_num}份 - 失败{state.cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
                         )
+                        # 记录统计并保存
+                        stats_collector.record_submission_success()
+                        try:
+                            current_stats = stats_collector.get_current_stats()
+                            if current_stats:
+                                save_stats(current_stats)
+                        except Exception:
+                            pass
                         should_handle_random_ip = state.random_proxy_ip_enabled
                         if state.target_num > 0 and state.cur_num >= state.target_num:
                             trigger_target_stop = True
@@ -365,13 +478,19 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             if not completion_detected and not stop_signal.is_set():
                 aliyun_detected = False
                 try:
-                    aliyun_detected = handle_aliyun_captcha(
+                    # 使用 raise_on_detect=True，确保检测到验证码时抛出异常
+                    handle_aliyun_captcha(
                         driver,
                         timeout=3,
                         stop_signal=stop_signal,
-                        raise_on_detect=False,
+                        raise_on_detect=True,
                     )
-                except Exception:
+                    aliyun_detected = False
+                except AliyunCaptchaBypassError:
+                    aliyun_detected = True
+                    logging.warning("超时等待后检测到阿里云智能验证，触发全局暂停")
+                except Exception as exc:
+                    logging.warning(f"验证码检测过程出现异常：{exc}")
                     aliyun_detected = False
                 if aliyun_detected:
                     driver_had_error = True
@@ -401,6 +520,14 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                         logging.info(
                             f"[OK] 已填写{state.cur_num}份 - 失败{state.cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
                         )
+                        # 记录统计并保存
+                        stats_collector.record_submission_success()
+                        try:
+                            current_stats = stats_collector.get_current_stats()
+                            if current_stats:
+                                save_stats(current_stats)
+                        except Exception:
+                            pass
                         should_handle_random_ip = state.random_proxy_ip_enabled
                         if state.target_num > 0 and state.cur_num >= state.target_num:
                             trigger_target_stop = True

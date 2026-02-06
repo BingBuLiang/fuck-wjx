@@ -9,6 +9,7 @@ from wjx.core.questions.utils import (
     get_fill_text_from_config,
     fill_option_additional_text,
 )
+from wjx.core.stats.collector import stats_collector
 
 
 def single(driver: BrowserDriver, current: int, index: int, single_prob_config: List, single_option_fill_texts_config: List) -> None:
@@ -95,7 +96,10 @@ def single(driver: BrowserDriver, current: int, index: int, single_prob_config: 
         except Exception as exc:
             logging.warning("单选题默认选择器点击失败（题号%s，索引%s）：%s", current, selected_option, exc)
             return
-    
+
+    # 记录统计数据
+    stats_collector.record_single_choice(current, target_index)
+
     fill_entries = single_option_fill_texts_config[index] if index < len(single_option_fill_texts_config) else None
     fill_value = get_fill_text_from_config(fill_entries, selected_option - 1)
     fill_option_additional_text(driver, current, selected_option - 1, fill_value)

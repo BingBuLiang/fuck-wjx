@@ -9,6 +9,7 @@ from wjx.core.questions.utils import (
     get_fill_text_from_config,
     fill_option_additional_text,
 )
+from wjx.core.stats.collector import stats_collector
 
 
 def _extract_select_options(driver: BrowserDriver, question_number: int) -> Tuple[Any, List[Tuple[str, str]]]:
@@ -131,6 +132,8 @@ def _fill_droplist_via_click(driver: BrowserDriver, current: int, prob_config: U
         selected_option.click()
     except Exception:
         return
+    # 记录统计数据
+    stats_collector.record_dropdown_choice(current, selected_idx)
     fill_value = get_fill_text_from_config(fill_entries, selected_idx)
     fill_option_additional_text(driver, current, selected_idx, fill_value)
 
@@ -145,6 +148,8 @@ def droplist(driver: BrowserDriver, current: int, index: int, droplist_prob_conf
         selected_idx = weighted_index(probabilities)
         selected_value, selected_text = select_options[selected_idx]
         if _select_dropdown_option_via_js(driver, select_element, selected_value, selected_text):
+            # 记录统计数据
+            stats_collector.record_dropdown_choice(current, selected_idx)
             fill_value = get_fill_text_from_config(fill_entries, selected_idx)
             fill_option_additional_text(driver, current, selected_idx, fill_value)
             return

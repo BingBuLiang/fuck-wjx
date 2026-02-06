@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "survey_url": "https://v.wjx.cn/vm/tgRSrWd.aspx",
+  "survey_title": null,
+  "created_at": "2026-02-06T21:54:18.442999",
+  "updated_at": "2026-02-06T21:54:28.543158",
+  "total_submissions": 1,
+  "failed_submissions": 0,
+  "questions": {
+    "1": {
+      "question_type": "single",
+      "question_title": null,
+      "total_responses": 1,
+      "options": {
+        "1": {
+          "count": 1,
+          "text": ""
+        }
+      }
+    },
+    "3": {
+      "question_type": "slider",
+      "question_title": null,
+      "total_responses": 1,
+      "options": {
+        "97": {
+          "count": 1,
+          "text": ""
+        }
+      }
+    },
+    "4": {
+      "question_type": "scale",
+      "question_title": null,
+      "total_responses": 1,
+      "options": {
+        "10": {
+          "count": 1,
+          "text": ""
+        }
+      }
+    },
+    "5": {
+      "question_type": "text",
+      "question_title": null,
+      "total_responses": 1,
+      "options": {},
+      "text_answers": {
+        "无": 1
+      }
+    },
+    "6": {
+      "question_type": "multiple",
+      "question_title": null,
+      "total_responses": 2,
+      "options": {
+        "1": {
+          "count": 1,
+          "text": ""
+        },
+        "2": {
+          "count": 1,
+          "text": ""
+        }
+      }
+    },
+    "7": {
+      "question_type": "matrix",
+      "question_title": null,
+      "total_responses": 2,
+      "options": {},
+      "rows": {
+        "0": {
+          "4": 1
+        },
+        "1": {
+          "4": 1
+        }
+      }
+    },
+    "8": {
+      "question_type": "scale",
+      "question_title": null,
+      "total_responses": 1,
+      "options": {
+        "4": {
+          "count": 1,
+          "text": ""
+        }
+      }
+    },
+    "9": {
+      "question_type": "scale",
+      "question_title": null,
+      "total_responses": 1,
+      "options": {
+        "4": {
+          "count": 1,
+          "text": ""
+        }
+      }
+    }
+  }
+}

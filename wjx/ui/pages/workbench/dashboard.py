@@ -117,6 +117,8 @@ class DashboardPage(QWidget):
         self._open_wizard_after_parse = False
         self._last_pause_reason = ""
         self._completion_notified = False
+        self._pending_restart = False
+        self._show_end_toast_after_cleanup = False
         self._last_progress = 0
         self._build_ui()
         self.config_drawer = ConfigDrawer(self, self._load_config_from_path)
@@ -437,6 +439,13 @@ class DashboardPage(QWidget):
             self._toast(f"保存失败：{exc}", "error")
 
     def _on_start_clicked(self):
+        if getattr(self.controller, "running", False):
+            if self._completion_notified:
+                self._pending_restart = True
+                self.controller.stop_run()
+                self._toast("正在重新开始，请稍候...", "info", 1200)
+            return
+
         cfg = self._build_config()
         cfg.question_entries = list(self.question_page.get_entries())
         if not cfg.question_entries:
@@ -495,7 +504,15 @@ class DashboardPage(QWidget):
             self.start_btn.setEnabled(self._has_question_entries())
             self.stop_btn.setEnabled(False)
             if not self._completion_notified:
-                self._toast("任务结束", "info", 1500)
+                self._show_end_toast_after_cleanup = True
+            if self._pending_restart:
+                self._pending_restart = False
+                self._on_start_clicked()
+
+    def on_cleanup_finished(self):
+        if self._show_end_toast_after_cleanup:
+            self._show_end_toast_after_cleanup = False
+            self._toast("任务结束", "info", 1500)
 
     def on_pause_state_changed(self, paused: bool, reason: str = ""):
         self._last_pause_reason = str(reason or "")

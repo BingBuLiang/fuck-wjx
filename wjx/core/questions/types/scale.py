@@ -4,6 +4,7 @@ from typing import List, Union
 
 from wjx.network.browser_driver import By, BrowserDriver
 from wjx.core.questions.utils import weighted_index
+from wjx.core.stats.collector import stats_collector
 
 
 def scale(driver: BrowserDriver, current: int, index: int, scale_prob_config: List) -> None:
@@ -18,3 +19,5 @@ def scale(driver: BrowserDriver, current: int, index: int, scale_prob_config: Li
     else:
         selected_index = weighted_index(probabilities)
     scale_options[selected_index].click()
+    # 记录统计数据
+    stats_collector.record_scale_choice(current, selected_index)

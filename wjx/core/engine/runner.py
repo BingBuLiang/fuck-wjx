@@ -147,10 +147,10 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             except Exception as exc:
                 log_suppressed_exception("runner._dispose_driver driver.quit", exc)
             driver = None
-            # 等待已知 PID 自行退出，避免 taskkill
+            # 短暂等待已知 PID 自行退出；不要等太久（CleanupRunner 会做彻底清理）
             if pids_to_kill:
                 try:
-                    graceful_terminate_process_tree(pids_to_kill, wait_seconds=3.0)
+                    graceful_terminate_process_tree(pids_to_kill, wait_seconds=0.5)
                 except Exception as exc:
                     log_suppressed_exception("runner._dispose_driver terminate process tree", exc)
         # 释放信号量

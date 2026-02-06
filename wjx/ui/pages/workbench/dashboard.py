@@ -452,12 +452,13 @@ class DashboardPage(QWidget):
             self._toast("未配置任何题目，无法开始执行（请先在'题目配置'页添加/配置题目）", "warning")
             self._sync_start_button_state(running=False)
             return
-        # 重置进度与提示，避免上一轮完成状态残留
-        self.progress_bar.setValue(0)
-        self.progress_pct.setText("0%")
-        self._last_progress = 0
-        self._completion_notified = False
-        self.status_label.setText(f"已提交 0/{cfg.target} 份 | 失败 0 次")
+        # 只有在任务完成后的重新开始才重置进度，暂停后继续不重置
+        if self._completion_notified or self._last_progress >= 100:
+            self.progress_bar.setValue(0)
+            self.progress_pct.setText("0%")
+            self._last_progress = 0
+            self._completion_notified = False
+            self.status_label.setText(f"已提交 0/{cfg.target} 份 | 失败 0 次")
         try:
             configure_probabilities(cfg.question_entries)
         except Exception as exc:

@@ -168,7 +168,7 @@ class EngineGuiAdapter:
 
         if pids_to_wait:
             try:
-                graceful_terminate_process_tree(pids_to_wait, wait_seconds=3.0)
+                graceful_terminate_process_tree(pids_to_wait, wait_seconds=1.5)
             except Exception:
                 pass
 
@@ -205,6 +205,7 @@ class RunController(QObject):
         self._cleanup_runner = CleanupRunner()
         self._completion_cleanup_done = False
         self._cleanup_scheduled = False
+        self._stopped_by_stop_run = False
         self._uiCallbackQueued.connect(self._execute_ui_callback)
 
     def _execute_ui_callback(self, callback: object) -> None:
@@ -513,6 +514,7 @@ class RunController(QObject):
         self._paused_state = False
         self._completion_cleanup_done = False
         self._cleanup_scheduled = False
+        self._stopped_by_stop_run = False
         
         logging.info(f"配置题目概率分布（共{len(config.question_entries)}题）")
         try:
@@ -587,9 +589,13 @@ class RunController(QObject):
             self._dispatch_to_ui_async(lambda: self._on_run_finished(adapter_snapshot))
             return
         self._schedule_cleanup(adapter_snapshot)
-        self.running = False
-        self.runStateChanged.emit(False)
+        # 如果已经由 stop_run() 处理过状态变更，不再重复发信号（避免双重触发 UI 更新）
+        already_stopped = getattr(self, '_stopped_by_stop_run', False)
+        self._stopped_by_stop_run = False
         self._status_timer.stop()
+        if not already_stopped:
+            self.running = False
+            self.runStateChanged.emit(False)
         self._emit_status()
 
     def _submit_cleanup_task(
@@ -624,6 +630,11 @@ class RunController(QObject):
         if not self.running:
             return
         self.stop_event.set()
+        # 立即停止状态轮询定时器，减少关停期间的主线程开销
+        try:
+            self._status_timer.stop()
+        except Exception:
+            pass
         try:
             if self.adapter:
                 self.adapter.resume_run()
@@ -634,7 +645,10 @@ class RunController(QObject):
             self._paused_state = False
             self.pauseStateChanged.emit(False, "")
         self.running = False
+        self._stopped_by_stop_run = True
         self.runStateChanged.emit(False)
+        # 做一次最终状态刷新
+        self._emit_status()
 
     def resume_run(self):
         """Resume execution after a pause (does not restart threads)."""

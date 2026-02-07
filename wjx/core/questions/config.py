@@ -178,6 +178,16 @@ def configure_probabilities(entries: List[QuestionEntry]):
     state.single_option_fill_texts = []
     state.droplist_option_fill_texts = []
     state.multiple_option_fill_texts = []
+    state.question_config_index_map = {}
+
+    # 各题型的当前索引，用于构建 question_config_index_map
+    _idx_single = 0
+    _idx_dropdown = 0
+    _idx_multiple = 0
+    _idx_matrix = 0
+    _idx_scale = 0
+    _idx_slider = 0
+    _idx_text = 0
 
     for entry in entries:
         # 若配置里未写明选项数，尽量从权重/概率推断，并回写以便后续编辑显示正确数量
@@ -192,18 +202,26 @@ def configure_probabilities(entries: List[QuestionEntry]):
         if probs is not entry.probabilities:
             entry.probabilities = probs
         if entry.question_type == "single":
+            state.question_config_index_map[entry.question_num] = ("single", _idx_single)
+            _idx_single += 1
             state.single_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
             state.single_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
         elif entry.question_type == "dropdown":
+            state.question_config_index_map[entry.question_num] = ("dropdown", _idx_dropdown)
+            _idx_dropdown += 1
             state.droplist_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
             state.droplist_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
         elif entry.question_type == "multiple":
+            state.question_config_index_map[entry.question_num] = ("multiple", _idx_multiple)
+            _idx_multiple += 1
             if not isinstance(probs, list):
                 raise ValueError("多选题必须提供概率列表，数值范围0-100")
             state.multiple_prob.append([float(value) for value in probs])
             state.multiple_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
         elif entry.question_type == "matrix":
             rows = max(1, entry.rows)
+            state.question_config_index_map[entry.question_num] = ("matrix", _idx_matrix)
+            _idx_matrix += rows
             option_count = max(1, _infer_option_count(entry))
 
             def _normalize_row(raw_row: Any) -> Optional[List[float]]:
@@ -252,8 +270,12 @@ def configure_probabilities(entries: List[QuestionEntry]):
                 for _ in range(rows):
                     state.matrix_prob.append(-1)
         elif entry.question_type in ("scale", "score"):
+            state.question_config_index_map[entry.question_num] = ("scale", _idx_scale)
+            _idx_scale += 1
             state.scale_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
         elif entry.question_type == "slider":
+            state.question_config_index_map[entry.question_num] = ("slider", _idx_slider)
+            _idx_slider += 1
             mode = str(getattr(entry, "distribution_mode", "") or "").strip().lower()
             if mode == "random":
                 state.slider_targets.append(float("nan"))
@@ -276,6 +298,11 @@ def configure_probabilities(entries: List[QuestionEntry]):
                 target_value = 50.0
             state.slider_targets.append(target_value)
         elif entry.question_type in ("text", "multi_text"):
+            if not getattr(entry, "is_location", False):
+                state.question_config_index_map[entry.question_num] = ("text", _idx_text)
+                _idx_text += 1
+            else:
+                state.question_config_index_map[entry.question_num] = ("location", -1)
             raw_values = entry.texts or []
             normalized_values: List[str] = []
             for item in raw_values:

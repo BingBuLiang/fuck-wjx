@@ -31,6 +31,8 @@ from wjx.core.stats.collector import stats_collector
 _DETECTED_MULTI_LIMITS: Dict[Tuple[str, int], Optional[int]] = {}
 _DETECTED_MULTI_LIMIT_RANGES: Dict[Tuple[str, int], Tuple[Optional[int], Optional[int]]] = {}
 _REPORTED_MULTI_LIMITS: Set[Tuple[str, int]] = set()
+# 缓存已警告过概率不匹配的题目（避免重复警告）
+_WARNED_PROB_MISMATCH: Set[int] = set()
 
 
 def _safe_positive_int(value: Any) -> Optional[int]:
@@ -347,7 +349,14 @@ def multiple(driver: BrowserDriver, current: int, index: int, multiple_prob_conf
         return
 
     if len(option_elements) != len(selection_probabilities):
-        logging.warning("第%d题多选概率数量(%d)与选项数量(%d)不一致，自动矫正", current, len(selection_probabilities), len(option_elements))
+        # 只在首次遇到时警告，避免重复信息
+        if current not in _WARNED_PROB_MISMATCH:
+            _WARNED_PROB_MISMATCH.add(current)
+            logging.warning(
+                "第%d题（多选）：配置概率数(%d)与页面实际选项数(%d)不一致，已自动截断/补齐。"
+                "请检查该题配置的概率列表长度是否与问卷页面选项数一致。",
+                current, len(selection_probabilities), len(option_elements)
+            )
         if len(selection_probabilities) > len(option_elements):
             selection_probabilities = selection_probabilities[: len(option_elements)]
         else:
@@ -374,23 +383,34 @@ def multiple(driver: BrowserDriver, current: int, index: int, multiple_prob_conf
     selection_mask: List[int] = []
     attempts = 0
     max_attempts = 32
+    # 仅从概率 > 0 的选项中生成选择掩码
+    positive_indices = [i for i, p in enumerate(selection_probabilities) if p > 0]
+    if not positive_indices:
+        # 所有概率都为 0 时，前面已经兜底为 100%，不应到达这里
+        positive_indices = list(range(len(option_elements)))
     while sum(selection_mask) == 0 and attempts < max_attempts:
         selection_mask = [1 if random.random() < (prob / 100.0) else 0 for prob in selection_probabilities]
         attempts += 1
     if sum(selection_mask) == 0:
+        # 32次尝试都没选中任何选项，从正概率选项中随机选一个
         selection_mask = [0] * len(option_elements)
-        selection_mask[random.randrange(len(option_elements))] = 1
+        selection_mask[random.choice(positive_indices)] = 1
     selected_indices = [idx for idx, selected in enumerate(selection_mask) if selected == 1]
     if max_select_limit is not None and len(selected_indices) > max_allowed:
         random.shuffle(selected_indices)
         selected_indices = selected_indices[:max_allowed]
     if len(selected_indices) < min_required:
-        remaining = [i for i in range(len(option_elements)) if i not in selected_indices]
-        random.shuffle(remaining)
+        # 补齐到最低选择数时，优先从概率 > 0 的未选选项中补充
+        remaining_positive = [i for i in positive_indices if i not in selected_indices]
+        remaining_all = [i for i in range(len(option_elements)) if i not in selected_indices]
+        random.shuffle(remaining_positive)
+        random.shuffle(remaining_all)
         needed = min_required - len(selected_indices)
-        selected_indices.extend(remaining[:needed])
+        # 先用正概率选项补，不够再用全部选项
+        candidates = remaining_positive if len(remaining_positive) >= needed else remaining_all
+        selected_indices.extend(candidates[:needed])
     if not selected_indices:
-        selected_indices = [random.randrange(len(option_elements))]
+        selected_indices = [random.choice(positive_indices)]
     for option_idx in selected_indices:
         selector = f"#div{current} > div.ui-controlgroup > div:nth-child({option_idx + 1})"
         driver.find_element(By.CSS_SELECTOR, selector).click()

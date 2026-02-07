@@ -269,8 +269,8 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                         logging.info(
                             f"[OK/Quota] 已填写{state.cur_num}份 - 失败{state.cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
                         )
-                        # 记录统计（不立即保存文件）
-                        stats_collector.record_submission_success()
+                        # 提交统计：将缓冲区的题目作答合并到主统计
+                        stats_collector.commit_round()
                         should_handle_random_ip = state.random_proxy_ip_enabled
                         if state.target_num > 0 and state.cur_num >= state.target_num:
                             trigger_target_stop = True
@@ -298,6 +298,8 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
             while True:
                 if stop_signal.is_set():
                     break
+                # 开始新轮作答，清空统计缓冲区
+                stats_collector.start_round()
                 finished = brush(driver, stop_signal=stop_signal)
                 if stop_signal.is_set() or not finished:
                     break
@@ -410,8 +412,8 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                         logging.info(
                             f"[OK] 已填写{state.cur_num}份 - 失败{state.cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
                         )
-                        # 记录统计（不立即保存文件）
-                        stats_collector.record_submission_success()
+                        # 提交统计：将缓冲区的题目作答合并到主统计
+                        stats_collector.commit_round()
                         should_handle_random_ip = state.random_proxy_ip_enabled
                         if state.target_num > 0 and state.cur_num >= state.target_num:
                             trigger_target_stop = True
@@ -519,8 +521,8 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                         logging.info(
                             f"[OK] 已填写{state.cur_num}份 - 失败{state.cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
                         )
-                        # 记录统计（不立即保存文件）
-                        stats_collector.record_submission_success()
+                        # 提交统计：将缓冲区的题目作答合并到主统计
+                        stats_collector.commit_round()
                         should_handle_random_ip = state.random_proxy_ip_enabled
                         if state.target_num > 0 and state.cur_num >= state.target_num:
                             trigger_target_stop = True

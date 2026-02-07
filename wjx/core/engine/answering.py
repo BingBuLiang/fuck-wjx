@@ -94,11 +94,18 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                     break
                 if attempt < 4:
                     time.sleep(0.1)
-            if not question_visible:
-                logging.debug("跳过第%d题（未显示）", current_question_number)
-                continue
+
+            # 先读取题型（即使题目不可见也需要，用于维护索引）
             question_type = question_div.get_attribute("type")
             is_reorder_question = (question_type == "11") or _driver_question_looks_like_reorder(question_div)
+
+            if not question_visible:
+                logging.debug("跳过第%d题（未显示，type=%s）", current_question_number, question_type)
+                continue
+
+            # 通过配置映射表查找当前题号在对应题型概率列表中的正确索引
+            # 这样即使前面有题目被问卷条件逻辑隐藏，索引也不会错位
+            _config_entry = state.question_config_index_map.get(current_question_number)
 
             if question_type in ("1", "2"):
                 # 检测是否为位置题
@@ -106,10 +113,11 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                 if is_location_question:
                     print(f"第{current_question_number}题为位置题，暂不支持，已跳过")
                 else:
+                    _text_idx = _config_entry[1] if _config_entry and _config_entry[0] == "text" else vacant_question_index
                     _vacant_impl(
                         driver,
                         current_question_number,
-                        vacant_question_index,
+                        _text_idx,
                         state.texts,
                         state.texts_prob,
                         state.text_entry_types,
@@ -118,24 +126,30 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                     )
                     vacant_question_index += 1
             elif question_type == "3":
-                _single_impl(driver, current_question_number, single_question_index, state.single_prob, state.single_option_fill_texts)
+                _single_idx = _config_entry[1] if _config_entry and _config_entry[0] == "single" else single_question_index
+                _single_impl(driver, current_question_number, _single_idx, state.single_prob, state.single_option_fill_texts)
                 single_question_index += 1
             elif question_type == "4":
-                _multiple_impl(driver, current_question_number, multiple_question_index, state.multiple_prob, state.multiple_option_fill_texts)
+                _multi_idx = _config_entry[1] if _config_entry and _config_entry[0] == "multiple" else multiple_question_index
+                _multiple_impl(driver, current_question_number, _multi_idx, state.multiple_prob, state.multiple_option_fill_texts)
                 multiple_question_index += 1
             elif question_type == "5":
+                _scale_idx = _config_entry[1] if _config_entry and _config_entry[0] == "scale" else scale_question_index
                 if _driver_question_looks_like_rating(question_div):
-                    _score_impl(driver, current_question_number, scale_question_index, state.scale_prob)
+                    _score_impl(driver, current_question_number, _scale_idx, state.scale_prob)
                 else:
-                    _scale_impl(driver, current_question_number, scale_question_index, state.scale_prob)
+                    _scale_impl(driver, current_question_number, _scale_idx, state.scale_prob)
                 scale_question_index += 1
             elif question_type == "6":
-                matrix_question_index = _matrix_impl(driver, current_question_number, matrix_question_index, state.matrix_prob)
+                _matrix_idx = _config_entry[1] if _config_entry and _config_entry[0] == "matrix" else matrix_question_index
+                matrix_question_index = _matrix_impl(driver, current_question_number, _matrix_idx, state.matrix_prob)
             elif question_type == "7":
-                _droplist_impl(driver, current_question_number, droplist_question_index, state.droplist_prob, state.droplist_option_fill_texts)
+                _drop_idx = _config_entry[1] if _config_entry and _config_entry[0] == "dropdown" else droplist_question_index
+                _droplist_impl(driver, current_question_number, _drop_idx, state.droplist_prob, state.droplist_option_fill_texts)
                 droplist_question_index += 1
             elif question_type == "8":
-                slider_score = _resolve_slider_score(slider_question_index, state.slider_targets)
+                _slider_idx = _config_entry[1] if _config_entry and _config_entry[0] == "slider" else slider_question_index
+                slider_score = _resolve_slider_score(_slider_idx, state.slider_targets)
                 _slider_question_impl(driver, current_question_number, slider_score)
                 slider_question_index += 1
             elif is_reorder_question:

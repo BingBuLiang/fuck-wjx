@@ -20,6 +20,10 @@ single_option_fill_texts: List[Optional[List[Optional[str]]]] = []
 droplist_option_fill_texts: List[Optional[List[Optional[str]]]] = []
 multiple_option_fill_texts: List[Optional[List[Optional[str]]]] = []
 
+# 题号 → (配置题型, 在对应类型概率列表中的起始索引)
+# 用于在问卷存在条件跳转（隐藏题目）时，仍能正确查找每道题的概率配置
+question_config_index_map: Dict[int, Tuple[str, int]] = {}
+
 _browser_semaphore: Optional[threading.Semaphore] = None
 _browser_semaphore_lock = threading.Lock()
 browser_preference: List[str] = []

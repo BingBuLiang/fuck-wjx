@@ -36,6 +36,8 @@ from wjx.network.random_ip import (
     is_custom_proxy_api_active,
 )
 from wjx.utils.system.registry_manager import RegistryManager
+from wjx.core.stats.collector import stats_collector
+from wjx.core.stats.persistence import save_stats
 
 
 def _is_wjx_domain(url_value: str) -> bool:

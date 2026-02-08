@@ -6,6 +6,7 @@ from .contact_form import ContactForm
 from .full_width_infobar import FullWidthInfoBar
 from .log_highlighter import LogHighlighter
 from .config_drawer import ConfigDrawer
+from .setting_cards import SpinBoxSettingCard, SwitchSettingCard
 
 __all__ = [
     "NoWheelSlider",
@@ -16,4 +17,6 @@ __all__ = [
     "LogHighlighter",
     "ContactForm",
     "ConfigDrawer",
+    "SpinBoxSettingCard",
+    "SwitchSettingCard",
 ]

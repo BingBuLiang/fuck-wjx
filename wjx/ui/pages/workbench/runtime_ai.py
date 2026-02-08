@@ -21,7 +21,7 @@ from qfluentwidgets import (
 
 from wjx.ui.widgets.full_width_infobar import FullWidthInfoBar
 from wjx.ui.workers.ai_test_worker import AITestWorker
-from wjx.ui.pages.workbench.runtime_cards import SwitchSettingCard
+from wjx.ui.widgets.setting_cards import SwitchSettingCard
 from wjx.utils.integrations.ai_service import AI_PROVIDERS, DEFAULT_SYSTEM_PROMPT, get_ai_settings, save_ai_settings
 from wjx.utils.io.load_save import RuntimeConfig
 

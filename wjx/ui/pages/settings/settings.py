@@ -16,7 +16,7 @@ from qfluentwidgets import (
     ComboBox,
 )
 
-from wjx.ui.pages.workbench.runtime import SwitchSettingCard
+from wjx.ui.widgets.setting_cards import SwitchSettingCard
 from wjx.utils.app.config import GITHUB_MIRROR_SOURCES, DEFAULT_GITHUB_MIRROR
 
 

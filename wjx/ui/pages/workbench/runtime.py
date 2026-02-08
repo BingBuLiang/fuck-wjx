@@ -21,11 +21,10 @@ from wjx.ui.pages.workbench.runtime_ai import RuntimeAISection
 from wjx.ui.pages.workbench.runtime_cards import (
     RandomIPSettingCard,
     RandomUASettingCard,
-    SpinBoxSettingCard,
-    SwitchSettingCard,
     TimeRangeSettingCard,
     TimedModeSettingCard,
 )
+from wjx.ui.widgets.setting_cards import SpinBoxSettingCard, SwitchSettingCard
 from wjx.ui.pages.workbench.runtime_dialogs import pick_time_value
 from wjx.utils.app.runtime_paths import _get_resource_path
 from wjx.utils.io.load_save import RuntimeConfig

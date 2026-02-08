@@ -38,7 +38,7 @@ from qfluentwidgets import (
 from wjx.ui.pages.workbench.dashboard import DashboardPage
 from wjx.ui.pages.workbench.runtime import RuntimePage
 from wjx.ui.pages.workbench.result import ResultPage
-from wjx.ui.pages.account.settings import SettingsPage
+from wjx.ui.pages.settings.settings import SettingsPage
 from wjx.ui.pages.workbench.question import QuestionPage
 from wjx.ui.pages.workbench.log import LogPage
 from wjx.ui.pages.support.support import SupportPage

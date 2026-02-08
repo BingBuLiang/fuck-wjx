@@ -474,16 +474,21 @@ def create_playwright_driver(
             if main_pid:
                 collected_pids.update(_collect_process_tree(main_pid))
             else:
+                # 增强 PID 捕获：使用多次重试和更长等待时间，确保能捕获到所有浏览器进程
                 try:
-                    time.sleep(0.05)
-                    after = list_browser_pids()
-                    diff = list(after - pre_launch_pids)[:10]
-                    collected_pids.update(diff)
+                    max_attempts = 5
+                    for attempt in range(max_attempts):
+                        time.sleep(0.1 + attempt * 0.05)  # 递增等待：0.1s -> 0.35s
+                        after = list_browser_pids()
+                        diff = list(after - pre_launch_pids)[:10]
+                        if diff:
+                            collected_pids.update(diff)
+                            break
                     # 尝试进一步补全子进程
                     for pid in list(collected_pids):
                         collected_pids.update(_collect_process_tree(pid))
                     if not collected_pids:
-                        logging.warning("[Action Log] 未捕获浏览器主 PID,回退到差集依然为空")
+                        logging.warning("[Action Log] 多次尝试后仍未捕获浏览器 PID，清理可能不完整")
                 except Exception as exc:
                     log_suppressed_exception("browser_driver.create_playwright_driver collect pid fallback", exc)
 

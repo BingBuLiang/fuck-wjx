@@ -99,20 +99,22 @@ class EngineGuiAdapter:
         try:
             self._dispatcher(callback)
         except Exception:
+            logging.debug("UI 派发失败，尝试直接执行回调", exc_info=True)
             try:
                 callback()
             except Exception:
-                pass
+                logging.debug("UI 派发失败且回调直接执行失败", exc_info=True)
 
     def _post_to_ui_thread_async(self, callback: Callable[[], None]) -> None:
         """Fire-and-forget UI dispatch to avoid blocking worker threads."""
         try:
             self._async_dispatcher(callback)
         except Exception:
+            logging.debug("异步 UI 派发失败，尝试直接执行回调", exc_info=True)
             try:
                 callback()
             except Exception:
-                pass
+                logging.debug("异步 UI 派发失败且回调直接执行失败", exc_info=True)
 
     def pause_run(self, reason: str = "") -> None:
         """Pause all worker loops until resumed by UI."""
@@ -146,15 +148,18 @@ class EngineGuiAdapter:
             try:
                 return self._card_code_provider()
             except Exception:
+                logging.warning("获取卡密失败，返回空值", exc_info=True)
                 return None
         return None
 
     def cleanup_browsers(self) -> None:
+        """异步清理所有浏览器实例，立即返回不阻塞 GUI 线程"""
         drivers = list(self.active_drivers or [])
         self.active_drivers.clear()
         pids_to_wait: Set[int] = set(self._launched_browser_pids or set())
         self._launched_browser_pids.clear()
 
+        # 收集所有需要清理的 PID
         for driver in drivers:
             try:
                 pid_single = getattr(driver, "browser_pid", None)
@@ -164,23 +169,31 @@ class EngineGuiAdapter:
                 if pid_set:
                     pids_to_wait.update(int(p) for p in pid_set)
             except Exception:
-                pass
+                logging.debug("收集浏览器 PID 失败，跳过当前 driver", exc_info=True)
 
-        # 先直接终止所有浏览器进程（快速、无 GIL 争用）
-        if pids_to_wait:
-            try:
-                graceful_terminate_process_tree(pids_to_wait, wait_seconds=0.8)
-            except Exception:
-                pass
+        # 将清理任务提交到后台线程，避免阻塞 GUI
+        def _do_cleanup():
+            # 先直接终止所有浏览器进程（快速、无 GIL 争用）
+            if pids_to_wait:
+                try:
+                    graceful_terminate_process_tree(pids_to_wait, wait_seconds=0.8)
+                except Exception:
+                    logging.debug("终止浏览器进程树失败", exc_info=True)
 
-        # 进程已死后再清理 Playwright 实例（不再调用 _browser.close()，避免 GIL 争用）
-        for driver in drivers:
-            if not driver.mark_cleanup_done():
-                continue  # 已被工作线程清理过，跳过
-            try:
-                driver._playwright.stop()
-            except Exception:
-                pass
+            # 进程已死后再清理 Playwright 实例（不再调用 _browser.close()，避免 GIL 争用）
+            for driver in drivers:
+                if not driver.mark_cleanup_done():
+                    continue  # 已被工作线程清理过，跳过
+                try:
+                    driver._playwright.stop()
+                except Exception:
+                    logging.debug("停止 Playwright 实例失败", exc_info=True)
+
+        if self._cleanup_runner:
+            self._cleanup_runner.submit(_do_cleanup, delay_seconds=0.0)
+        else:
+            # 降级方案：直接执行（不应该走到这里）
+            _do_cleanup()
 
 
 class RunController(QObject):
@@ -237,21 +250,22 @@ class RunController(QObject):
             try:
                 callback()
             except Exception:
-                pass
+                logging.debug("无 QCoreApplication 时执行回调失败", exc_info=True)
             return
         if threading.current_thread() is threading.main_thread():
             try:
                 callback()
             except Exception:
-                pass
+                logging.debug("主线程直接执行回调失败", exc_info=True)
             return
         try:
             self._uiCallbackQueued.emit(callback)
         except Exception:
+            logging.warning("UI 回调入队失败，尝试直接执行", exc_info=True)
             try:
                 callback()
             except Exception:
-                pass
+                logging.debug("UI 回调入队失败且直接执行失败", exc_info=True)
 
     # -------------------- Parsing --------------------
     def parse_survey(self, url: str):
@@ -311,7 +325,7 @@ class RunController(QObject):
                     if driver:
                         driver.quit()
                 except Exception:
-                    pass
+                    logging.debug("关闭解析用浏览器实例失败", exc_info=True)
         if not info:
             raise RuntimeError("无法打开问卷链接，请确认链接有效且网络正常")
         normalized_title = _normalize_html_text(title) if title else ""
@@ -472,7 +486,7 @@ class RunController(QObject):
             try:
                 callback()
             except Exception:
-                pass
+                logging.debug("无应用实例时同步 UI 回调执行失败", exc_info=True)
             return
 
         if threading.current_thread() is threading.main_thread():
@@ -490,11 +504,7 @@ class RunController(QObject):
         # 将回调派发到控制器所属线程（主线程）
         self._dispatch_to_ui_async(_run)
         if not done.wait(timeout=3):
-            try:
-                import logging
-                logging.warning("UI 调度超时，放弃等待以避免阻塞")
-            except Exception:
-                pass
+            logging.warning("UI 调度超时，放弃等待以避免阻塞")
             return None
         return result_container.get("value")
 
@@ -661,7 +671,7 @@ class RunController(QObject):
             try:
                 adapter.cleanup_browsers()
             except Exception:
-                pass
+                logging.warning("执行浏览器清理任务失败", exc_info=True)
             finally:
                 self._dispatch_to_ui_async(self.cleanupFinished.emit)
 
@@ -684,12 +694,12 @@ class RunController(QObject):
         try:
             self._status_timer.stop()
         except Exception:
-            pass
+            logging.debug("停止状态定时器失败", exc_info=True)
         try:
             if self.adapter:
                 self.adapter.resume_run()
         except Exception:
-            pass
+            logging.debug("停止时恢复暂停状态失败", exc_info=True)
         self._schedule_cleanup()
         if self._paused_state:
             self._paused_state = False
@@ -714,7 +724,7 @@ class RunController(QObject):
         try:
             self.adapter.resume_run()
         except Exception:
-            pass
+            logging.debug("恢复运行时清除暂停状态失败", exc_info=True)
         if self._paused_state:
             self._paused_state = False
             self.pauseStateChanged.emit(False, "")

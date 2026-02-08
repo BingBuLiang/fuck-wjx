@@ -117,6 +117,7 @@ class RuntimeConfig:
     random_ua_keys: List[str] = field(default_factory=lambda: list(DEFAULT_RANDOM_UA_KEYS))
     fail_stop_enabled: bool = True
     pause_on_aliyun_captcha: bool = True
+    debug_mode: bool = False
     ai_enabled: bool = False
     ai_provider: str = "deepseek"
     ai_api_key: str = ""
@@ -124,6 +125,7 @@ class RuntimeConfig:
     ai_model: str = ""
     ai_system_prompt: str = ""
     question_entries: List[QuestionEntry] = field(default_factory=list)
+    _ai_config_present: bool = field(default=False, init=False, repr=False)
 
 
 def serialize_question_entry(entry: QuestionEntry) -> Dict[str, Any]:
@@ -345,6 +347,7 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     config.random_ua_keys = _filter_valid_user_agent_keys(selected_ua_keys or [])
     config.fail_stop_enabled = bool(raw.get("fail_stop_enabled", True))
     config.pause_on_aliyun_captcha = bool(raw.get("pause_on_aliyun_captcha", True))
+    config.debug_mode = bool(raw.get("debug_mode", False))
 
     ai_keys = {
         "ai_enabled",

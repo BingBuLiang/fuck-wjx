@@ -129,6 +129,17 @@ class SettingsPage(ScrollArea):
         # 系统工具组
         self.tools_group = SettingCardGroup("系统工具", self.view)
 
+        # 调试模式设置卡片
+        self.debug_mode_card = SwitchSettingCard(
+            FluentIcon.CODE,
+            "调试模式",
+            "开启后将显示更详细日志信息，便于排查问题",
+            self.tools_group
+        )
+        debug_mode = bool(settings.value("debug_mode", False, type=bool))
+        self._set_switch_state(self.debug_mode_card, debug_mode)
+        self.tools_group.addSettingCard(self.debug_mode_card)
+
         # 重启程序设置卡片
         self.restart_card = PushSettingCard(
             text="重启",
@@ -158,6 +169,7 @@ class SettingsPage(ScrollArea):
         self.topmost_card.switchButton.checkedChanged.connect(self._on_topmost_toggled)
         self.ask_save_card.switchButton.checkedChanged.connect(self._on_ask_save_on_close_toggled)
         self.auto_save_stats_card.switchButton.checkedChanged.connect(self._on_auto_save_stats_toggled)
+        self.debug_mode_card.switchButton.checkedChanged.connect(self._on_debug_mode_toggled)
         self.restart_card.clicked.connect(self._restart_program)
         self.reset_ui_card.clicked.connect(self._on_reset_ui_settings)
         self.auto_update_card.switchButton.checkedChanged.connect(self._on_auto_update_toggled)
@@ -203,11 +215,8 @@ class SettingsPage(ScrollArea):
             settings.setValue("window_topmost", checked)
         win = self.window()
         if win:
-            if hasattr(win, "apply_topmost_state"):
-                win.apply_topmost_state(checked, show=True)
-            else:
-                win.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, checked)
-                win.show()
+            win.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, checked)
+            win.show()
         if show_tip:
             InfoBar.success(
                 "",
@@ -252,6 +261,26 @@ class SettingsPage(ScrollArea):
             InfoBar.success(
                 "",
                 f"自动保存统计结果已{'开启' if checked else '关闭'}",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+                duration=2000
+            )
+
+    def _apply_debug_mode_state(self, checked: bool, persist: bool = True, show_tip: bool = True):
+        """应用调试模式设置"""
+        from wjx.utils.logging.log_utils import set_debug_mode
+        
+        settings = QSettings("FuckWjx", "Settings")
+        if persist:
+            settings.setValue("debug_mode", checked)
+        
+        # 动态设置日志级别
+        set_debug_mode(checked)
+        
+        if show_tip:
+            InfoBar.success(
+                "",
+                f"调试模式已{'开启' if checked else '关闭'}",
                 parent=self.window(),
                 position=InfoBarPosition.TOP,
                 duration=2000
@@ -302,6 +331,10 @@ class SettingsPage(ScrollArea):
         """自动保存统计结果切换"""
         self._apply_auto_save_stats_state(checked)
 
+    def _on_debug_mode_toggled(self, checked: bool):
+        """调试模式切换"""
+        self._apply_debug_mode_state(checked)
+
     def _on_reset_ui_settings(self):
         """恢复默认设置"""
         box = MessageBox(
@@ -315,7 +348,7 @@ class SettingsPage(ScrollArea):
             return
 
         settings = QSettings("FuckWjx", "Settings")
-        for key in ("sidebar_always_expand", "window_topmost", "ask_save_on_close", "auto_save_stats", "auto_check_update"):
+        for key in ("sidebar_always_expand", "window_topmost", "ask_save_on_close", "auto_save_stats", "auto_check_update", "debug_mode"):
             settings.remove(key)
 
         defaults = {
@@ -324,14 +357,17 @@ class SettingsPage(ScrollArea):
             "ask_save_on_close": True,
             "auto_save_stats": True,
             "auto_check_update": True,
+            "debug_mode": False,
         }
         self._set_switch_state(self.sidebar_card, defaults["sidebar_always_expand"])
         self._set_switch_state(self.topmost_card, defaults["window_topmost"])
         self._set_switch_state(self.ask_save_card, defaults["ask_save_on_close"])
         self._set_switch_state(self.auto_save_stats_card, defaults["auto_save_stats"])
         self._set_switch_state(self.auto_update_card, defaults["auto_check_update"])
+        self._set_switch_state(self.debug_mode_card, defaults["debug_mode"])
         self._apply_sidebar_state(defaults["sidebar_always_expand"], persist=False, show_tip=False)
         self._apply_topmost_state(defaults["window_topmost"], persist=False, show_tip=False)
+        self._apply_debug_mode_state(defaults["debug_mode"], persist=False, show_tip=False)
         InfoBar.success(
             "",
             "已恢复默认设置",

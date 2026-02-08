@@ -194,6 +194,17 @@ if not any(isinstance(h, LogBufferHandler) for h in _root_logger.handlers):
 _root_logger.setLevel(logging.INFO)
 
 
+def set_debug_mode(enabled: bool):
+    """动态设置调试模式，开启/关闭 DEBUG 级别日志输出"""
+    root_logger = logging.getLogger()
+    level = logging.DEBUG if enabled else logging.INFO
+    root_logger.setLevel(level)
+    # 同时更新所有 handler 的级别
+    for handler in root_logger.handlers:
+        if not isinstance(handler, LogBufferHandler):  # BufferHandler 保持收集所有级别
+            handler.setLevel(level)
+
+
 def setup_logging():
     root_logger = logging.getLogger()
     if not root_logger.handlers:

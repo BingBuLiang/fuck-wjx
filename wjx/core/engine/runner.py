@@ -141,23 +141,36 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 log_suppressed_exception("runner._unregister_driver cleanup pids", exc)
 
     def _dispose_driver() -> None:
+        """异步清理浏览器实例，立即返回不阻塞工作线程"""
         nonlocal driver, sem_acquired
-        if driver:
-            # 检查是否已被清理，避免重复处理
-            if not driver.mark_cleanup_done():
-                logging.debug("浏览器实例已被其他线程清理，跳过")
-                driver = None
-                if sem_acquired:
+        if not driver:
+            # 没有浏览器实例需要清理，但可能需要释放信号量
+            if sem_acquired:
+                try:
                     browser_sem.release()
                     sem_acquired = False
-                return
-            
-            # 收集浏览器进程 PID 用于直接终止
-            pids_to_kill = set(getattr(driver, "browser_pids", set()))
-            driver_to_close = driver  # 保存引用
-            _unregister_driver(driver)
-            driver = None  # 立即清空引用，避免重复处理
+                    logging.debug("已释放浏览器信号量（无浏览器实例）")
+                except Exception as exc:
+                    log_suppressed_exception("runner._dispose_driver release semaphore (no driver)", exc)
+            return
 
+        # 检查是否已被清理，避免重复处理
+        if not driver.mark_cleanup_done():
+            logging.debug("浏览器实例已被其他线程清理，跳过")
+            driver = None
+            if sem_acquired:
+                browser_sem.release()
+                sem_acquired = False
+            return
+
+        # 收集浏览器进程 PID 用于直接终止
+        pids_to_kill = set(getattr(driver, "browser_pids", set()))
+        driver_to_close = driver  # 保存引用
+        _unregister_driver(driver)
+        driver = None  # 立即清空引用，避免重复处理
+
+        # 定义清理任务（异步执行）
+        def _do_cleanup():
             # 【卡顿修复】不再使用 _browser.close()（Playwright sync_api 通过 greenlet 轮询，
             # 会频繁抢占 GIL 导致 Qt 主线程事件循环被饿死→GUI 极度卡顿）。
             # 改为：先通过 PID 直接终止浏览器进程（psutil，快速、不阻塞 GIL），
@@ -174,15 +187,28 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 logging.debug("已停止 playwright 实例")
             except Exception as exc:
                 log_suppressed_exception("runner._dispose_driver playwright.stop", exc)
-        
-        # 释放信号量
-        if sem_acquired:
-            try:
-                browser_sem.release()
-                sem_acquired = False
-                logging.debug("已释放浏览器信号量")
-            except Exception as exc:
-                log_suppressed_exception("runner._dispose_driver release semaphore", exc)
+
+        # 定义信号量释放任务（在清理完成后执行）
+        def _release_sem():
+            nonlocal sem_acquired
+            if sem_acquired:
+                try:
+                    browser_sem.release()
+                    sem_acquired = False
+                    logging.debug("已释放浏览器信号量")
+                except Exception as exc:
+                    log_suppressed_exception("runner._dispose_driver release semaphore", exc)
+
+        # 提交到后台清理线程，立即返回不阻塞当前工作线程
+        cleanup_runner = getattr(gui_instance, "_cleanup_runner", None) if gui_instance else None
+        if cleanup_runner:
+            # 先提交清理任务，再提交信号量释放任务（确保顺序执行）
+            cleanup_runner.submit(_do_cleanup, delay_seconds=0.0)
+            cleanup_runner.submit(_release_sem, delay_seconds=0.0)
+        else:
+            # 降级方案：同步执行（可能出现在测试环境或旧版本代码路径）
+            _do_cleanup()
+            _release_sem()
 
     while True:
         _wait_if_paused(gui_instance, stop_signal)

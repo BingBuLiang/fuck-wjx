@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import os
 import threading
 from datetime import datetime
@@ -160,7 +161,7 @@ class MainWindow(FluentWindow):
             if always_expand:
                 self.navigationInterface.expand(useAni=False)
         except Exception:
-            pass
+            logging.debug("初始化时展开侧边栏失败", exc_info=True)
         self._sidebar_expanded = False  # 标记侧边栏是否已展开
         self._bind_controller_signals()
         # 确保初始 adapter 也能回调随机 IP 计数
@@ -217,7 +218,7 @@ class MainWindow(FluentWindow):
         try:
             self.navigationInterface.expand(useAni=False)
         except Exception:
-            pass
+            logging.debug("showEvent 展开侧边栏失败", exc_info=True)
 
     def closeEvent(self, e):
         """窗口关闭时询问用户是否保存配置"""
@@ -229,9 +230,9 @@ class MainWindow(FluentWindow):
                 try:
                     self.support_page.contact_form.stop_status_polling()
                 except Exception:
-                    pass
+                    logging.debug("停止联系表单轮询失败", exc_info=True)
         except Exception:
-            pass
+            logging.debug("窗口关闭前停止定时任务失败", exc_info=True)
         
         if not self._skip_save_on_close:
             settings = QSettings("FuckWjx", "Settings")
@@ -422,18 +423,18 @@ class MainWindow(FluentWindow):
         try:
             self.navigationInterface.removeWidget("login")
         except Exception:
-            pass
+            logging.debug("移除登录导航项失败", exc_info=True)
         
         # 如果不是初始化，需要先移除设置和更多菜单，然后按顺序重新添加
         if not is_init:
             try:
                 self.navigationInterface.removeWidget("settings")
             except Exception:
-                pass
+                logging.debug("移除设置导航项失败", exc_info=True)
             try:
                 self.navigationInterface.removeWidget("about_menu")
             except Exception:
-                pass
+                logging.debug("移除更多菜单导航项失败", exc_info=True)
         
         # 确保 login_page 在 stackedWidget 中
         if self.stackedWidget.indexOf(self.login_page) == -1:
@@ -523,7 +524,7 @@ class MainWindow(FluentWindow):
             frame.moveCenter(available.center())
             self.move(frame.topLeft())
         except Exception:
-            pass
+            logging.debug("窗口居中失败", exc_info=True)
 
     def apply_topmost_state(self, checked: bool, show: bool = False):
         """应用窗口置顶状态，并刷新无边框特效以保留圆角。"""
@@ -540,7 +541,7 @@ class MainWindow(FluentWindow):
             try:
                 self.updateFrameless()
             except Exception:
-                pass
+                logging.debug("刷新无边框窗口状态失败", exc_info=True)
         if show:
             self.show()
 
@@ -734,7 +735,7 @@ class MainWindow(FluentWindow):
             # 将徽章添加到标题栏布局
             self.titleBar.hBoxLayout.insertWidget(2, self._latest_badge, 0, Qt.AlignmentFlag.AlignVCenter)
         except Exception:
-            pass
+            logging.debug("显示最新版徽章失败", exc_info=True)
 
     def _show_outdated_badge(self):
         """在标题栏显示过时版本徽章（红色）"""
@@ -747,7 +748,7 @@ class MainWindow(FluentWindow):
                 self._preview_badge.deleteLater()
                 self._preview_badge = None
             except Exception:
-                pass
+                logging.debug("清理预览版徽章失败", exc_info=True)
         try:
             # 在标题栏添加红色徽章
             self._outdated_badge = InfoBadge.custom(
@@ -759,7 +760,7 @@ class MainWindow(FluentWindow):
             # 将徽章添加到标题栏布局
             self.titleBar.hBoxLayout.insertWidget(2, self._outdated_badge, 0, Qt.AlignmentFlag.AlignVCenter)
         except Exception:
-            pass
+            logging.debug("显示可更新徽章失败", exc_info=True)
 
     def _check_preview_version(self):
         """检查是否为预览版本，如果是则显示预览徽章"""
@@ -781,7 +782,7 @@ class MainWindow(FluentWindow):
             # 将徽章添加到标题栏布局
             self.titleBar.hBoxLayout.insertWidget(2, self._preview_badge, 0, Qt.AlignmentFlag.AlignVCenter)
         except Exception:
-            pass
+            logging.debug("显示预览版徽章失败", exc_info=True)
 
     def _notify_latest_version(self):
         """通知已是最新版本（从后台线程安全调用）"""
@@ -920,7 +921,7 @@ class MainWindow(FluentWindow):
             try:
                 self._download_infobar.close()
             except Exception:
-                pass
+                logging.debug("关闭下载进度提示失败", exc_info=True)
             self._download_infobar = None
             self._download_progress_bar = None
             self._download_detail_label = None
@@ -973,7 +974,7 @@ class MainWindow(FluentWindow):
             mirror_label = GITHUB_MIRROR_SOURCES.get(new_mirror_key, {}).get("label", new_mirror_key)
             self._toast(f"已自动切换到镜像源: {mirror_label}", "info")
         except Exception:
-            pass
+            logging.warning("切换镜像源后同步 UI 状态失败", exc_info=True)
 
 
 def create_window() -> MainWindow:

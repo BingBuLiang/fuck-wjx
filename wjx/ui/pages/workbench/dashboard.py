@@ -369,7 +369,7 @@ class DashboardPage(QWidget):
         self.controller.parse_survey(url)
 
     def _on_survey_parsed(self, info: list, title: str):
-        """问卷解析成功的处理"""
+        """问卷解析成功的处理（仅负责关闭进度条和提示，向导弹出由 MainWindow 处理）"""
         # 关闭进度消息条
         if self._progress_infobar:
             try:
@@ -377,15 +377,10 @@ class DashboardPage(QWidget):
             except Exception:
                 pass
             self._progress_infobar = None
-        
+
         # 显示解析成功消息
         count = len(info) if info else 0
         self._toast(f"解析成功，已识别 {count} 个题目", "success", duration=2500)
-        
-        # 如果设置了打开向导标志，则打开问卷配置向导
-        if self._open_wizard_after_parse:
-            self._open_wizard_after_parse = False
-            self._open_question_wizard()
 
     def _on_survey_parse_failed(self, error_msg: str):
         """问卷解析失败的处理"""

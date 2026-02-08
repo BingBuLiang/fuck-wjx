@@ -410,6 +410,8 @@ def _collect_matrix_option_texts(soup, question_div, question_number: int) -> Tu
     if table is None and soup:
         table = soup.find(id=f"divRefTab{question_number}")
     if table:
+        # 按HTML中的出现顺序提取行标签，而不是按rowindex排序
+        # 这样可以保持与用户看到的顺序一致
         for row in table.find_all("tr"):
             row_index = str(row.get("rowindex") or "").strip()
             if row_index and str(row_index).isdigit():
@@ -420,13 +422,11 @@ def _collect_matrix_option_texts(soup, question_div, question_number: int) -> Tu
                     cells = []
                 if cells:
                     label_text = _extract_row_label(row, cells)
-                    if label_text:
-                        try:
-                            row_text_map[int(row_index)] = label_text
-                        except Exception as exc:
-                            log_suppressed_exception("survey.parser._collect_matrix_rows row_index", exc)
+                    # 直接按出现顺序添加到列表，而不是用rowindex作为索引
+                    row_texts.append(label_text)
     if matrix_rows > 0:
-        row_texts = [row_text_map.get(idx, "") for idx in range(1, matrix_rows + 1)]
+        # row_texts 已经按HTML顺序填充，无需再从map中提取
+        pass
     elif table:
         # 兼容没有 rowindex 的矩阵题：用表格行作为兜底
         data_rows = []

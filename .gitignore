@@ -2,6 +2,7 @@
 *.code-workspace
 .github_token
 .clinerules/
+.claude/
 desktop.ini
 push.bat
 .venv/

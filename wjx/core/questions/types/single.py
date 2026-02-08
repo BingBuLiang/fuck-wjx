@@ -64,12 +64,13 @@ def single(driver: BrowserDriver, current: int, index: int, single_prob_config: 
     except Exception:
         config_len = None
     probabilities = normalize_droplist_probs(prob_config, len(option_elements))
-    if config_len is not None and config_len != len(option_elements):
+    if config_len is not None and config_len > len(option_elements):
+        # 仅在截断（丢弃多余配置）时提示，补零扩展属正常行为无需提示
         logging.debug(
-            "单选题概率配置与选项数不一致（题号%s，概率数%s，选项数%s），已按设定权重自动扩展/截断并重新归一化。",
-            current,
+            "单选题概率配置数(%s)多于实际选项数(%s)（题号%s），多余部分已截断并重新归一化。",
             config_len,
             len(option_elements),
+            current,
         )
     target_index = weighted_index(probabilities)
     selected_option = target_index + 1

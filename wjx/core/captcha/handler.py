@@ -62,7 +62,8 @@ def handle_aliyun_captcha(
         """确保 JS 片段以 return 返回布尔值，避免 evaluate 丢失返回。"""
         js = script.strip()
         if not js.lstrip().startswith("return"):
-            js = "return (" + js + ")"
+            # 先去掉尾部分号，避免 return (...;) 产生 SyntaxError: Unexpected token ';'
+            js = "return (" + js.rstrip(";") + ")"
         try:
             return bool(driver.execute_script(js))
         except Exception:

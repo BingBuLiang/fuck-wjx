@@ -45,7 +45,7 @@ def _set_github_mirror(mirror_key: str) -> None:
         try:
             settings = QSettings("FuckWjx", "Settings")
             settings.setValue("github_mirror", mirror_key)
-            logging.info(f"已切换镜像源为: {mirror_key}")
+            logging.debug(f"已切换镜像源为: {mirror_key}")
         except Exception:
             pass
 
@@ -71,7 +71,7 @@ def _apply_mirror_to_url(url: str, mirror_key: Optional[str] = None) -> str:
     prefix = mirror_config.get("download_prefix", "")
     if prefix and url.startswith("https://github.com/"):
         mirrored_url = prefix + url
-        logging.info(f"使用镜像源 [{mirror_key}]: {mirrored_url}")
+        logging.debug(f"使用镜像源 [{mirror_key}]: {mirrored_url}")
         return mirrored_url
     return url
 
@@ -211,7 +211,7 @@ class UpdateManager:
             actual_url = _apply_mirror_to_url(download_url, current_mirror)
             
             try:
-                logging.info(f"正在连接下载服务器: {actual_url}")
+                logging.debug(f"正在连接下载服务器: {actual_url}")
                 # 使用较短的连接超时，较长的读取超时
                 response = requests.get(actual_url, timeout=(CONNECT_TIMEOUT, 60), stream=True)
                 response.raise_for_status()
@@ -226,7 +226,7 @@ class UpdateManager:
                 last_time = start_time
                 last_downloaded = 0
 
-                logging.info(f"下载目标目录: {current_dir}")
+                logging.debug(f"下载目标目录: {current_dir}")
 
                 last_speed = 0
                 with open(temp_file, "wb") as f:
@@ -255,7 +255,7 @@ class UpdateManager:
                     os.remove(target_file)
                 os.rename(temp_file, target_file)
 
-                logging.info(f"文件已成功下载到: {target_file}")
+                logging.debug(f"文件已成功下载到: {target_file}")
                 
                 # 下载成功，保存当前使用的镜像源
                 _set_github_mirror(current_mirror)
@@ -283,7 +283,7 @@ class UpdateManager:
                 next_mirror = _get_next_mirror(current_mirror)
                 if next_mirror and next_mirror not in tried_mirrors:
                     mirror_label = GITHUB_MIRROR_SOURCES.get(next_mirror, {}).get("label", next_mirror)
-                    logging.info(f"自动切换到镜像源: {mirror_label}")
+                    logging.debug(f"自动切换到镜像源: {mirror_label}")
                     current_mirror = next_mirror
                     # 通知 GUI 镜像源已切换
                     if on_mirror_switch:
@@ -328,7 +328,7 @@ class UpdateManager:
                     continue
                 try:
                     os.remove(file_path)
-                    logging.info(f"已删除旧版本: {file_path}")
+                    logging.debug(f"已删除旧版本: {file_path}")
                 except Exception as exc:
                     logging.warning(f"无法删除旧版本 {file_path}: {exc}")
         except Exception as exc:
@@ -371,7 +371,7 @@ class UpdateManager:
                 ["cmd.exe", "/c", script_path],
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            logging.info(f"已调度删除旧版本执行文件: {current_executable}")
+            logging.debug(f"已调度删除旧版本执行文件: {current_executable}")
         except Exception as exc:
             logging.warning(f"调度删除旧版本失败: {exc}")
 
@@ -406,22 +406,22 @@ def check_updates_on_startup(gui=None, *, on_result=None) -> None:
 
     def _runner():
         try:
-            logging.info("开始检查更新...")
+            logging.debug("开始检查更新...")
             update_info = UpdateManager.check_updates()
-            logging.info(f"检查更新结果: {update_info}")
+            logging.debug(f"检查更新结果: {update_info}")
             if update_info:
                 if gui is not None:
                     setattr(gui, "update_info", update_info)
                     callback = getattr(gui, "show_update_notification", None) or getattr(
                         gui, "_show_update_notification", None
                     )
-                    logging.info(f"找到回调函数: {callback}")
+                    logging.debug(f"找到回调函数: {callback}")
                     if callable(callback):
                         callback()
                 if callable(on_result):
                     on_result(update_info)
             else:
-                logging.info("当前已是最新版本")
+                logging.debug("当前已是最新版本")
                 # 通知 GUI 显示最新版本徽章
                 if gui is not None:
                     notify_latest = getattr(gui, "_notify_latest_version", None)
@@ -449,10 +449,10 @@ def show_update_notification(gui) -> None:
     )
 
     if gui._log_popup_confirm("检查到更新", msg):
-        logging.info("[Action Log] User accepted update notification")
+        logging.debug("[Action Log] User accepted update notification")
         perform_update(gui)
     else:
-        logging.info("[Action Log] User declined update notification")
+        logging.debug("[Action Log] User declined update notification")
 
 
 def check_for_updates(gui=None) -> Optional[Dict[str, Any]]:
@@ -531,7 +531,7 @@ def perform_update(gui, *, on_progress: Optional[Callable[[int, int, float], Non
                     gui.downloadFinished.emit(downloaded_file)
                 else:
                     # 兼容旧版本
-                    logging.info(f"下载完成: {downloaded_file}")
+                    logging.debug(f"下载完成: {downloaded_file}")
             else:
                 if not gui._download_cancelled:
                     if hasattr(gui, "downloadFailed"):

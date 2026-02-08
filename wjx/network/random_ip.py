@@ -61,7 +61,7 @@ def set_proxy_source(source: str) -> None:
     """设置代理源"""
     global _current_proxy_source
     _current_proxy_source = source
-    logging.info(f"代理源已切换为: {source}")
+    logging.debug(f"代理源已切换为: {source}")
 
 
 def get_proxy_source() -> str:

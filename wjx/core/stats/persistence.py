@@ -206,7 +206,8 @@ def list_stats_files() -> List[str]:
     files = []
     try:
         for filename in os.listdir(stats_dir):
-            if filename.endswith(".json") and filename.startswith("stats_"):
+            # 只检查 .json 后缀，不限制前缀（兼容各种文件名格式）
+            if filename.endswith(".json"):
                 files.append(os.path.join(stats_dir, filename))
     except OSError:
         return []

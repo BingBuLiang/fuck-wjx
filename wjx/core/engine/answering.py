@@ -58,7 +58,7 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
         target_seconds = _calculate_full_simulation_run_target(total_question_count)
         question_delay_plan = _build_per_question_delay_plan(total_question_count, target_seconds)
         planned_total = sum(question_delay_plan)
-        logging.info(
+        logging.debug(
             "[Action Log] 时长控制：本次计划总耗时约 %.1f 秒，共 %d 题",
             planned_total,
             total_question_count,

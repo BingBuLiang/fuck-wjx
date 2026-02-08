@@ -15,6 +15,25 @@ from typing import Dict, Optional
 _ENV_FILE_NAME = ".env"
 
 
+def get_bool_from_qsettings(value, default: bool = False) -> bool:
+    """
+    正确读取 QSettings 中的布尔值（兼容字符串返回值）
+    
+    QSettings.value() 的返回值类型不确定，可能是：
+    - bool: 直接返回
+    - str: "true"/"false"/"1"/"0" 等字符串需要特殊处理
+    - None: 使用默认值
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ('true', '1', 'yes')
+    # 其他类型（如int）用标准布尔转换
+    return bool(value)
+
+
 def _read_windows_env_var(key: str) -> str:
     if sys.platform != "win32":
         return ""

@@ -136,7 +136,7 @@ def simulate_answer_duration_delay(
     
     if wait_seconds <= 0:
         return False
-    logging.info("[Action Log] Simulating answer duration: waiting %.1f seconds before submit", wait_seconds)
+    logging.debug("[Action Log] Simulating answer duration: waiting %.1f seconds before submit", wait_seconds)
     if stop_signal:
         interrupted = stop_signal.wait(wait_seconds)
         return bool(interrupted and stop_signal.is_set())

@@ -95,13 +95,13 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
     browser_sem = state._get_browser_semaphore(max(1, int(state.num_threads or 1)))
     sem_acquired = False
 
-    logging.info(f"目标份数: {state.target_num}, 当前进度: {state.cur_num}/{state.target_num}")
+    logging.debug(f"目标份数: {state.target_num}, 当前进度: {state.cur_num}/{state.target_num}")
     if timed_mode_active:
-        logging.info("定时模式已启用")
+        logging.debug("定时模式已启用")
     if state.random_proxy_ip_enabled:
-        logging.info("随机IP已启用")
+        logging.debug("随机IP已启用")
     if state.random_user_agent_enabled:
-        logging.info("随机UA已启用")
+        logging.debug("随机UA已启用")
 
     # 初始化统计会话
     if state.url:
@@ -166,16 +166,16 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
 
         # 收集浏览器进程 PID 用于直接终止
         pids_to_kill = set(getattr(driver, "browser_pids", set()))
-        driver_to_close = driver  # 保存引用
+        playwright_instance = driver._playwright  # 保存 Playwright 实例引用
         _unregister_driver(driver)
         driver = None  # 立即清空引用，避免重复处理
 
-        # 定义清理任务（异步执行）
-        def _do_cleanup():
-            # 【卡顿修复】不再使用 _browser.close()（Playwright sync_api 通过 greenlet 轮询，
-            # 会频繁抢占 GIL 导致 Qt 主线程事件循环被饿死→GUI 极度卡顿）。
-            # 改为：先通过 PID 直接终止浏览器进程（psutil，快速、不阻塞 GIL），
-            # 再调用 _playwright.stop() 清理 Playwright 服务端（进程已死，几乎瞬间返回）。
+        # 【关键修复】Playwright 的 stop() 必须在创建它的线程中调用，
+        # 否则会出现 greenlet 线程切换错误，导致后续无法创建新浏览器。
+        # 因此：进程终止提交到后台线程（避免 GUI 卡顿），但 playwright.stop() 在当前工作线程同步执行。
+
+        # 定义进程清理任务（异步执行，不阻塞工作线程）
+        def _do_process_cleanup():
             if pids_to_kill:
                 try:
                     graceful_terminate_process_tree(pids_to_kill, wait_seconds=0.5)
@@ -183,33 +183,30 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 except Exception as exc:
                     log_suppressed_exception("runner._dispose_driver terminate process tree", exc)
 
-            try:
-                driver_to_close._playwright.stop()
-                logging.debug("已停止 playwright 实例")
-            except Exception as exc:
-                log_suppressed_exception("runner._dispose_driver playwright.stop", exc)
-
-        # 定义信号量释放任务（在清理完成后执行）
-        def _release_sem():
-            nonlocal sem_acquired
-            if sem_acquired:
-                try:
-                    browser_sem.release()
-                    sem_acquired = False
-                    logging.debug("已释放浏览器信号量")
-                except Exception as exc:
-                    log_suppressed_exception("runner._dispose_driver release semaphore", exc)
-
-        # 提交到后台清理线程，立即返回不阻塞当前工作线程
+        # 提交进程清理到后台线程
         cleanup_runner = getattr(gui_instance, "_cleanup_runner", None) if gui_instance else None
         if cleanup_runner:
-            # 先提交清理任务，再提交信号量释放任务（确保顺序执行）
-            cleanup_runner.submit(_do_cleanup, delay_seconds=0.0)
-            cleanup_runner.submit(_release_sem, delay_seconds=0.0)
+            cleanup_runner.submit(_do_process_cleanup, delay_seconds=0.0)
         else:
-            # 降级方案：同步执行（可能出现在测试环境或旧版本代码路径）
-            _do_cleanup()
-            _release_sem()
+            # 降级方案：同步执行
+            _do_process_cleanup()
+
+        # 【关键】在当前工作线程中同步停止 Playwright 实例
+        # 由于浏览器进程已被终止，这个调用会很快返回（几乎不阻塞）
+        try:
+            playwright_instance.stop()
+            logging.debug("已停止 playwright 实例")
+        except Exception as exc:
+            log_suppressed_exception("runner._dispose_driver playwright.stop", exc)
+
+        # 释放信号量
+        if sem_acquired:
+            try:
+                browser_sem.release()
+                sem_acquired = False
+                logging.debug("已释放浏览器信号量")
+            except Exception as exc:
+                log_suppressed_exception("runner._dispose_driver release semaphore", exc)
 
     while True:
         _wait_if_paused(gui_instance, stop_signal)
@@ -222,7 +219,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
         if _full_simulation_active():
             if not _wait_for_next_full_simulation_slot(stop_signal):
                 break
-            logging.info("[Action Log] 时长控制时段管控中，等待编辑区释放...")
+            logging.debug("[Action Log] 时长控制时段管控中，等待编辑区释放...")
         if stop_signal.is_set():
             break
         _wait_if_paused(gui_instance, stop_signal)
@@ -291,7 +288,7 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 break
             _wait_if_paused(gui_instance, stop_signal)
             if timed_mode_active:
-                logging.info("[Action Log] 定时模式：开始刷新等待问卷开放")
+                logging.debug("[Action Log] 定时模式：开始刷新等待问卷开放")
                 ready = timed_mode.wait_until_open(
                     driver,
                     state.url,

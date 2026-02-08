@@ -348,6 +348,8 @@ def graceful_terminate_process_tree(pids: Set[int], wait_seconds: float = 3.0) -
     for proc in procs:
         try:
             proc.terminate()
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            pass  # 进程已退出，无需处理
         except Exception as exc:
             log_suppressed_exception("browser_driver.graceful_terminate_process_tree terminate", exc)
 
@@ -355,6 +357,8 @@ def graceful_terminate_process_tree(pids: Set[int], wait_seconds: float = 3.0) -
     for proc in alive:
         try:
             proc.kill()
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            pass  # 进程已退出，无需处理
         except Exception as exc:
             log_suppressed_exception("browser_driver.graceful_terminate_process_tree kill", exc)
     return len(procs)

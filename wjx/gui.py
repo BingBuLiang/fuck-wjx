@@ -6,6 +6,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 from wjx.utils.logging.log_utils import setup_logging, set_debug_mode
+from wjx.utils.app.config import get_bool_from_qsettings
 
 
 def _qt_message_handler(mode, context, message):
@@ -22,12 +23,12 @@ def _qt_message_handler(mode, context, message):
 
 def main():
     setup_logging()
-    
+
     # 应用保存的调试模式设置
     settings = QSettings("FuckWjx", "Settings")
-    debug_mode = bool(settings.value("debug_mode", False))
+    debug_mode = get_bool_from_qsettings(settings.value("debug_mode"), False)
     set_debug_mode(debug_mode)
-    
+
     qInstallMessageHandler(_qt_message_handler)
     app = QApplication(sys.argv)
     

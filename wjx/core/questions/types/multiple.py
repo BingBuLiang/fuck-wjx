@@ -349,22 +349,18 @@ def multiple(driver: BrowserDriver, current: int, index: int, multiple_prob_conf
         return
 
     if len(option_elements) != len(selection_probabilities):
-        # 只在首次遇到时警告，避免重复信息
-        if current not in _WARNED_PROB_MISMATCH:
-            _WARNED_PROB_MISMATCH.add(current)
-            logging.warning(
-                "第%d题（多选）：配置概率数(%d)与页面实际选项数(%d)不一致，已自动截断/补齐。"
-                "请检查该题配置的概率列表长度是否与问卷页面选项数一致。",
-                current, len(selection_probabilities), len(option_elements)
-            )
         if len(selection_probabilities) > len(option_elements):
+            # 截断：配置多于实际选项，丢弃多余部分，值得提醒
+            if current not in _WARNED_PROB_MISMATCH:
+                _WARNED_PROB_MISMATCH.add(current)
+                logging.warning(
+                    "第%d题（多选）：配置概率数(%d)多于页面实际选项数(%d)，多余部分已截断。",
+                    current, len(selection_probabilities), len(option_elements)
+                )
             selection_probabilities = selection_probabilities[: len(option_elements)]
         else:
-            try:
-                base_prob = max(1.0, max(float(p) for p in selection_probabilities if p is not None))
-            except Exception:
-                base_prob = 100.0
-            padding = [base_prob] * (len(option_elements) - len(selection_probabilities))
+            # 扩展：配置少于实际选项，用0补齐（未配置的选项不会被选中），属正常行为
+            padding = [0.0] * (len(option_elements) - len(selection_probabilities))
             selection_probabilities = list(selection_probabilities) + padding
     sanitized_probabilities: List[float] = []
     for raw_prob in selection_probabilities:

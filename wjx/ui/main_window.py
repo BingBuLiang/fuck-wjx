@@ -54,7 +54,7 @@ from wjx.ui.dialogs.contact import ContactDialog
 
 # 导入控制器和工具
 from wjx.ui.controller import RunController
-from wjx.utils.app.config import APP_ICON_RELATIVE_PATH
+from wjx.utils.app.config import APP_ICON_RELATIVE_PATH, get_bool_from_qsettings
 from wjx.utils.io.load_save import RuntimeConfig, get_runtime_directory
 from wjx.utils.logging.log_utils import LOG_BUFFER_HANDLER, register_popup_handler
 from wjx.utils.app.version import __VERSION__, ISSUE_FEEDBACK_URL
@@ -105,7 +105,7 @@ class MainWindow(FluentWindow):
 
         # 应用窗口置顶设置
         settings = QSettings("FuckWjx", "Settings")
-        if bool(settings.value("window_topmost", False)):
+        if get_bool_from_qsettings(settings.value("window_topmost"), False):
             self.apply_topmost_state(True, show=False)
 
         # 创建启动页面
@@ -202,7 +202,7 @@ class MainWindow(FluentWindow):
         """设置侧边栏折叠状态（在事件循环中调用以避免时序问题）"""
         try:
             settings = QSettings("FuckWjx", "Settings")
-            always_expand = bool(settings.value("sidebar_always_expand", True))
+            always_expand = get_bool_from_qsettings(settings.value("sidebar_always_expand"), True)
             self.navigationInterface.setCollapsible(not always_expand)
             if always_expand:
                 self.navigationInterface.expand(useAni=False)
@@ -216,7 +216,7 @@ class MainWindow(FluentWindow):
             return
         self._sidebar_expanded = True
         settings = QSettings("FuckWjx", "Settings")
-        always_expand = bool(settings.value("sidebar_always_expand", True))
+        always_expand = get_bool_from_qsettings(settings.value("sidebar_always_expand"), True)
         if not always_expand:
             return
         try:
@@ -240,7 +240,7 @@ class MainWindow(FluentWindow):
         
         if not self._skip_save_on_close:
             settings = QSettings("FuckWjx", "Settings")
-            ask_save = bool(settings.value("ask_save_on_close", True))
+            ask_save = get_bool_from_qsettings(settings.value("ask_save_on_close"), True)
             if ask_save:
                 # 询问用户是否保存配置
                 box = MessageBox("保存配置", "是否保存当前配置？", self)
@@ -706,7 +706,7 @@ class MainWindow(FluentWindow):
     def _check_update_on_startup(self):
         """根据设置在启动时检查更新"""
         settings = QSettings("FuckWjx", "Settings")
-        if bool(settings.value("auto_check_update", True)):
+        if get_bool_from_qsettings(settings.value("auto_check_update"), True):
             from wjx.utils.update.updater import check_updates_on_startup
             check_updates_on_startup(self)
 
@@ -956,7 +956,7 @@ class MainWindow(FluentWindow):
                 logging.error("[Action Log] Failed to launch downloaded update")
                 self._log_popup_error("启动失败", f"无法启动新版本: {exc}")
         else:
-            logging.info("[Action Log] Deferred launching downloaded update")
+            logging.debug("[Action Log] Deferred launching downloaded update")
 
     def _on_download_failed(self, error_msg: str):
         """下载失败后在主线程显示弹窗"""

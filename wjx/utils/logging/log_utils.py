@@ -142,6 +142,8 @@ class LogBufferHandler(logging.Handler):
             return "ERROR"
         if level == "WARNING":
             return "WARNING"
+        if level == "DEBUG":
+            return "DEBUG"
         if level in {"OK", "SUCCESS"}:
             return "OK"
 
@@ -222,6 +224,13 @@ def set_debug_mode(enabled: bool):
         if not isinstance(handler, LogBufferHandler):  # BufferHandler 保持收集所有级别
             handler.setLevel(level)
 
+    # 调试模式下允许第三方库输出 DEBUG 日志，否则抑制
+    third_party_level = logging.DEBUG if enabled else logging.WARNING
+    logging.getLogger("urllib3").setLevel(third_party_level)
+    logging.getLogger("requests").setLevel(third_party_level)
+    logging.getLogger("selenium").setLevel(third_party_level)
+    logging.getLogger("undetected_chromedriver").setLevel(third_party_level)
+
 
 def setup_logging():
     root_logger = logging.getLogger()
@@ -230,6 +239,12 @@ def setup_logging():
     root_logger.setLevel(logging.INFO)
     if not any(isinstance(handler, LogBufferHandler) for handler in root_logger.handlers):
         root_logger.addHandler(LOG_BUFFER_HANDLER)
+
+    # 抑制第三方库的 INFO/DEBUG 日志，避免刷屏
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.getLogger("selenium").setLevel(logging.WARNING)
+    logging.getLogger("undetected_chromedriver").setLevel(logging.WARNING)
 
     if not getattr(setup_logging, "_streams_hooked", False):
         stdout_logger = StreamToLogger(root_logger, logging.INFO, stream=ORIGINAL_STDOUT)
@@ -306,7 +321,7 @@ def dump_threads_to_file(tag: str, runtime_directory: str) -> Optional[str]:
             lines.append("")
         with open(file_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
-        logging.info(f"[Debug] 线程堆栈已导出：{file_path}")
+        logging.debug(f"[Debug] 线程堆栈已导出：{file_path}")
         return file_path
     except Exception as exc:
         logging.debug(f"导出线程堆栈失败: {exc}", exc_info=True)

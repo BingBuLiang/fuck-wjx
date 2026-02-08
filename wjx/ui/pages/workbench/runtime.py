@@ -1,4 +1,4 @@
-"""运行参数设置页面 - 使用 SettingCard 组件重构"""
+"""运行参数设置页面"""
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, QSize

@@ -1,3 +1,4 @@
+"""答题核心逻辑 - 按配置策略自动填写问卷"""
 import logging
 import random
 import threading

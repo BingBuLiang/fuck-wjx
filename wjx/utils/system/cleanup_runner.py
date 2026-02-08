@@ -1,3 +1,4 @@
+"""异步清理任务执行器 - 后台回收浏览器实例等资源"""
 from __future__ import annotations
 
 import threading

@@ -1,3 +1,4 @@
+"""日志配置与工具函数 - 初始化日志系统、级别控制、缓冲区管理"""
 import logging
 import os
 import re

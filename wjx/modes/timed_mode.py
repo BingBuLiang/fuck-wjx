@@ -1,3 +1,4 @@
+"""定时提交模式 - 在指定时间范围内随机提交"""
 from __future__ import annotations
 
 import logging

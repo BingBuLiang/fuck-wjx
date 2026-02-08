@@ -1,3 +1,4 @@
+"""GUI 应用入口 - QApplication 初始化与主窗口启动"""
 import sys
 
 from PySide6.QtCore import qInstallMessageHandler, QtMsgType, QSettings

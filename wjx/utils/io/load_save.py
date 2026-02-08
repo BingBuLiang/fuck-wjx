@@ -1,3 +1,4 @@
+"""配置文件加载与保存 - 读写 JSON 配置"""
 from __future__ import annotations
 
 import json

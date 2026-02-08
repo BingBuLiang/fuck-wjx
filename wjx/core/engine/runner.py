@@ -1,3 +1,4 @@
+"""引擎主循环 - 任务执行与线程调度"""
 import logging
 import random
 import threading

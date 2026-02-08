@@ -1,3 +1,4 @@
+"""二维码生成与处理工具"""
 import logging
 import os
 from typing import Optional, Union

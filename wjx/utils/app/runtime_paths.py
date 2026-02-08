@@ -1,3 +1,4 @@
+"""运行时路径解析 - 资源文件与目录定位"""
 import os
 import sys
 

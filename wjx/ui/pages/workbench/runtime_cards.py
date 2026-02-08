@@ -1,3 +1,4 @@
+"""运行参数页 - 专属设置卡片组件（随机IP、随机UA、定时模式等）"""
 import logging
 from typing import Dict, Optional
 

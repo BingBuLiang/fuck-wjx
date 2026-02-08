@@ -1,3 +1,4 @@
+"""浏览器驱动工厂 - 创建和配置 Playwright 浏览器实例"""
 from typing import List, Optional, Tuple
 
 from wjx.network.browser_driver import BrowserDriver, create_playwright_driver as _browser_create_playwright_driver

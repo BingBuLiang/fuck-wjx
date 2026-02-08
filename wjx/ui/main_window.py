@@ -41,12 +41,12 @@ from wjx.ui.pages.workbench.result import ResultPage
 from wjx.ui.pages.settings.settings import SettingsPage
 from wjx.ui.pages.workbench.question import QuestionPage
 from wjx.ui.pages.workbench.log import LogPage
-from wjx.ui.pages.support.support import SupportPage
-from wjx.ui.pages.support.about import AboutPage
+from wjx.ui.pages.more.support import SupportPage
+from wjx.ui.pages.more.about import AboutPage
 from wjx.ui.pages.account.account import AccountPage
-from wjx.ui.pages.support.changelog import ChangelogPage, ChangelogDetailPage
-from wjx.ui.pages.support.donate import DonatePage
-from wjx.ui.pages.support.qq_group import QQGroupPage
+from wjx.ui.pages.more.changelog import ChangelogPage, ChangelogDetailPage
+from wjx.ui.pages.more.donate import DonatePage
+from wjx.ui.pages.more.qq_group import QQGroupPage
 
 # 导入对话框
 from wjx.ui.dialogs.card_unlock import CardUnlockDialog

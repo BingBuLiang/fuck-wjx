@@ -1,3 +1,4 @@
+"""答题时长控制 - 模拟真实答题时间分布"""
 import logging
 import random
 import threading

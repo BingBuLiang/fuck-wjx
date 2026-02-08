@@ -1,3 +1,4 @@
+"""全局运行状态与控制变量"""
 import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
 

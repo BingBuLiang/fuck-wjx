@@ -1,3 +1,4 @@
+"""应用更新检测与执行 - 检查新版本、下载安装包"""
 import logging
 import os
 import subprocess

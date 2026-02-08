@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+"""AI 自动填充辅助 - 检查 AI 配置就绪状态"""
 from qfluentwidgets import InfoBar, InfoBarPosition
 
 from wjx.utils.integrations.ai_service import get_ai_settings

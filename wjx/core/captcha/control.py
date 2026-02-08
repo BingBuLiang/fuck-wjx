@@ -1,3 +1,4 @@
+"""验证码流程控制 - 检测与处理阿里云智能验证"""
 import logging
 import threading
 from typing import Any, Optional

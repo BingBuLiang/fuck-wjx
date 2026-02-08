@@ -1,3 +1,4 @@
+"""DOM 元素查找与操作辅助函数"""
 import re
 from typing import List, Optional, Tuple
 

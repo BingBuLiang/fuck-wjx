@@ -1,3 +1,4 @@
+"""日志语法高亮器 - 按日志级别着色"""
 from __future__ import annotations
 
 from typing import Dict, Optional

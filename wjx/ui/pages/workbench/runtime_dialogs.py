@@ -1,3 +1,4 @@
+"""运行参数页 - 时间选择弹窗等辅助对话框"""
 from typing import Optional, Tuple
 
 from PySide6.QtCore import Qt

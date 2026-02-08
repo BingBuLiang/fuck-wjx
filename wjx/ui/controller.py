@@ -1,3 +1,4 @@
+"""运行控制器 - 连接 UI 与引擎的业务逻辑桥接层"""
 from __future__ import annotations
 
 import math

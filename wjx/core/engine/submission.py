@@ -1,3 +1,4 @@
+"""提交流程处理 - 问卷提交与结果验证"""
 import logging
 import threading
 import time

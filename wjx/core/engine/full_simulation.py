@@ -1,3 +1,4 @@
+"""完全模拟模式 - 仿真人类操作行为"""
 import threading
 from typing import Deque, List, Optional
 

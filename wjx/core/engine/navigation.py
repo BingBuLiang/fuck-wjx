@@ -1,3 +1,4 @@
+"""页面导航 - 翻页、跳转与滚动控制"""
 import math
 import random
 import threading

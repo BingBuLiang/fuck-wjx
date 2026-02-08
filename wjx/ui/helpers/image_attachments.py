@@ -1,3 +1,4 @@
+"""图片附件处理 - 校验、限制、缩略图与导出"""
 import os
 from dataclasses import dataclass
 from typing import List, Tuple

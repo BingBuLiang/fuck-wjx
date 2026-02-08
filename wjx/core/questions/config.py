@@ -1,3 +1,4 @@
+"""题目配置数据结构 - 策略、概率、选项等参数定义"""
 from dataclasses import dataclass
 from typing import Any, List, Optional, Union
 

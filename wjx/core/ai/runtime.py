@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+"""AI 运行时辅助函数 - 调用 AI 模型生成答案"""
 import re
 from typing import Optional
 

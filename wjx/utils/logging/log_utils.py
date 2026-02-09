@@ -1,6 +1,7 @@
 """日志配置与工具函数 - 初始化日志系统、级别控制、缓冲区管理"""
 import logging
 import os
+import queue
 import re
 import sys
 import threading
@@ -77,37 +78,148 @@ class LogBufferEntry:
 
 
 class LogBufferHandler(logging.Handler):
+    """完全异步的日志缓冲处理器
+
+    优化策略：
+    1. 使用无锁队列（queue.Queue）接收日志
+    2. 后台线程负责处理日志（格式化、分类、存储）
+    3. 主线程写入日志时完全无阻塞
+    4. 读取时使用版本号检测变化，避免无效拷贝
+    """
+
     # ANSI 转义序列正则表达式
     _ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*m')
-    
+
     def __init__(self, capacity: int = LOG_BUFFER_CAPACITY):
         super().__init__()
         self.capacity = capacity
-        self._lock = threading.Lock()
-        self.records: Deque[LogBufferEntry] = deque(maxlen=capacity if capacity else None)
+
+        # 使用无锁队列接收日志
+        self._queue: queue.Queue = queue.Queue()
+
+        # 处理后的日志记录（只在后台线程中修改）
+        self._records: Deque[LogBufferEntry] = deque(maxlen=capacity if capacity else None)
+
+        # 版本号：每次 _records 变化时递增，用于检测变化
+        self._version = 0
+        self._version_lock = threading.Lock()
+
+        # 后台处理线程
+        self._worker_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+
         self.setFormatter(logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))
 
-    def emit(self, record: logging.LogRecord):
+        # 启动后台处理线程
+        self._start_worker()
+
+    def _start_worker(self):
+        """启动后台日志处理线程"""
+        if self._worker_thread and self._worker_thread.is_alive():
+            return
+
+        self._stop_event.clear()
+        self._worker_thread = threading.Thread(
+            target=self._worker_loop,
+            daemon=True,
+            name="LogBufferWorker"
+        )
+        self._worker_thread.start()
+
+    def _worker_loop(self):
+        """后台线程：处理日志队列"""
+        while not self._stop_event.is_set():
+            try:
+                # 批量处理：一次最多处理 100 条日志
+                batch = []
+                try:
+                    # 阻塞等待第一条日志（最多 0.1 秒）
+                    record = self._queue.get(timeout=0.1)
+                    batch.append(record)
+
+                    # 非阻塞获取更多日志（批量处理）
+                    while len(batch) < 100:
+                        try:
+                            record = self._queue.get_nowait()
+                            batch.append(record)
+                        except queue.Empty:
+                            break
+                except queue.Empty:
+                    continue
+
+                # 处理批量日志
+                for record in batch:
+                    self._process_record(record)
+
+                # 更新版本号（表示有新日志）
+                with self._version_lock:
+                    self._version += 1
+
+            except Exception:
+                # 后台线程不应崩溃
+                pass
+
+    def _process_record(self, record: logging.LogRecord):
+        """处理单条日志记录（在后台线程中执行）"""
         try:
             original_level = record.levelname
             message = self.format(record)
-            # 清理 ANSI 转义序列
-            message = self._strip_ansi_codes(message)
-            # 过滤包含敏感信息的日志（只过滤特定服务）
+
+            # 过滤包含敏感信息的日志
             if self._should_filter_sensitive(message):
                 return
+
+            # 清理 ANSI 转义序列
+            message = self._strip_ansi_codes(message)
+
+            # 判断日志类别
             category = self._determine_category(record, message)
+
+            # 应用类别标签
             display_text = self._apply_category_label(message, original_level, category)
+
+            # 构造日志条目并添加到缓冲区
             entry = LogBufferEntry(text=display_text, category=category)
-            with self._lock:
-                self.records.append(entry)
+            self._records.append(entry)
+
+        except Exception:
+            # 处理失败不应影响其他日志
+            pass
+
+    def emit(self, record: logging.LogRecord):
+        """接收日志记录（完全无阻塞）"""
+        try:
+            # 直接放入队列，不做任何处理
+            self._queue.put_nowait(record)
+        except queue.Full:
+            # 队列满时丢弃日志（极端情况）
+            pass
         except Exception:
             self.handleError(record)
 
-    def get_records(self) -> List[LogBufferEntry]:
-        with self._lock:
-            return list(self.records)
-    
+    def get_records(self, try_lock: bool = False) -> List[LogBufferEntry]:
+        """获取日志记录
+
+        Args:
+            try_lock: 兼容参数，保持接口一致（异步模式下无需锁）
+
+        Returns:
+            日志记录列表
+        """
+        # 异步模式下直接返回副本，无需加锁
+        return list(self._records)
+
+    def get_version(self) -> int:
+        """获取当前版本号（用于检测变化）"""
+        with self._version_lock:
+            return self._version
+
+    def stop(self):
+        """停止后台处理线程"""
+        self._stop_event.set()
+        if self._worker_thread:
+            self._worker_thread.join(timeout=1.0)
+
     @staticmethod
     def _strip_ansi_codes(text: str) -> str:
         """移除 ANSI 转义序列"""

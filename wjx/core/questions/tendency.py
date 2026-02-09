@@ -42,8 +42,13 @@ def _generate_base_index(option_count: int, probabilities: Union[List[float], in
 def get_tendency_index(option_count: int, probabilities: Union[List[float], int, None]) -> int:
     """获取带有一致性倾向的选项索引。
 
-    第一次调用时会生成基准偏好，之后每次调用都在基准附近 ±1 波动。
-    这样同一份问卷内的量表类答案会保持逻辑一致性。
+    当概率配置为 -1（随机模式）时：
+        第一次调用会生成基准偏好，之后每次调用在基准附近 ±1 波动，
+        保持同一份问卷内量表类答案的逻辑一致性。
+
+    当概率配置为显式列表时：
+        严格按用户设定的概率分布选择，不应用一致性波动。
+        这样用户把某选项概率设为 0 时就绝不会被选中。
 
     Args:
         option_count: 该题的选项数量（比如5分量表就是5）
@@ -55,11 +60,16 @@ def get_tendency_index(option_count: int, probabilities: Union[List[float], int,
     if option_count <= 0:
         return 0
 
+    # 显式概率配置：严格按用户设定的权重选择，不做一致性波动
+    if isinstance(probabilities, list) and probabilities:
+        return weighted_index(probabilities)
+
+    # 随机模式（-1 或 None）：使用一致性倾向机制
     base = getattr(_thread_local, 'base_index', None)
 
     if base is None:
-        # 首次调用：生成基准偏好
-        base = _generate_base_index(option_count, probabilities)
+        # 首次调用：完全随机生成基准偏好
+        base = random.randrange(option_count)
         _thread_local.base_index = base
 
     # 当前题目选项数可能与生成 base 时不同，需要夹到合法范围

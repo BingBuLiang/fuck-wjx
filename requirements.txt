@@ -4,7 +4,6 @@ Pillow
 requests
 packaging
 beautifulsoup4
-psutil
 PySide6==6.7.2
 PySide6-Fluent-Widgets==1.10.5
 python-dotenv

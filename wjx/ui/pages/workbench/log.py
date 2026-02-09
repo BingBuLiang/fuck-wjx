@@ -60,6 +60,7 @@ class LogPage(QWidget):
         self._force_full_refresh = True
         self._last_seen_record = None
         self._stick_to_bottom = True  # 用户是否希望自动跟随最新日志
+        self._last_version = -1  # 上次读取的日志版本号
         self._build_ui()
         self._bind_events()
         self._load_last_session_logs()
@@ -162,6 +163,13 @@ class LogPage(QWidget):
         return level_priority >= filter_priority
 
     def refresh_logs(self):
+        """完全异步的日志刷新：版本号检测 + 无锁读取
+
+        优化策略：
+        1. 先检查版本号，没有变化则跳过（避免无效拷贝）
+        2. 使用无锁队列，读取时完全不阻塞
+        3. 增量更新时批量渲染，减少 GUI 开销
+        """
         # 不在当前可见页面时，跳过自动刷新，避免后台重绘拖慢主窗口
         if not self.isVisible():
             return
@@ -170,19 +178,27 @@ class LogPage(QWidget):
         if cursor.hasSelection():
             return
 
+        # 【优化 1】先检查版本号，没有变化则跳过
+        current_version = LOG_BUFFER_HANDLER.get_version()
+        if current_version == self._last_version and not self._force_full_refresh:
+            return  # 没有新日志，直接返回
+
         scrollbar = self.log_view.verticalScrollBar()
         old_value = scrollbar.value()
         old_max = scrollbar.maximum()
         stick_to_bottom = self._stick_to_bottom
 
+        # 【优化 2】无锁读取日志（异步模式下无需 try_lock）
         records = LOG_BUFFER_HANDLER.get_records()
         if not records:
             if self._force_full_refresh:
                 self.log_view.clear()
                 self._force_full_refresh = False
             self._last_seen_record = None
+            self._last_version = current_version
             return
 
+        # 增量更新：只追加新日志
         if not self._force_full_refresh and self._last_seen_record is not None:
             last_index = -1
             for idx, entry in enumerate(records):
@@ -191,13 +207,22 @@ class LogPage(QWidget):
                     break
             if last_index != -1 and last_index < len(records) - 1:
                 new_entries = records[last_index + 1 :]
+
+                # 【优化 3】批量渲染：先拼接字符串，再一次性追加
+                new_lines = []
                 for entry in new_entries:
                     level = self._get_log_level(entry)
                     if not self._should_show(level):
                         continue
                     text = entry.text if hasattr(entry, "text") else str(entry)
-                    self.log_view.appendPlainText(text)
+                    new_lines.append(text)
+
+                if new_lines:
+                    # 一次性追加所有新日志（比循环 appendPlainText 快得多）
+                    self.log_view.appendPlainText("\n".join(new_lines))
+
                 self._last_seen_record = records[-1]
+                self._last_version = current_version
 
                 if stick_to_bottom:
                     self.log_view.moveCursor(QTextCursor.MoveOperation.End)
@@ -205,6 +230,7 @@ class LogPage(QWidget):
                     self._restore_scroll_position(scrollbar, old_value, old_max)
                 return
 
+        # 全量刷新：重新渲染所有日志
         lines = []
         for entry in records:
             level = self._get_log_level(entry)
@@ -214,7 +240,8 @@ class LogPage(QWidget):
             lines.append(text)
 
         self.log_view.setPlainText("\n".join(lines))
-        self._last_seen_record = records[-1]
+        self._last_seen_record = records[-1] if records else None
+        self._last_version = current_version
         self._force_full_refresh = False
 
         # 恢复滚动位置

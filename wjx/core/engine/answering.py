@@ -144,7 +144,7 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                 _multiple_impl(driver, current_question_number, _multi_idx, state.multiple_prob, state.multiple_option_fill_texts)
                 multiple_question_index += 1
             elif question_type == "5":
-                _scale_idx = _config_entry[1] if _config_entry and _config_entry[0] == "scale" else scale_question_index
+                _scale_idx = _config_entry[1] if _config_entry and _config_entry[0] in ("scale", "score") else scale_question_index
                 if _driver_question_looks_like_rating(question_div):
                     _score_impl(driver, current_question_number, _scale_idx, state.scale_prob)
                 else:

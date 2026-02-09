@@ -271,7 +271,7 @@ def configure_probabilities(entries: List[QuestionEntry]):
                 for _ in range(rows):
                     state.matrix_prob.append(-1)
         elif entry.question_type in ("scale", "score"):
-            state.question_config_index_map[entry.question_num] = ("scale", _idx_scale)
+            state.question_config_index_map[entry.question_num] = (entry.question_type, _idx_scale)
             _idx_scale += 1
             state.scale_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
         elif entry.question_type == "slider":

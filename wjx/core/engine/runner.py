@@ -28,7 +28,6 @@ from wjx.network.browser_driver import (
     BrowserDriver,
     ProxyConnectionError,
     TimeoutException,
-    graceful_terminate_process_tree,
 )
 from wjx.network.random_ip import _mask_proxy_for_log, _proxy_is_responsive, handle_random_ip_submission
 from wjx.network.session_policy import (
@@ -47,9 +46,9 @@ from wjx.utils.app.config import (
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
-# 全局锁：串行化浏览器关闭操作，避免多线程同时执行导致 GUI 卡顿
-# 注意：已移除全局 _browser_cleanup_lock — 原来的串行化反而延长总耗时
-# 现在改为直接 PID 终止浏览器进程，不再走 Playwright sync_api，无需加锁
+# 全局锁：已移除 - 改用批量 PID 清理机制，无需串行化
+# 新方案：Worker 线程只提交 PID 到清理队列，由 CleanupRunner 批量执行 taskkill
+# 优势：N 个线程只产生 1 次 taskkill 调用，彻底消除 CPU 峰值
 
 
 def _submission_blocked_by_security_check(driver: BrowserDriver) -> bool:
@@ -142,7 +141,13 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 log_suppressed_exception("runner._unregister_driver cleanup pids", exc)
 
     def _dispose_driver() -> None:
-        """异步清理浏览器实例，立即返回不阻塞工作线程"""
+        """异步清理浏览器实例，立即返回不阻塞工作线程
+
+        优化策略：
+        1. 只收集 PID，提交到批量清理队列
+        2. 不等待进程清理完成
+        3. Fire-and-Forget 方式停止 Playwright 实例
+        """
         nonlocal driver, sem_acquired
         if not driver:
             # 没有浏览器实例需要清理，但可能需要释放信号量
@@ -164,45 +169,33 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 sem_acquired = False
             return
 
-        # 收集浏览器进程 PID 用于直接终止
+        # 收集浏览器进程 PID 用于批量清理
         pids_to_kill = set(getattr(driver, "browser_pids", set()))
         playwright_instance = driver._playwright  # 保存 Playwright 实例引用
         _unregister_driver(driver)
         driver = None  # 立即清空引用，避免重复处理
 
-        # 【关键修复】先在后台线程强制杀死浏览器进程，然后在当前工作线程调用 playwright.stop()
-        # 这样 playwright.stop() 不会阻塞太久（因为进程已死），同时满足"必须在创建线程调用"的要求
-
-        # 定义进程清理任务（异步执行，不阻塞工作线程）
-        def _do_process_cleanup():
-            if pids_to_kill:
-                try:
-                    graceful_terminate_process_tree(pids_to_kill, wait_seconds=0.5)
-                    logging.debug(f"已终止浏览器进程树: {len(pids_to_kill)} 个进程")
-                except Exception as exc:
-                    log_suppressed_exception("runner._dispose_driver terminate process tree", exc)
-
-        # 提交进程清理到后台线程（立即执行，不等待）
+        # 【优化 1】提交 PID 到批量清理队列（不等待执行）
         cleanup_runner = getattr(gui_instance, "_cleanup_runner", None) if gui_instance else None
-        if cleanup_runner:
-            cleanup_runner.submit(_do_process_cleanup, delay_seconds=0.0)
-        else:
-            # 降级方案：在新线程中执行
-            cleanup_thread = threading.Thread(target=_do_process_cleanup, daemon=True, name="ProcessCleanup")
-            cleanup_thread.start()
+        if cleanup_runner and pids_to_kill:
+            try:
+                cleanup_runner.submit_pid_cleanup(pids_to_kill)
+                logging.debug(f"已提交 {len(pids_to_kill)} 个 PID 到批量清理队列")
+            except Exception as exc:
+                log_suppressed_exception("runner._dispose_driver submit_pid_cleanup", exc)
 
-        # 短暂等待进程清理完成（最多 0.1 秒），避免 playwright.stop() 长时间阻塞
-        time.sleep(0.1)
-
-        # 【关键】在当前工作线程中同步停止 Playwright 实例
-        # 由于浏览器进程已被终止（或正在终止），这个调用应该很快返回
+        # 【修复】同步停止 Playwright 实例（必须在同一工作线程中调用）
+        # Playwright Sync API 会在当前线程创建 asyncio 事件循环，
+        # 如果 stop() 在其他线程调用，当前线程的事件循环不会被清理，
+        # 导致下次 sync_playwright().start() 报错：
+        # "using Playwright Sync API inside the asyncio loop"
         try:
             playwright_instance.stop()
             logging.debug("已停止 playwright 实例")
         except Exception as exc:
             log_suppressed_exception("runner._dispose_driver playwright.stop", exc)
 
-        # 释放信号量
+        # 释放信号量（立即释放，不等待清理完成）
         if sem_acquired:
             try:
                 browser_sem.release()

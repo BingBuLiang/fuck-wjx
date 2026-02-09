@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import subprocess
 import sys
 import time
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
@@ -294,19 +295,24 @@ BrowserDriver = PlaywrightDriver
 
 
 def list_browser_pids() -> Set[int]:
-    try:
-        import psutil
-    except ImportError:
-        return set()
-    names = {"msedge.exe", "chrome.exe", "chromium.exe"}
+    """列出当前运行的浏览器进程 PID（仅 Windows）。"""
+    names = ("chrome.exe", "msedge.exe", "chromium.exe")
     pids: Set[int] = set()
-    for proc in psutil.process_iter(["pid", "name"]):
+    _no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    for name in names:
         try:
-            proc_name = (proc.info.get("name") or "").lower()
-            if proc_name in names:
-                pids.add(int(proc.info["pid"]))
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
+            result = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=_no_window,
+            )
+            for line in result.stdout.splitlines():
+                parts = line.strip().strip('"').split('","')
+                if len(parts) >= 2:
+                    try:
+                        pids.add(int(parts[1]))
+                    except (ValueError, IndexError):
+                        continue
         except Exception:
             continue
     return pids
@@ -314,77 +320,53 @@ def list_browser_pids() -> Set[int]:
 
 def graceful_terminate_process_tree(pids: Set[int], wait_seconds: float = 3.0) -> int:
     """
-    尝试温和终止指定 PID 及其子进程，避免使用 taskkill。
-    返回被处理的进程数量（不保证全部存活）。
+    使用 taskkill 强制终止指定 PID 及其子进程树。
+    返回被处理的进程数量。
     """
-    try:
-        import psutil
-    except ImportError:
-        return 0
-
     unique_pids = [int(p) for p in sorted(set(pids or [])) if int(p) > 0]
     if not unique_pids:
         return 0
 
-    procs = []
-    seen = set()
+    _no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    count = 0
     for pid in unique_pids:
         try:
-            proc = psutil.Process(pid)
-            stack = [proc]
-            while stack:
-                cur = stack.pop()
-                if cur.pid in seen:
-                    continue
-                seen.add(cur.pid)
-                procs.append(cur)
-                try:
-                    stack.extend(cur.children(recursive=False))
-                except Exception as exc:
-                    log_suppressed_exception("browser_driver.graceful_terminate_process_tree children", exc)
-        except Exception:
-            continue
-
-    for proc in procs:
-        try:
-            proc.terminate()
-        except (psutil.NoSuchProcess, psutil.ZombieProcess):
-            pass  # 进程已退出，无需处理
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=max(1.0, float(wait_seconds or 3.0)),
+                creationflags=_no_window,
+            )
+            count += 1
         except Exception as exc:
-            log_suppressed_exception("browser_driver.graceful_terminate_process_tree terminate", exc)
-
-    _, alive = psutil.wait_procs(procs, timeout=max(0.1, float(wait_seconds or 0.0)))
-    for proc in alive:
-        try:
-            proc.kill()
-        except (psutil.NoSuchProcess, psutil.ZombieProcess):
-            pass  # 进程已退出，无需处理
-        except Exception as exc:
-            log_suppressed_exception("browser_driver.graceful_terminate_process_tree kill", exc)
-    return len(procs)
+            log_suppressed_exception("browser_driver.graceful_terminate_process_tree taskkill", exc)
+    return count
 
 
 def _collect_process_tree(root_pid: Optional[int]) -> Set[int]:
-    """收集给定 PID 及其子进程 PID，失败时返回空集合。"""
+    """收集给定 PID 及其子进程 PID，使用 wmic 查询子进程。"""
     if not root_pid:
         return set()
-    try:
-        import psutil
-    except ImportError:
-        return {int(root_pid)}
-    try:
-        root = psutil.Process(int(root_pid))
-    except Exception:
-        return {int(root_pid)}
-    pids: Set[int] = {int(root.pid)}
-    try:
-        for child in root.children(recursive=True):
-            try:
-                pids.add(int(child.pid))
-            except Exception:
-                continue
-    except Exception as exc:
-        log_suppressed_exception("browser_driver._collect_process_tree children", exc)
+    pids: Set[int] = {int(root_pid)}
+    _no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    queue = [int(root_pid)]
+    while queue:
+        parent = queue.pop()
+        try:
+            result = subprocess.run(
+                ["wmic", "process", "where", f"ParentProcessId={parent}", "get", "ProcessId"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=_no_window,
+            )
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    child_pid = int(line)
+                    if child_pid not in pids:
+                        pids.add(child_pid)
+                        queue.append(child_pid)
+        except Exception as exc:
+            log_suppressed_exception("browser_driver._collect_process_tree wmic", exc)
     return pids
 
 

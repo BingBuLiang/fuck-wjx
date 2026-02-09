@@ -12,7 +12,7 @@ from wjx.core.stats.models import SurveyStats
 
 # ── 暂存缓冲区类型定义 ──────────────────────────────────────
 # question_num -> [(action_type, *args)]
-# action_type: "single" | "multiple" | "matrix" | "scale" | "dropdown" | "slider" | "text"
+# action_type: "single" | "multiple" | "matrix" | "scale" | "score" | "dropdown" | "slider" | "text"
 _PendingAction = tuple  # 动作元组：(类型字符串, 其他参数...)
 _PendingBuffer = Dict[int, List[_PendingAction]]
 
@@ -113,6 +113,9 @@ class StatsCollector:
                     elif action_type == "scale":
                         q = self._current_stats.get_or_create_question(q_num, "scale")
                         q.record_selection(action[1])
+                    elif action_type == "score":
+                        q = self._current_stats.get_or_create_question(q_num, "score")
+                        q.record_selection(action[1])
                     elif action_type == "dropdown":
                         q = self._current_stats.get_or_create_question(q_num, "dropdown")
                         q.record_selection(action[1])
@@ -195,6 +198,13 @@ class StatsCollector:
                         q_stats.option_count = len(prob_config)
             
             elif q_type == "scale":
+                if 0 <= idx < len(state.scale_prob):
+                    prob_config = state.scale_prob[idx]
+                    if isinstance(prob_config, list):
+                        q_stats.option_count = len(prob_config)
+            
+            elif q_type == "score":
+                # 评价题与量表题共用 scale_prob 配置列表
                 if 0 <= idx < len(state.scale_prob):
                     prob_config = state.scale_prob[idx]
                     if isinstance(prob_config, list):
@@ -290,6 +300,18 @@ class StatsCollector:
             if question_num not in buf:
                 buf[question_num] = []
             buf[question_num].append(("scale", selected_index))
+
+    def record_score_choice(self, question_num: int, selected_index: int) -> None:
+        """记录评价题（星级评分）选择（暂存到当前线程 buffer）"""
+        with self._data_lock:
+            if not self._enabled:
+                return
+            buf = self._get_thread_buffer()
+            if buf is None:
+                return
+            if question_num not in buf:
+                buf[question_num] = []
+            buf[question_num].append(("score", selected_index))
 
     def record_dropdown_choice(self, question_num: int, selected_index: int) -> None:
         """记录下拉题选择（暂存到当前线程 buffer）"""

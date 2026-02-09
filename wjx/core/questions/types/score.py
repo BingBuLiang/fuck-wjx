@@ -79,4 +79,4 @@ def score(driver: BrowserDriver, current: int, index: int, score_prob_config: Li
         except Exception:
             pass
     # 记录统计数据
-    stats_collector.record_scale_choice(current, selected_index)
+    stats_collector.record_score_choice(current, selected_index)

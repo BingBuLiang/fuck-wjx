@@ -154,7 +154,11 @@ class EngineGuiAdapter:
         return None
 
     def cleanup_browsers(self) -> None:
-        """异步清理所有浏览器实例，立即返回不阻塞 GUI 线程"""
+        """异步清理所有浏览器实例，立即返回不阻塞 GUI 线程
+
+        这是兜底清理函数，会强制终止所有残留的浏览器进程。
+        即使工作线程已经提交了清理任务，这里也会再次确保清理干净。
+        """
         drivers = list(self.active_drivers or [])
         self.active_drivers.clear()
         pids_to_wait: Set[int] = set(self._launched_browser_pids or set())
@@ -174,24 +178,34 @@ class EngineGuiAdapter:
 
         # 将清理任务提交到后台线程，避免阻塞 GUI
         def _do_cleanup():
-            # 先直接终止所有浏览器进程（快速、无 GIL 争用）
+            # 先直接终止所有浏览器进程（强制清理，确保窗口关闭）
             if pids_to_wait:
                 try:
-                    graceful_terminate_process_tree(pids_to_wait, wait_seconds=0.8)
+                    # 使用更长的等待时间，确保进程被彻底杀死
+                    graceful_terminate_process_tree(pids_to_wait, wait_seconds=1.5)
+                    logging.debug(f"[兜底清理] 已终止 {len(pids_to_wait)} 个浏览器进程")
                 except Exception:
                     logging.debug("终止浏览器进程树失败", exc_info=True)
 
-            # 进程已死后再清理 Playwright 实例（不再调用 _browser.close()，避免 GIL 争用）
+            # 进程已死后再清理 Playwright 实例
+            # 注意：不检查 mark_cleanup_done()，强制清理所有实例（兜底清理）
+            cleaned_count = 0
             for driver in drivers:
-                if not driver.mark_cleanup_done():
-                    continue  # 已被工作线程清理过，跳过
                 try:
+                    # 尝试标记为已清理（如果已被标记则返回 False，但我们仍然尝试清理）
+                    driver.mark_cleanup_done()
                     driver._playwright.stop()
-                except Exception:
-                    logging.debug("停止 Playwright 实例失败", exc_info=True)
+                    cleaned_count += 1
+                except Exception as exc:
+                    # 如果已经被清理过，这里会抛异常，忽略即可
+                    logging.debug(f"停止 Playwright 实例失败（可能已被清理）: {exc}")
+
+            if cleaned_count > 0:
+                logging.debug(f"[兜底清理] 已停止 {cleaned_count} 个 playwright 实例")
 
         if self._cleanup_runner:
-            self._cleanup_runner.submit(_do_cleanup, delay_seconds=0.0)
+            # 延迟 0.3 秒执行，给工作线程的清理任务一点时间先执行
+            self._cleanup_runner.submit(_do_cleanup, delay_seconds=0.3)
         else:
             # 降级方案：直接执行（不应该走到这里）
             _do_cleanup()

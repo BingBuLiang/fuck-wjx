@@ -138,7 +138,7 @@ def _get_type_label(q_type: str) -> str:
 
 
 class QuestionWizardDialog(QDialog):
-    """配置向导：用滑块快速设置权重，编辑填空题答案。"""
+    """配置向导：用滑块快速设置权重/概率，编辑填空题答案。"""
 
     @staticmethod
     def _resolve_matrix_weights(entry: QuestionEntry, rows: int, columns: int) -> List[List[float]]:
@@ -232,7 +232,7 @@ class QuestionWizardDialog(QDialog):
         layout.setSpacing(16)
 
         # 顶部说明
-        intro = BodyLabel("配置各题目的选项权重或填空答案", self)
+        intro = BodyLabel("配置各题目的选项权重/概率或填空答案", self)
         intro.setStyleSheet("font-size: 13px;")
         _apply_label_color(intro, "#666666", "#bfbfbf")
         layout.addWidget(intro)
@@ -487,7 +487,7 @@ class QuestionWizardDialog(QDialog):
 
                 self.matrix_row_slider_map[idx] = per_row_sliders
             elif entry.question_type == "order":
-                # 排序题：无需配置权重
+                # 排序题：无需配置配比/权重
                 self._has_content = True
                 hint = BodyLabel("排序题无需设置配比，执行时会随机排序；如题干要求仅排序前 N 项，将自动识别。", card)
                 hint.setWordWrap(True)
@@ -634,7 +634,7 @@ class QuestionWizardDialog(QDialog):
         super().reject()
 
     def get_results(self) -> Dict[int, Any]:
-        """获取滑块权重结果"""
+        """获取滑块权重/概率结果"""
         result: Dict[int, Any] = {}
         for idx, sliders in self.slider_map.items():
             weights = [max(0, s.value()) for s in sliders]
@@ -1167,12 +1167,12 @@ class QuestionAddDialog(QDialog):
                 hint_text = "滑块题：当前为完全随机，每次会在 0-100 范围内随机填写"
             elif is_slider:
                 hint_text = "滑块题：此处数值代表填写时的目标值，会做小幅抖动避免每份相同（默认 0-100）"
-            elif strategy == "random":
-                hint_text = "当前为完全随机，切换为自定义配比可编辑。"
             elif is_multiple:
                 hint_text = "每个滑块的值对应的是选项的命中概率（%）"
+            elif strategy == "random":
+                hint_text = "当前为完全随机，切换为自定义配比可编辑。"
             else:
-                hint_text = "拖动滑块设置答案分布比例"
+                hint_text = "拖动滑块设置答案分布配比"
 
             hint = BodyLabel(hint_text, card)
             hint.setWordWrap(True)
@@ -1350,7 +1350,7 @@ class QuestionPage(ScrollArea):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
         layout.addWidget(SubtitleLabel("题目配置", self))
-        layout.addWidget(BodyLabel("双击单元格即可编辑；自定义权重用逗号分隔，例如 3,2,1", self))
+        layout.addWidget(BodyLabel("双击单元格即可编辑；自定义配比用逗号分隔，例如 3,2,1", self))
 
         self.table = TableWidget(self.view)
         self.table.setRowCount(0)
@@ -1515,7 +1515,10 @@ class QuestionPage(ScrollArea):
             detail = "排序题 | 自动随机排序"
         elif entry.custom_weights:
             weights = entry.custom_weights
-            detail = f"自定义配比: {','.join(str(int(w)) for w in weights[:5])}"
+            if entry.question_type == "multiple":
+                detail = f"自定义概率: {','.join(f'{int(w)}%' for w in weights[:5])}"
+            else:
+                detail = f"自定义配比: {','.join(str(int(w)) for w in weights[:5])}"
             if len(weights) > 5:
                 detail += "..."
         else:
@@ -1524,7 +1527,10 @@ class QuestionPage(ScrollArea):
                 strategy = "random"
             if getattr(entry, "probabilities", None) == -1:
                 strategy = "random"
-            detail = "完全随机" if strategy == "random" else "自定义配比"
+            if entry.question_type == "multiple":
+                detail = "完全随机" if strategy == "random" else "自定义概率"
+            else:
+                detail = "完全随机" if strategy == "random" else "自定义配比"
         self.table.setItem(row, 3, QTableWidgetItem(detail))
 
     def _entry_from_row(self, row: int) -> QuestionEntry:

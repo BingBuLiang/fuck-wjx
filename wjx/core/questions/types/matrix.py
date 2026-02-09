@@ -1,9 +1,8 @@
 """矩阵题处理"""
-import random
 from typing import List, Union
 
 from wjx.network.browser_driver import By, BrowserDriver
-from wjx.core.questions.utils import weighted_index, normalize_probabilities
+from wjx.core.questions.tendency import get_tendency_index
 from wjx.core.stats.collector import stats_collector
 
 
@@ -31,13 +30,9 @@ def matrix(driver: BrowserDriver, current: int, index: int, matrix_prob_config: 
                 probs = []
             if len(probs) != len(candidate_columns):
                 probs = [1.0] * len(candidate_columns)
-            try:
-                normalized_probs = normalize_probabilities(probs)
-            except Exception:
-                normalized_probs = [1.0 / len(candidate_columns)] * len(candidate_columns)
-            selected_column = candidate_columns[weighted_index(normalized_probs)]
+            selected_column = candidate_columns[get_tendency_index(len(candidate_columns), probs)]
         else:
-            selected_column = random.choice(candidate_columns)
+            selected_column = candidate_columns[get_tendency_index(len(candidate_columns), -1)]
         driver.find_element(
             By.CSS_SELECTOR, f"#drv{current}_{row_index} > td:nth-child({selected_column})"
         ).click()

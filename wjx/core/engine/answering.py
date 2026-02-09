@@ -35,12 +35,15 @@ from wjx.core.questions.types.text import (
     driver_question_is_location as _driver_question_is_location,
     vacant as _vacant_impl,
 )
+from wjx.core.questions.tendency import reset_tendency
 from wjx.core.survey.parser import _should_mark_as_multi_text, _should_treat_question_as_text_like
 from wjx.network.browser_driver import BrowserDriver, By, NoSuchElementException
 
 
 def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) -> bool:
     """批量填写一份问卷；返回 True 代表完整提交，False 代表过程中被用户打断。"""
+    # 每份问卷开始前重置答题倾向，确保不同问卷之间的倾向独立
+    reset_tendency()
     questions_per_page = detect(driver, stop_signal=stop_signal)
     total_question_count = sum(questions_per_page)
     fast_mode = _is_fast_mode()

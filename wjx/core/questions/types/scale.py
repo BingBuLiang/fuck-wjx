@@ -1,9 +1,8 @@
 """量表题处理"""
-import random
 from typing import List, Union
 
 from wjx.network.browser_driver import By, BrowserDriver
-from wjx.core.questions.utils import weighted_index
+from wjx.core.questions.tendency import get_tendency_index
 from wjx.core.stats.collector import stats_collector
 
 
@@ -14,10 +13,7 @@ def scale(driver: BrowserDriver, current: int, index: int, scale_prob_config: Li
     probabilities = scale_prob_config[index] if index < len(scale_prob_config) else -1
     if not scale_options:
         return
-    if probabilities == -1:
-        selected_index = random.randrange(len(scale_options))
-    else:
-        selected_index = weighted_index(probabilities)
+    selected_index = get_tendency_index(len(scale_options), probabilities)
     scale_options[selected_index].click()
     # 记录统计数据
     stats_collector.record_scale_choice(current, selected_index)

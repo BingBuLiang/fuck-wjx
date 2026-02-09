@@ -170,9 +170,8 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
         _unregister_driver(driver)
         driver = None  # 立即清空引用，避免重复处理
 
-        # 【关键修复】Playwright 的 stop() 必须在创建它的线程中调用，
-        # 否则会出现 greenlet 线程切换错误，导致后续无法创建新浏览器。
-        # 因此：进程终止提交到后台线程（避免 GUI 卡顿），但 playwright.stop() 在当前工作线程同步执行。
+        # 【关键修复】先在后台线程强制杀死浏览器进程，然后在当前工作线程调用 playwright.stop()
+        # 这样 playwright.stop() 不会阻塞太久（因为进程已死），同时满足"必须在创建线程调用"的要求
 
         # 定义进程清理任务（异步执行，不阻塞工作线程）
         def _do_process_cleanup():
@@ -183,16 +182,20 @@ def run(window_x_pos, window_y_pos, stop_signal: threading.Event, gui_instance=N
                 except Exception as exc:
                     log_suppressed_exception("runner._dispose_driver terminate process tree", exc)
 
-        # 提交进程清理到后台线程
+        # 提交进程清理到后台线程（立即执行，不等待）
         cleanup_runner = getattr(gui_instance, "_cleanup_runner", None) if gui_instance else None
         if cleanup_runner:
             cleanup_runner.submit(_do_process_cleanup, delay_seconds=0.0)
         else:
-            # 降级方案：同步执行
-            _do_process_cleanup()
+            # 降级方案：在新线程中执行
+            cleanup_thread = threading.Thread(target=_do_process_cleanup, daemon=True, name="ProcessCleanup")
+            cleanup_thread.start()
+
+        # 短暂等待进程清理完成（最多 0.1 秒），避免 playwright.stop() 长时间阻塞
+        time.sleep(0.1)
 
         # 【关键】在当前工作线程中同步停止 Playwright 实例
-        # 由于浏览器进程已被终止，这个调用会很快返回（几乎不阻塞）
+        # 由于浏览器进程已被终止（或正在终止），这个调用应该很快返回
         try:
             playwright_instance.stop()
             logging.debug("已停止 playwright 实例")

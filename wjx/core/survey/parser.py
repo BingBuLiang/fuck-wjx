@@ -233,7 +233,6 @@ def _extract_rating_option_texts(question_div) -> List[str]:
 def _collect_choice_option_texts(question_div) -> Tuple[List[str], List[int]]:
     texts: List[str] = []
     fillable_indices: List[int] = []
-    seen = set()
     option_elements: List[Any] = []
     selectors = ['.ui-controlgroup > div', 'ul > li']
     for selector in selectors:
@@ -255,14 +254,14 @@ def _collect_choice_option_texts(question_div) -> Tuple[List[str], List[int]]:
             text = _normalize_html_text(label_element.get_text(' ', strip=True))
             if not text:
                 text = _extract_option_text_from_attrs(element)
-            if not text or text in seen:
+            if not text:
                 continue
             option_index = len(texts)
             texts.append(text)
-            seen.add(text)
             if _element_contains_text_input(element):
                 fillable_indices.append(option_index)
     if not texts:
+        seen = set()
         fallback_selectors = ['.label', 'li span', 'li']
         for selector in fallback_selectors:
             try:

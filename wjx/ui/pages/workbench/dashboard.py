@@ -94,7 +94,10 @@ def _question_summary(entry: QuestionEntry) -> str:
         return "排序题 - 自动随机排序"
     elif entry.custom_weights:
         weights = entry.custom_weights
-        summary = f"自定义配比: {','.join(str(int(w)) for w in weights[:4])}"
+        if entry.question_type == "multiple":
+            summary = f"自定义概率: {','.join(f'{int(w)}%' for w in weights[:4])}"
+        else:
+            summary = f"自定义配比: {','.join(str(int(w)) for w in weights[:4])}"
         if len(weights) > 4:
             summary += "..."
         return summary
@@ -104,6 +107,8 @@ def _question_summary(entry: QuestionEntry) -> str:
             strategy = "random"
         if getattr(entry, "probabilities", None) == -1:
             strategy = "random"
+        if entry.question_type == "multiple":
+            return "完全随机" if strategy == "random" else "自定义概率"
         return "完全随机" if strategy == "random" else "自定义配比"
 
 

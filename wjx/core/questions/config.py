@@ -137,7 +137,7 @@ class QuestionEntry:
 
         if self.question_type == "multiple" and self.custom_weights:
             weights_str = ",".join(f"{int(round(max(w, 0)))}%" for w in self.custom_weights)
-            return f"{self.option_count} 个选项 - 权重 {weights_str}{fillable_hint}"
+            return f"{self.option_count} 个选项 - 概率 {weights_str}{fillable_hint}"
 
         if self.distribution_mode == "custom" and self.custom_weights:
             def _format_ratio(value: float) -> str:
@@ -350,7 +350,7 @@ def validate_question_config(entries: List[QuestionEntry], questions_info: Optio
         question_num = getattr(entry, "question_num", idx + 1)
         question_type = getattr(entry, "question_type", "")
 
-        # 验证多选题的概率配置与选择数量限制是否冲突
+        # 验证多选题的概率配置是否有效，以及是否与选择数量限制冲突
         if question_type == "multiple":
             # 获取多选题的限制信息
             multi_min_limit: Optional[int] = None
@@ -360,30 +360,37 @@ def validate_question_config(entries: List[QuestionEntry], questions_info: Optio
                 multi_min_limit = questions_info[idx].get("multi_min_limit")
                 multi_max_limit = questions_info[idx].get("multi_max_limit")
 
-            # 如果有最少选择数量限制，检查正概率选项是否足够
-            if multi_min_limit is not None and multi_min_limit > 0:
-                # 获取概率配置
-                probs = getattr(entry, "custom_weights", None) or getattr(entry, "probabilities", None)
+            # 获取概率配置
+            probs = getattr(entry, "custom_weights", None) or getattr(entry, "probabilities", None)
 
-                if isinstance(probs, list):
-                    # 统计概率 > 0 的选项数量
-                    positive_count = 0
-                    for prob in probs:
-                        try:
-                            prob_value = float(prob)
-                            if prob_value > 0:
-                                positive_count += 1
-                        except Exception:
-                            continue
+            if isinstance(probs, list):
+                # 统计概率 > 0 的选项数量
+                positive_count = 0
+                for prob in probs:
+                    try:
+                        prob_value = float(prob)
+                        if prob_value > 0:
+                            positive_count += 1
+                    except Exception:
+                        continue
 
-                    # 如果正概率选项数量少于最低要求，报错
-                    if positive_count < multi_min_limit:
-                        errors.append(
-                            f"第 {question_num} 题（多选题）配置冲突：\n"
-                            f"  - 题目要求最少选择 {multi_min_limit} 项\n"
-                            f"  - 但只有 {positive_count} 个选项的概率大于 0%\n"
-                            f"  - 请至少将 {multi_min_limit} 个选项的概率设为大于 0%"
-                        )
+                # 所有选项都 <= 0 时，直接判定配置无效
+                if positive_count <= 0:
+                    errors.append(
+                        f"第 {question_num} 题（多选题）配置无效：\n"
+                        f"  - 当前所有选项概率都小于等于 0%\n"
+                        f"  - 请至少将 1 个选项的概率设为大于 0%"
+                    )
+                    continue
+
+                # 如果有最少选择数量限制，检查正概率选项是否足够
+                if multi_min_limit is not None and multi_min_limit > 0 and positive_count < multi_min_limit:
+                    errors.append(
+                        f"第 {question_num} 题（多选题）配置冲突：\n"
+                        f"  - 题目要求最少选择 {multi_min_limit} 项\n"
+                        f"  - 但只有 {positive_count} 个选项的概率大于 0%\n"
+                        f"  - 请至少将 {multi_min_limit} 个选项的概率设为大于 0%"
+                    )
 
     if errors:
         return "\n\n".join(errors)

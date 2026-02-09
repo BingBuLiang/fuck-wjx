@@ -233,7 +233,7 @@ class ResultPage(QWidget):
         self._show_placeholder()
 
     def _build_overview_card(self) -> SimpleCardWidget:
-        """概览卡片：四个数字指标水平排列"""
+        """概览卡片：五个数字指标水平排列"""
         card = SimpleCardWidget(self)
         layout = QHBoxLayout(card)
         layout.setContentsMargins(28, 20, 28, 20)
@@ -243,11 +243,13 @@ class ResultPage(QWidget):
         self._stat_success = _StatNumberWidget("成功", "0", "#22c55e")
         self._stat_fail = _StatNumberWidget("失败", "0", "#ef4444")
         self._stat_rate = _StatNumberWidget("成功率", "0%")
+        self._stat_alpha = _StatNumberWidget("信度系数", "--", "#8b5cf6")
 
         layout.addWidget(self._stat_total)
         layout.addWidget(self._stat_success)
         layout.addWidget(self._stat_fail)
         layout.addWidget(self._stat_rate)
+        layout.addWidget(self._stat_alpha)
         layout.addStretch(1)
         return card
 
@@ -464,6 +466,50 @@ class ResultPage(QWidget):
         self._stat_success.setValue(str(success))
         self._stat_fail.setValue(str(fail))
         self._stat_rate.setValue(f"{rate:.1f}%")
+
+        # 计算并显示 Cronbach's Alpha 系数
+        alpha = stats.calculate_cronbach_alpha()
+        if alpha is not None:
+            # 根据系数值设置颜色
+            if alpha >= 0.8:
+                color = "#22c55e"  # 绿色：良好
+            elif alpha >= 0.7:
+                color = "#f59e0b"  # 橙色：可接受
+            else:
+                color = "#ef4444"  # 红色：较差
+            self._stat_alpha._value_label.setStyleSheet(
+                f"font-size: 28px; font-weight: 700; color: {color};"
+            )
+            self._stat_alpha.setValue(f"{alpha:.3f}")
+            # 设置提示信息
+            if alpha >= 0.9:
+                tip = "优秀 (≥0.9)"
+            elif alpha >= 0.8:
+                tip = "良好 (≥0.8)"
+            elif alpha >= 0.7:
+                tip = "可接受 (≥0.7)"
+            elif alpha >= 0.6:
+                tip = "勉强可接受 (≥0.6)"
+            else:
+                tip = "较差 (<0.6)"
+            self._stat_alpha._value_label.setToolTip(
+                f"Cronbach's Alpha: {alpha:.3f}\n"
+                f"内部一致性: {tip}\n\n"
+                f"说明：该系数用于评估问卷的信度（可靠性）\n"
+                f"• ≥0.9: 优秀\n"
+                f"• ≥0.8: 良好\n"
+                f"• ≥0.7: 可接受\n"
+                f"• <0.7: 需要改进"
+            )
+        else:
+            self._stat_alpha.setValue("--")
+            self._stat_alpha._value_label.setToolTip(
+                "Cronbach's Alpha 系数不可用\n\n"
+                "可能原因：\n"
+                "• 题目数量少于 2 道\n"
+                "• 样本数量不足\n"
+                "• 没有适用的题型（需要量表题、评分题等）"
+            )
 
     def _update_question_cards(self, stats: SurveyStats) -> None:
         self._clear_scroll()

@@ -372,18 +372,21 @@ def multiple(driver: BrowserDriver, current: int, index: int, multiple_prob_conf
             prob_value = 0.0
         prob_value = max(0.0, min(100.0, prob_value))
         sanitized_probabilities.append(prob_value)
-    if not any(value > 0 for value in sanitized_probabilities):
-        sanitized_probabilities = [100.0] * len(option_elements)
     selection_probabilities = sanitized_probabilities
 
     selection_mask: List[int] = []
     attempts = 0
     max_attempts = 32
-    # 仅从概率 > 0 的选项中生成选择掩码
     positive_indices = [i for i, p in enumerate(selection_probabilities) if p > 0]
     if not positive_indices:
-        # 所有概率都为 0 时，前面已经兜底为 100%，不应到达这里
-        positive_indices = list(range(len(option_elements)))
+        if current not in _WARNED_PROB_MISMATCH:
+            _WARNED_PROB_MISMATCH.add(current)
+            logging.warning(
+                "第%d题（多选）：所有选项概率都 <= 0，已跳过本题作答；请在配置中至少保留一个 > 0%% 的选项。",
+                current,
+            )
+        stats_collector.record_multiple_choice(current, [])
+        return
     while sum(selection_mask) == 0 and attempts < max_attempts:
         selection_mask = [1 if random.random() < (prob / 100.0) else 0 for prob in selection_probabilities]
         attempts += 1
@@ -391,7 +394,11 @@ def multiple(driver: BrowserDriver, current: int, index: int, multiple_prob_conf
         # 32次尝试都没选中任何选项，从正概率选项中随机选一个
         selection_mask = [0] * len(option_elements)
         selection_mask[random.choice(positive_indices)] = 1
-    selected_indices = [idx for idx, selected in enumerate(selection_mask) if selected == 1]
+    selected_indices = [
+        idx
+        for idx, selected in enumerate(selection_mask)
+        if selected == 1 and selection_probabilities[idx] > 0
+    ]
     if max_select_limit is not None and len(selected_indices) > max_allowed:
         random.shuffle(selected_indices)
         selected_indices = selected_indices[:max_allowed]

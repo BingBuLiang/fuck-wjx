@@ -1,9 +1,8 @@
 """评价题处理（星级评价）"""
-import random
 from typing import List
 
 from wjx.network.browser_driver import By, BrowserDriver
-from wjx.core.questions.utils import weighted_index
+from wjx.core.questions.tendency import get_tendency_index
 from wjx.core.stats.collector import stats_collector
 
 
@@ -68,12 +67,9 @@ def score(driver: BrowserDriver, current: int, index: int, score_prob_config: Li
     if not options:
         return
     probabilities = score_prob_config[index] if index < len(score_prob_config) else -1
-    if probabilities == -1:
-        selected_index = random.randrange(len(options))
-    else:
-        selected_index = weighted_index(probabilities)
-        if selected_index >= len(options):
-            selected_index = max(0, len(options) - 1)
+    selected_index = get_tendency_index(len(options), probabilities)
+    if selected_index >= len(options):
+        selected_index = max(0, len(options) - 1)
     target = options[selected_index]
     try:
         target.click()

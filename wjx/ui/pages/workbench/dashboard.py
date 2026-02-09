@@ -117,6 +117,7 @@ class DashboardPage(QWidget):
 
     def __init__(self, controller: RunController, question_page: QuestionPage, runtime_page: RuntimePage, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
         self.controller = controller
         self.question_page = question_page
         self.runtime_page = runtime_page

@@ -247,6 +247,7 @@ class ResultPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
         self._current_stats: Optional[SurveyStats] = None
         self._question_cards: list = []
         self._analysis_thread: Optional[QThread] = None
@@ -287,16 +288,27 @@ class ResultPage(QWidget):
         root.addWidget(self._analysis_card)
 
         # ─── 滚动区域（题目卡片） ───
-        scroll = ScrollArea(self)
+        self._question_list_card = SimpleCardWidget(self)
+        question_list_card_layout = QVBoxLayout(self._question_list_card)
+        question_list_card_layout.setContentsMargins(0, 0, 0, 0)
+        question_list_card_layout.setSpacing(0)
+
+        scroll = ScrollArea(self._question_list_card)
         scroll.setWidgetResizable(True)
         scroll.enableTransparentBackground()
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollArea > QWidget > QWidget { background: transparent; border: none; }"
+        )
 
         self._scroll_content = QWidget()
+        self._scroll_content.setStyleSheet("background: transparent;")
         self._scroll_layout = QVBoxLayout(self._scroll_content)
         self._scroll_layout.setContentsMargins(0, 0, 0, 0)
         self._scroll_layout.setSpacing(12)
         scroll.setWidget(self._scroll_content)
-        root.addWidget(scroll, 1)
+        question_list_card_layout.addWidget(scroll)
+        root.addWidget(self._question_list_card, 1)
 
         # 初始占位提示
         self._show_placeholder()

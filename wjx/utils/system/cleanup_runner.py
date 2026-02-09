@@ -104,14 +104,21 @@ class CleanupRunner:
         """立即执行所有待清理的 PID（不等待去抖延迟）
 
         用于强制停止时立即清理所有浏览器进程
+
+        优化：异步执行，不阻塞调用线程
         """
         with self._lock:
             if self._batch_timer:
                 self._batch_timer.cancel()
                 self._batch_timer = None
 
-        # 直接执行批量清理
-        self._execute_batch_cleanup()
+        # 异步执行批量清理，不阻塞调用线程
+        cleanup_thread = threading.Thread(
+            target=self._execute_batch_cleanup,
+            daemon=True,
+            name="FlushPIDCleanup"
+        )
+        cleanup_thread.start()
 
     def _worker(self) -> None:
         """后台工作线程：处理普通清理任务队列"""

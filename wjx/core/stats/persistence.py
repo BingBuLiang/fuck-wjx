@@ -84,6 +84,10 @@ def save_stats(stats: SurveyStats, path: Optional[str] = None, target_num: Optio
         "questions": {}
     }
 
+    # 保存信效度分析结果（如果有）
+    if stats.reliability_validity is not None:
+        data["reliability_validity"] = stats.reliability_validity
+
     for q_num, q_stats in stats.questions.items():
         q_data = {
             "question_type": q_stats.question_type,
@@ -142,6 +146,7 @@ def load_stats(path: str) -> Optional[SurveyStats]:
         updated_at=data.get("updated_at", ""),
         total_submissions=data.get("total_submissions", 0),
         failed_submissions=data.get("failed_submissions", 0),
+        reliability_validity=data.get("reliability_validity"),  # 加载信效度分析结果
     )
 
     for q_num_str, q_data in data.get("questions", {}).items():

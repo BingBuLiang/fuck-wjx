@@ -335,7 +335,7 @@ class AboutPage(ScrollArea):
             display = str(ip_count)
         except Exception:
             display = "--"
-        self.ip_balance_label.setText(f"|  代理源剩余IP数：{display}")
+        self.ip_balance_label.setText(f"|  代理源剩余 IP 数：{display}")
 
     def _show_terms_of_service(self):
         """显示服务条款对话框"""

@@ -74,6 +74,9 @@ class SurveyStats:
     failed_submissions: int = 0                 # 失败次数
     questions: Dict[int, QuestionStats] = field(default_factory=dict)  # 题号 -> 统计
 
+    # 信效度分析结果（可选，仅当执行过分析时才有值）
+    reliability_validity: Optional[Dict[str, Any]] = None  # 信效度分析结果
+
     def get_or_create_question(self, question_num: int, question_type: str) -> QuestionStats:
         """获取或创建题目统计"""
         if question_num not in self.questions:

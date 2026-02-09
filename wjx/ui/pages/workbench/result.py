@@ -3,7 +3,7 @@
 import os
 from typing import Optional
 
-from PySide6.QtCore import Qt, QThread, QObject, Signal
+from PySide6.QtCore import Qt, QThread, QObject, Signal, QSettings
 from PySide6.QtGui import QColor, QPainter, QBrush, QPen, QFont
 from PySide6.QtWidgets import (
     QWidget,
@@ -446,7 +446,15 @@ class ResultPage(QWidget):
         for idx in range(option_count):
             opt = q.options.get(idx)
             count = opt.count if opt else 0
-            name = (opt.option_text if opt and opt.option_text else f"选项 {idx + 1}")
+            # 优先使用选项文本，如果没有则根据题型决定显示格式
+            if opt and opt.option_text:
+                name = opt.option_text
+            elif q.question_type == "scale":
+                # 量表题：直接显示索引值（0、1、2...），不加1
+                name = f"选项 {idx}"
+            else:
+                # 其他题型：显示 idx + 1（选项 1、选项 2...）
+                name = f"选项 {idx + 1}"
             pct = q.get_option_percentage(idx)
             layout.addWidget(_BarRow(name, count, pct, parent))
 
@@ -673,6 +681,12 @@ class ResultPage(QWidget):
             f"{result.sample_count} 份样本 / {result.item_count} 道题"
         )
 
+        # 将分析结果保存到当前统计数据中
+        self._save_analysis_to_stats(result)
+
+        # 分析完成后自动保存统计文件（包含信效度数据）
+        self._auto_save_stats_after_analysis()
+
         # ── Cronbach's Alpha ──
         if result.cronbach_alpha is not None:
             alpha = result.cronbach_alpha
@@ -767,6 +781,191 @@ class ResultPage(QWidget):
         else:
             self._metric_bartlett.set_unavailable("数据不足，无法计算")
 
+    def _save_analysis_to_stats(self, result: AnalysisResult) -> None:
+        """将信效度分析结果保存到统计数据中
+
+        Args:
+            result: 分析结果对象
+        """
+        # 获取当前统计数据（优先使用当前显示的，否则从收集器获取）
+        stats = self._current_stats or stats_collector.get_current_stats()
+        if stats is None:
+            return
+
+        # 构建信效度分析结果字典
+        reliability_validity = {
+            "cronbach_alpha": result.cronbach_alpha,
+            "kmo_value": result.kmo_value,
+            "bartlett_chi2": result.bartlett_chi2,
+            "bartlett_p": result.bartlett_p,
+            "sample_count": result.sample_count,
+            "item_count": result.item_count,
+            "item_columns": result.item_columns,
+            "error": result.error,
+        }
+
+        # 保存到统计数据对象
+        stats.reliability_validity = reliability_validity
+
+        # 如果是当前运行的统计，也更新收集器中的数据
+        if self._current_stats is None:
+            current = stats_collector.get_current_stats()
+            if current is not None:
+                current.reliability_validity = reliability_validity
+
+    def _auto_save_stats_after_analysis(self) -> None:
+        """信效度分析完成后，自动保存统计文件（更新现有文件）"""
+        # 获取设置，检查是否开启自动保存
+        settings = QSettings("FuckWjx", "Settings")
+        auto_save = settings.value("auto_save_stats", True, type=bool)
+        
+        if not auto_save:
+            # 未开启自动保存，仅显示提示
+            InfoBar.info(
+                "", "信效度分析已完成，可点击'导出统计'保存结果",
+                parent=self.window(),
+                position=InfoBarPosition.TOP, duration=3000,
+            )
+            return
+        
+        # 自动保存统计数据
+        stats = self._current_stats or stats_collector.get_current_stats()
+        if stats is None:
+            return
+        
+        try:
+            path = save_stats(stats)
+            InfoBar.success(
+                "", f"信效度分析已完成并自动保存: {os.path.basename(path)}",
+                parent=self.window(),
+                position=InfoBarPosition.TOP, duration=4000,
+            )
+            # 刷新历史记录列表
+            self._load_history_list()
+        except Exception as exc:
+            InfoBar.warning(
+                "", f"信效度分析完成，但自动保存失败: {exc}\n请手动点击'导出统计'",
+                parent=self.window(),
+                position=InfoBarPosition.TOP, duration=4000,
+            )
+
+    def _display_saved_analysis(self, reliability_validity: dict) -> None:
+        """显示已保存的信效度分析结果
+
+        Args:
+            reliability_validity: 从统计文件加载的信效度分析结果字典
+        """
+        # 如果有错误信息，显示错误
+        error = reliability_validity.get("error")
+        if error:
+            self._analysis_status_label.setText(error)
+            self._analysis_status_label.setStyleSheet("color: rgba(128,128,128,0.6);")
+            self._metric_alpha.set_unavailable(error)
+            self._metric_kmo.set_unavailable(error)
+            self._metric_bartlett.set_unavailable(error)
+            return
+
+        # 显示样本和题目数
+        sample_count = reliability_validity.get("sample_count", 0)
+        item_count = reliability_validity.get("item_count", 0)
+        self._analysis_status_label.setText("")
+        self._analysis_sample_label.setText(
+            f"{sample_count} 份样本 / {item_count} 道题"
+        )
+
+        # ── Cronbach's Alpha ──
+        alpha = reliability_validity.get("cronbach_alpha")
+        if alpha is not None:
+            if alpha >= 0.9:
+                color, desc = "#22c55e", "优秀"
+            elif alpha >= 0.8:
+                color, desc = "#22c55e", "良好"
+            elif alpha >= 0.7:
+                color, desc = "#f59e0b", "可接受"
+            elif alpha >= 0.6:
+                color, desc = "#f59e0b", "勉强可接受"
+            else:
+                color, desc = "#ef4444", "较差"
+
+            self._metric_alpha.set_value(
+                f"{alpha:.3f}", color, desc,
+                tooltip=(
+                    f"Cronbach's Alpha = {alpha:.4f}\n\n"
+                    f"内部一致性评级：{desc}\n\n"
+                    "评级标准：\n"
+                    "  >= 0.9  优秀\n"
+                    "  >= 0.8  良好\n"
+                    "  >= 0.7  可接受\n"
+                    "  >= 0.6  勉强可接受\n"
+                    "  <  0.6  较差，建议修改问卷"
+                ),
+            )
+        else:
+            self._metric_alpha.set_unavailable("数据不足，无法计算")
+
+        # ── KMO ──
+        kmo = reliability_validity.get("kmo_value")
+        if kmo is not None:
+            if kmo >= 0.9:
+                color, desc = "#22c55e", "非常适合因子分析"
+            elif kmo >= 0.8:
+                color, desc = "#22c55e", "适合因子分析"
+            elif kmo >= 0.7:
+                color, desc = "#3b82f6", "中等适合"
+            elif kmo >= 0.6:
+                color, desc = "#f59e0b", "勉强适合"
+            else:
+                color, desc = "#ef4444", "不适合因子分析"
+
+            self._metric_kmo.set_value(
+                f"{kmo:.3f}", color, desc,
+                tooltip=(
+                    f"KMO = {kmo:.4f}\n\n"
+                    f"适合度评级：{desc}\n\n"
+                    "评级标准：\n"
+                    "  >= 0.9  非常适合\n"
+                    "  >= 0.8  适合\n"
+                    "  >= 0.7  中等\n"
+                    "  >= 0.6  勉强\n"
+                    "  <  0.6  不适合"
+                ),
+            )
+        else:
+            self._metric_kmo.set_unavailable("数据不足，无法计算")
+
+        # ── Bartlett ──
+        p = reliability_validity.get("bartlett_p")
+        chi2 = reliability_validity.get("bartlett_chi2")
+        if p is not None:
+            if p < 0.001:
+                color, desc = "#22c55e", "显著（适合因子分析）"
+                p_text = "< 0.001"
+            elif p < 0.01:
+                color, desc = "#22c55e", "显著（适合因子分析）"
+                p_text = f"{p:.4f}"
+            elif p < 0.05:
+                color, desc = "#f59e0b", "边缘显著"
+                p_text = f"{p:.4f}"
+            else:
+                color, desc = "#ef4444", "不显著（不适合因子分析）"
+                p_text = f"{p:.4f}"
+
+            display_text = f"p = {p_text}"
+            self._metric_bartlett.set_value(
+                display_text, color, desc,
+                tooltip=(
+                    f"Bartlett 球形检验\n\n"
+                    f"卡方值 (χ²) = {chi2:.2f}\n"
+                    f"p 值 = {p_text}\n\n"
+                    f"结论：{desc}\n\n"
+                    "判断标准：\n"
+                    "  p < 0.05  拒绝原假设 → 变量间存在相关性 → 适合因子分析\n"
+                    "  p >= 0.05 接受原假设 → 变量间无相关性 → 不适合因子分析"
+                ),
+            )
+        else:
+            self._metric_bartlett.set_unavailable("数据不足，无法计算")
+
     # ── 导出 ──────────────────────────────────────────────────
 
     def _on_open_folder(self) -> None:
@@ -792,8 +991,14 @@ class ResultPage(QWidget):
             return
         try:
             path = save_stats(stats)
+            # 检查是否包含信效度数据，优化提示信息
+            has_reliability = stats.reliability_validity is not None
+            message = f"统计已导出: {os.path.basename(path)}"
+            if has_reliability:
+                message += " (含信效度分析)"
+            
             InfoBar.success(
-                "", f"统计已导出: {os.path.basename(path)}",
+                "", message,
                 parent=self.window(),
                 position=InfoBarPosition.TOP, duration=3000,
             )
@@ -852,9 +1057,13 @@ class ResultPage(QWidget):
             self._update_overview(stats)
             self._update_question_cards(stats)
 
-            # 历史数据暂不支持信效度分析（没有对应的 JSONL 文件）
-            self._reset_analysis_card()
-            self._analysis_status_label.setText("历史统计暂不支持信效度分析")
+            # 如果历史数据中保存了信效度分析结果，则显示
+            if stats.reliability_validity:
+                self._display_saved_analysis(stats.reliability_validity)
+            else:
+                # 历史数据没有信效度分析结果
+                self._reset_analysis_card()
+                self._analysis_status_label.setText("该统计文件未包含信效度分析结果")
         except Exception as exc:
             InfoBar.error(
                 "", f"加载失败: {str(exc)[:50]}",

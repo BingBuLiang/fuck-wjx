@@ -983,6 +983,12 @@ def parse_survey_questions_from_html(html: str) -> List[Dict[str, Any]]:
                     has_meaningful = any(_text_looks_meaningful(text) for text in option_texts)
                     if not option_texts or not has_meaningful:
                         option_texts = [str(i + 1) for i in range(option_count)]
+            # 量表题（type_code="5"）如果不是评价题，需要提取数字刻度选项文本
+            elif type_code == "5":
+                scale_texts = _extract_rating_option_texts(question_div)
+                if scale_texts:
+                    option_texts = scale_texts
+                    option_count = len(scale_texts)
             has_jump, jump_rules = _extract_jump_rules_from_html(question_div, question_number, option_texts)
             slider_min, slider_max, slider_step = (None, None, None)
             if type_code == "8":

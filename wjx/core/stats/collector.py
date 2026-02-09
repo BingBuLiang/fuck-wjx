@@ -179,14 +179,14 @@ class StatsCollector:
         """从 state 中提取题目配置元数据，补全到 QuestionStats 中"""
         if not self._current_stats:
             return
-        
+
         # 构建反向索引：找出所有矩阵题的索引范围
         matrix_index_ranges = {}  # {start_idx: end_idx}
         sorted_entries = sorted(
             [(q_num, q_type, idx) for q_num, (q_type, idx) in state.question_config_index_map.items()],
             key=lambda x: (x[1] == "matrix", x[2])  # 按题型和索引排序
         )
-        
+
         # 找出矩阵题的索引范围（用于推断行数）
         for i, (q_num, q_type, idx) in enumerate(sorted_entries):
             if q_type == "matrix":
@@ -199,69 +199,79 @@ class StatsCollector:
                 if next_idx is None:
                     next_idx = len(state.matrix_prob)
                 matrix_index_ranges[idx] = next_idx
-        
+
         # 遍历所有已记录的题目，补充配置元数据
         for q_num, q_stats in self._current_stats.questions.items():
             # 如果已经有配置元数据，跳过
             if q_stats.option_count is not None:
                 continue
-            
+
             # 从 state.question_config_index_map 查找配置信息
             config_entry = state.question_config_index_map.get(q_num)
             if not config_entry:
                 continue
-            
+
             q_type, idx = config_entry
-            
+
             # 根据题型从对应的 state 变量中提取配置
             if q_type == "single":
                 if 0 <= idx < len(state.single_prob):
                     prob_config = state.single_prob[idx]
                     if isinstance(prob_config, list):
                         q_stats.option_count = len(prob_config)
-            
+
             elif q_type == "multiple":
                 if 0 <= idx < len(state.multiple_prob):
                     prob_config = state.multiple_prob[idx]
                     if isinstance(prob_config, list):
                         q_stats.option_count = len(prob_config)
-            
+
             elif q_type == "dropdown":
                 if 0 <= idx < len(state.droplist_prob):
                     prob_config = state.droplist_prob[idx]
                     if isinstance(prob_config, list):
                         q_stats.option_count = len(prob_config)
-            
+
             elif q_type == "scale":
                 if 0 <= idx < len(state.scale_prob):
                     prob_config = state.scale_prob[idx]
                     if isinstance(prob_config, list):
                         q_stats.option_count = len(prob_config)
-            
+
             elif q_type == "score":
                 # 评价题与量表题共用 scale_prob 配置列表
                 if 0 <= idx < len(state.scale_prob):
                     prob_config = state.scale_prob[idx]
                     if isinstance(prob_config, list):
                         q_stats.option_count = len(prob_config)
-            
+
             elif q_type == "matrix":
                 # 矩阵题：使用索引范围来确定行数
                 if idx in matrix_index_ranges:
                     end_idx = matrix_index_ranges[idx]
                     row_count = end_idx - idx
-                    
+
                     # 从第一行获取列数
                     if idx < len(state.matrix_prob):
                         first_row_config = state.matrix_prob[idx]
                         if isinstance(first_row_config, list):
                             q_stats.matrix_cols = len(first_row_config)
-                    
+
                     q_stats.matrix_rows = row_count
-            
+
             elif q_type == "slider":
                 # 滑块题暂时没有固定选项数，跳过
                 pass
+
+            # 从 state.questions_metadata 中提取选项文本（如果有）
+            q_metadata = getattr(state, 'questions_metadata', {}).get(q_num)
+            if q_metadata:
+                option_texts = q_metadata.get('option_texts')
+                if option_texts and isinstance(option_texts, list):
+                    # 为已有的选项补充文本
+                    for idx, text in enumerate(option_texts):
+                        if idx in q_stats.options:
+                            q_stats.options[idx].option_text = str(text) if text else ""
 
     def discard_round(self) -> None:
         """提交失败：丢弃当前线程的暂存缓冲区"""

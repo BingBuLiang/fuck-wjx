@@ -25,6 +25,10 @@ multiple_option_fill_texts: List[Optional[List[Optional[str]]]] = []
 # 用于在问卷存在条件跳转（隐藏题目）时，仍能正确查找每道题的概率配置
 question_config_index_map: Dict[int, Tuple[str, int]] = {}
 
+# 题目元数据（从 HTML 解析得到，用于统计展示时补充选项文本等信息）
+# 题号 → 题目信息字典（包含 option_texts, row_texts 等）
+questions_metadata: Dict[int, Dict[str, Any]] = {}
+
 _browser_semaphore: Optional[threading.Semaphore] = None
 _browser_semaphore_lock = threading.Lock()
 browser_preference: List[str] = []

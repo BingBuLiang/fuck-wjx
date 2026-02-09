@@ -180,21 +180,21 @@ class EngineGuiAdapter:
             except Exception:
                 logging.debug("收集浏览器 PID 失败，跳过当前 driver", exc_info=True)
 
-        # 【优化 1】立即刷新批量清理队列（不等待去抖延迟）
-        if self._cleanup_runner:
-            try:
-                self._cleanup_runner.flush_pending_pids()
-                logging.debug("[兜底清理] 已刷新批量清理队列")
-            except Exception:
-                logging.debug("刷新批量清理队列失败", exc_info=True)
-
-        # 【优化 2】提交残留 PID 到批量清理队列
+        # 【优化 1】异步提交残留 PID 到批量清理队列（立即返回）
         if pids_to_wait and self._cleanup_runner:
             try:
                 self._cleanup_runner.submit_pid_cleanup(pids_to_wait)
                 logging.debug(f"[兜底清理] 已提交 {len(pids_to_wait)} 个残留 PID 到批量清理队列")
             except Exception:
                 logging.debug("提交残留 PID 失败", exc_info=True)
+
+        # 【优化 2】立即触发批量清理（异步执行，不阻塞）
+        if self._cleanup_runner:
+            try:
+                self._cleanup_runner.flush_pending_pids()
+                logging.debug("[兜底清理] 已触发批量清理（异步）")
+            except Exception:
+                logging.debug("触发批量清理失败", exc_info=True)
 
         # 【优化 3】Fire-and-Forget 方式停止 Playwright 实例
         def _stop_playwright_instances():
@@ -619,6 +619,14 @@ class RunController(QObject):
             logging.error(f"配置题目失败：{exc}")
             self.runFailed.emit(str(exc))
             return
+
+        # 保存题目元数据到 state（用于统计展示时补充选项文本等信息）
+        state.questions_metadata = {}
+        if hasattr(self, 'questions_info') and self.questions_info:
+            for q_info in self.questions_info:
+                q_num = q_info.get('num')
+                if q_num:
+                    state.questions_metadata[q_num] = q_info
 
         proxy_pool: List[str] = []
         if config.random_ip_enabled:

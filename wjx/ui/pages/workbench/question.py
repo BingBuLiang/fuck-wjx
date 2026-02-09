@@ -254,6 +254,8 @@ class QuestionWizardDialog(QDialog):
             title_text = ""
             option_texts: List[str] = []
             row_texts: List[str] = []
+            multi_min_limit: Optional[int] = None
+            multi_max_limit: Optional[int] = None
             if idx < len(self.info):
                 qnum = str(self.info[idx].get("num") or "")
                 title_text = str(self.info[idx].get("title") or "")
@@ -263,6 +265,10 @@ class QuestionWizardDialog(QDialog):
                 row_raw = self.info[idx].get("row_texts")
                 if isinstance(row_raw, list):
                     row_texts = [str(x) for x in row_raw]
+                # 获取多选题的选择数量限制
+                if entry.question_type == "multiple":
+                    multi_min_limit = self.info[idx].get("multi_min_limit")
+                    multi_max_limit = self.info[idx].get("multi_max_limit")
 
             # 题目卡片
             card = CardWidget(container)
@@ -288,7 +294,22 @@ class QuestionWizardDialog(QDialog):
                 _apply_label_color(slider_note, "#777777", "#bfbfbf")
                 header.addWidget(slider_note)
             if entry.question_type == "multiple":
-                multi_note = BodyLabel("每个滑块的值对应的是选项的命中概率（%）", card)
+                # 构建多选题提示文本
+                multi_note_text = "每个滑块的值对应的是选项的命中概率（%）"
+                if multi_min_limit is not None or multi_max_limit is not None:
+                    limit_parts = []
+                    if multi_min_limit is not None and multi_max_limit is not None:
+                        if multi_min_limit == multi_max_limit:
+                            limit_parts.append(f"必须选择 {multi_min_limit} 项")
+                        else:
+                            limit_parts.append(f"最少 {multi_min_limit} 项，最多 {multi_max_limit} 项")
+                    elif multi_min_limit is not None:
+                        limit_parts.append(f"最少选择 {multi_min_limit} 项")
+                    elif multi_max_limit is not None:
+                        limit_parts.append(f"最多选择 {multi_max_limit} 项")
+                    if limit_parts:
+                        multi_note_text += f"  |  {limit_parts[0]}"
+                multi_note = BodyLabel(multi_note_text, card)
                 multi_note.setStyleSheet("font-size: 12px;")
                 multi_note.setWordWrap(False)
                 multi_note.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)

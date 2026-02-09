@@ -542,15 +542,91 @@ def _extract_question_title(question_div, fallback_number: int) -> str:
     return f"第{fallback_number}题"
 
 
+def _extract_multiple_choice_limits(question_div, question_number: int) -> Tuple[Optional[int], Optional[int]]:
+    """从多选题 HTML 中提取选择数量限制（最少/最多）"""
+    if question_div is None:
+        return None, None
+
+    # 尝试从 multiple.py 中复用限制检测逻辑
+    try:
+        from wjx.core.questions.types.multiple import (
+            _extract_min_max_from_attributes,
+            _extract_range_from_possible_json,
+            _extract_multi_limit_range_from_text,
+        )
+
+        min_limit: Optional[int] = None
+        max_limit: Optional[int] = None
+
+        # 1. 从属性提取
+        attr_min, attr_max = _extract_min_max_from_attributes(question_div)
+        if attr_min is not None:
+            min_limit = attr_min
+        if attr_max is not None:
+            max_limit = attr_max
+
+        # 2. 从 JSON 属性提取
+        if min_limit is None or max_limit is None:
+            for attr_name in ("data", "data-setting", "data-validate"):
+                try:
+                    attr_value = question_div.get(attr_name)
+                except Exception:
+                    attr_value = None
+                cand_min, cand_max = _extract_range_from_possible_json(attr_value)
+                if min_limit is None and cand_min is not None:
+                    min_limit = cand_min
+                if max_limit is None and cand_max is not None:
+                    max_limit = cand_max
+                if min_limit is not None and max_limit is not None:
+                    break
+
+        # 3. 从文本提取
+        if min_limit is None or max_limit is None:
+            fragments: List[str] = []
+            for selector in (".qtypetip", ".topichtml", ".field-label"):
+                try:
+                    element = question_div.find(class_=selector.lstrip('.'))
+                    if element:
+                        fragments.append(element.get_text(" ", strip=True))
+                except Exception:
+                    continue
+            try:
+                fragments.append(question_div.get_text(" ", strip=True))
+            except Exception:
+                pass
+
+            for fragment in fragments:
+                cand_min, cand_max = _extract_multi_limit_range_from_text(fragment)
+                if min_limit is None and cand_min is not None:
+                    min_limit = cand_min
+                if max_limit is None and cand_max is not None:
+                    max_limit = cand_max
+                if min_limit is not None and max_limit is not None:
+                    break
+
+        if min_limit is not None and max_limit is not None and min_limit > max_limit:
+            min_limit, max_limit = max_limit, min_limit
+
+        return min_limit, max_limit
+    except Exception:
+        return None, None
+
+
 def _extract_question_metadata_from_html(soup, question_div, question_number: int, type_code: str):
     option_texts: List[str] = []
     option_count = 0
     matrix_rows = 0
     row_texts: List[str] = []
     fillable_indices: List[int] = []
+    multi_min_limit: Optional[int] = None
+    multi_max_limit: Optional[int] = None
+
     if type_code in {"3", "4", "5", "11"}:
         option_texts, fillable_indices = _collect_choice_option_texts(question_div)
         option_count = len(option_texts)
+        # 如果是多选题（type_code == "4"），提取选择数量限制
+        if type_code == "4":
+            multi_min_limit, multi_max_limit = _extract_multiple_choice_limits(question_div, question_number)
     elif type_code == "7":
         option_texts = _collect_select_option_texts(question_div, soup, question_number)
         option_count = len(option_texts)
@@ -561,7 +637,7 @@ def _extract_question_metadata_from_html(soup, question_div, question_number: in
         option_count = len(option_texts)
     elif type_code == "8":
         option_count = 1
-    return option_texts, option_count, matrix_rows, row_texts, fillable_indices
+    return option_texts, option_count, matrix_rows, row_texts, fillable_indices, multi_min_limit, multi_max_limit
 
 
 def _extract_jump_rules_from_html(question_div, question_number: int, option_texts: List[str]) -> Tuple[bool, List[Dict[str, Any]]]:
@@ -890,9 +966,15 @@ def parse_survey_questions_from_html(html: str) -> List[Dict[str, Any]]:
                     rating_max = _extract_rating_option_count(question_div)
             is_location = type_code in {"1", "2"} and _soup_question_is_location(question_div)
             title_text = _extract_question_title(question_div, question_number)
-            option_texts, option_count, matrix_rows, row_texts, fillable_indices = _extract_question_metadata_from_html(
-                soup, question_div, question_number, type_code
-            )
+            (
+                option_texts,
+                option_count,
+                matrix_rows,
+                row_texts,
+                fillable_indices,
+                multi_min_limit,
+                multi_max_limit,
+            ) = _extract_question_metadata_from_html(soup, question_div, question_number, type_code)
             if is_rating:
                 rating_texts = _extract_rating_option_texts(question_div)
                 if rating_texts:
@@ -931,5 +1013,7 @@ def parse_survey_questions_from_html(html: str) -> List[Dict[str, Any]]:
                 "slider_min": slider_min,
                 "slider_max": slider_max,
                 "slider_step": slider_step,
+                "multi_min_limit": multi_min_limit,
+                "multi_max_limit": multi_max_limit,
             })
     return questions_info

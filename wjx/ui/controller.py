@@ -19,7 +19,7 @@ from wjx import engine
 import wjx.core.state as state
 from wjx.utils.app.config import DEFAULT_HTTP_HEADERS, DEFAULT_FILL_TEXT, STOP_FORCE_WAIT_SECONDS
 from wjx.utils.system.cleanup_runner import CleanupRunner
-from wjx.core.questions.config import QuestionEntry, configure_probabilities
+from wjx.core.questions.config import QuestionEntry, configure_probabilities, validate_question_config
 from wjx.engine import (
     create_playwright_driver,
     parse_survey_questions_from_html,
@@ -556,7 +556,16 @@ class RunController(QObject):
             logging.error("未配置任何题目，无法启动")
             self.runFailed.emit('未配置任何题目，无法开始执行（请先在"题目配置"页添加/配置题目）')
             return
-        
+
+        # 验证题目配置是否存在冲突
+        logging.info("验证题目配置...")
+        questions_info = getattr(config, "questions_info", None)
+        validation_error = validate_question_config(config.question_entries, questions_info)
+        if validation_error:
+            logging.error(f"题目配置验证失败：{validation_error}")
+            self.runFailed.emit(f"题目配置存在冲突，无法启动：\n\n{validation_error}")
+            return
+
         logging.info(f"开始配置任务：目标{config.target}份，{config.threads}个线程")
         
         self.config = config

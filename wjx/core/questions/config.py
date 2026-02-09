@@ -328,3 +328,64 @@ def configure_probabilities(entries: List[QuestionEntry]):
             state.text_entry_types.append(entry.question_type)
             state.text_ai_flags.append(ai_enabled)
             state.text_titles.append(str(getattr(entry, "question_title", "") or ""))
+
+
+def validate_question_config(entries: List[QuestionEntry], questions_info: Optional[List[dict]] = None) -> Optional[str]:
+    """
+    验证题目配置是否存在冲突，返回错误信息（如果有）。
+
+    Args:
+        entries: 题目配置列表
+        questions_info: 问卷解析信息（包含多选题限制等）
+
+    Returns:
+        错误信息字符串，如果验证通过则返回 None
+    """
+    if not entries:
+        return "未配置任何题目"
+
+    errors: List[str] = []
+
+    for idx, entry in enumerate(entries):
+        question_num = getattr(entry, "question_num", idx + 1)
+        question_type = getattr(entry, "question_type", "")
+
+        # 验证多选题的概率配置与选择数量限制是否冲突
+        if question_type == "multiple":
+            # 获取多选题的限制信息
+            multi_min_limit: Optional[int] = None
+            multi_max_limit: Optional[int] = None
+
+            if questions_info and idx < len(questions_info):
+                multi_min_limit = questions_info[idx].get("multi_min_limit")
+                multi_max_limit = questions_info[idx].get("multi_max_limit")
+
+            # 如果有最少选择数量限制，检查正概率选项是否足够
+            if multi_min_limit is not None and multi_min_limit > 0:
+                # 获取概率配置
+                probs = getattr(entry, "custom_weights", None) or getattr(entry, "probabilities", None)
+
+                if isinstance(probs, list):
+                    # 统计概率 > 0 的选项数量
+                    positive_count = 0
+                    for prob in probs:
+                        try:
+                            prob_value = float(prob)
+                            if prob_value > 0:
+                                positive_count += 1
+                        except Exception:
+                            continue
+
+                    # 如果正概率选项数量少于最低要求，报错
+                    if positive_count < multi_min_limit:
+                        errors.append(
+                            f"第 {question_num} 题（多选题）配置冲突：\n"
+                            f"  - 题目要求最少选择 {multi_min_limit} 项\n"
+                            f"  - 但只有 {positive_count} 个选项的概率大于 0%\n"
+                            f"  - 请至少将 {multi_min_limit} 个选项的概率设为大于 0%"
+                        )
+
+    if errors:
+        return "\n\n".join(errors)
+
+    return None

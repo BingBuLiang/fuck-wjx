@@ -126,6 +126,7 @@ class RuntimeConfig:
     ai_model: str = ""
     ai_system_prompt: str = ""
     question_entries: List[QuestionEntry] = field(default_factory=list)
+    questions_info: Optional[List[Dict[str, Any]]] = field(default_factory=list)
     _ai_config_present: bool = field(default=False, init=False, repr=False)
 
 
@@ -376,6 +377,14 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
             config.question_entries.append(deserialize_question_entry(item))
         except Exception as exc:
             logging.debug(f"跳过损坏的题目配置: {exc}")
+
+    # questions_info: 问卷解析信息（包含多选题限制等）
+    questions_info_data = raw.get("questions_info") or []
+    if isinstance(questions_info_data, list):
+        config.questions_info = questions_info_data
+    else:
+        config.questions_info = []
+
     return config
 
 

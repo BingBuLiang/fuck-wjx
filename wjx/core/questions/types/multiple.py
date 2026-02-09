@@ -396,15 +396,25 @@ def multiple(driver: BrowserDriver, current: int, index: int, multiple_prob_conf
         random.shuffle(selected_indices)
         selected_indices = selected_indices[:max_allowed]
     if len(selected_indices) < min_required:
-        # 补齐到最低选择数时，优先从概率 > 0 的未选选项中补充
+        # 补齐到最低选择数时，严格只从概率 > 0 的未选选项中补充
         remaining_positive = [i for i in positive_indices if i not in selected_indices]
-        remaining_all = [i for i in range(len(option_elements)) if i not in selected_indices]
         random.shuffle(remaining_positive)
-        random.shuffle(remaining_all)
         needed = min_required - len(selected_indices)
-        # 先用正概率选项补，不够再用全部选项
-        candidates = remaining_positive if len(remaining_positive) >= needed else remaining_all
-        selected_indices.extend(candidates[:needed])
+
+        if len(remaining_positive) >= needed:
+            # 有足够的正概率选项可以补齐
+            selected_indices.extend(remaining_positive[:needed])
+        else:
+            # 正概率选项不够，只补充现有的正概率选项，不强制选择 0% 概率的选项
+            selected_indices.extend(remaining_positive)
+            actual_min = len(selected_indices)
+            if current not in _WARNED_PROB_MISMATCH:
+                _WARNED_PROB_MISMATCH.add(current)
+                logging.warning(
+                    "第%d题（多选）：最低选择数要求为 %d，但配置的正概率选项只有 %d 个，"
+                    "实际只选择 %d 个选项（严格遵守概率配置，不会选择 0%% 概率的选项）。",
+                    current, min_required, len(positive_indices), actual_min
+                )
     if not selected_indices:
         selected_indices = [random.choice(positive_indices)]
     for option_idx in selected_indices:

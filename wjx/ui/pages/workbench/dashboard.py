@@ -462,6 +462,7 @@ class DashboardPage(QWidget):
     def _on_save_config(self):
         cfg = self._build_config()
         cfg.question_entries = list(self.question_page.get_entries())
+        cfg.questions_info = list(self.question_page.questions_info or [])
         self.controller.config = cfg
         path, _ = QFileDialog.getSaveFileName(self, "保存配置", os.path.join(get_runtime_directory(), "config.json"), "JSON 文件 (*.json);;所有文件 (*.*)")
         if not path:
@@ -482,6 +483,7 @@ class DashboardPage(QWidget):
 
         cfg = self._build_config()
         cfg.question_entries = list(self.question_page.get_entries())
+        cfg.questions_info = list(self.question_page.questions_info or [])
         if not cfg.question_entries:
             self._toast("未配置任何题目，无法开始执行（请先在'题目配置'页添加/配置题目）", "warning")
             self._sync_start_button_state(running=False)

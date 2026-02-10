@@ -22,6 +22,20 @@ from qfluentwidgets import (
 from wjx.utils.io.load_save import get_runtime_directory
 
 
+class _OverlayWidget(QWidget):
+    """遮罩层组件，点击时关闭抽屉"""
+
+    def __init__(self, parent=None, on_click: Optional[Callable[[], None]] = None):
+        super().__init__(parent)
+        self._on_click = on_click
+
+    def mousePressEvent(self, event):
+        """鼠标点击事件"""
+        if self._on_click:
+            self._on_click()
+        super().mousePressEvent(event)
+
+
 class ConfigDrawer(QWidget):
     """简单的右侧抽屉，点击配置项后回调加载。"""
 
@@ -34,10 +48,9 @@ class ConfigDrawer(QWidget):
         self._close_connected = False
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedWidth(360)
-        self._overlay = QWidget(parent)
+        self._overlay = _OverlayWidget(parent, self.close_drawer)
         self._overlay.setObjectName("configDrawerOverlay")
         self._overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._overlay.mousePressEvent = lambda _e: self.close_drawer()
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)

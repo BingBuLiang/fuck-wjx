@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 # 适合进行信效度分析的题型（有序数值型选项）
-_SCALE_TYPES = {"single", "scale", "score", "dropdown", "slider"}
+_SCALE_TYPES = {"single", "scale", "score", "dropdown", "slider", "matrix"}
 
 # 分析所需的最少样本数
 _MIN_SAMPLES = 3
@@ -125,30 +125,41 @@ def load_raw_data(jsonl_path: str) -> List[Dict]:
 def build_score_matrix(records: List[Dict]) -> Tuple[pd.DataFrame, List[int]]:
     """从原始答卷数据构建得分矩阵
 
-    只提取适合信效度分析的题型（量表题、评分题、单选题、下拉题、滑块题），
+    只提取适合信效度分析的题型（量表题、评分题、单选题、下拉题、滑块题、矩阵题），
     将它们的选项索引作为数值得分，构建 样本×题目 的 DataFrame。
+
+    对于矩阵题，每一行会被展开为独立的变量（如 q6_0, q6_1）。
 
     Args:
         records: load_raw_data() 返回的原始数据
 
     Returns:
         (df, question_nums) 元组：
-        - df: pandas DataFrame，行=样本，列=题号（如 "q1", "q3"）
-        - question_nums: 参与分析的题号列表（int）
+        - df: pandas DataFrame，行=样本，列=题号（如 "q1", "q3", "q6_0", "q6_1"）
+        - question_nums: 参与分析的题号列表（int，矩阵题的子行不单独列出）
     """
     if not records:
         return pd.DataFrame(), []
 
-    # 第一遍扫描：找出所有适合分析的题号
+    # 第一遍扫描：找出所有适合分析的题号和矩阵题的行数
     scale_questions: Dict[str, str] = {}  # q_num_str → question_type
+    matrix_rows: Dict[str, set] = {}  # q_num_str → set of row_keys (for matrix questions)
+
     for record in records:
         answers = record.get("answers", {})
         for q_num_str, answer_data in answers.items():
-            if q_num_str in scale_questions:
-                continue
             q_type = answer_data.get("type", "")
             if q_type in _SCALE_TYPES:
-                scale_questions[q_num_str] = q_type
+                if q_num_str not in scale_questions:
+                    scale_questions[q_num_str] = q_type
+
+                # 如果是矩阵题，收集所有行的键
+                if q_type == "matrix":
+                    value = answer_data.get("value")
+                    if isinstance(value, dict):
+                        if q_num_str not in matrix_rows:
+                            matrix_rows[q_num_str] = set()
+                        matrix_rows[q_num_str].update(value.keys())
 
     if not scale_questions:
         return pd.DataFrame(), []
@@ -162,16 +173,38 @@ def build_score_matrix(records: List[Dict]) -> Tuple[pd.DataFrame, List[int]]:
     for record in records:
         answers = record.get("answers", {})
         row = {}
+
         for q_num_str in sorted_q_nums:
             answer_data = answers.get(q_num_str)
+            q_type = scale_questions[q_num_str]
+
             if answer_data is not None:
                 value = answer_data.get("value")
-                if value is not None and isinstance(value, (int, float)):
+
+                # 处理矩阵题：展开每一行
+                if q_type == "matrix" and isinstance(value, dict):
+                    # 对矩阵题的每一行，创建独立的列（如 q6_0, q6_1）
+                    for row_key in sorted(matrix_rows.get(q_num_str, set()), key=lambda x: int(x) if x.isdigit() else x):
+                        col_name = f"q{q_num_str}_{row_key}"
+                        row_value = value.get(row_key)
+                        if row_value is not None and isinstance(row_value, (int, float)):
+                            row[col_name] = row_value
+                        else:
+                            row[col_name] = np.nan
+
+                # 处理其他题型
+                elif value is not None and isinstance(value, (int, float)):
                     row[f"q{q_num_str}"] = value
                 else:
                     row[f"q{q_num_str}"] = np.nan
             else:
-                row[f"q{q_num_str}"] = np.nan
+                # 如果是矩阵题，需要为每一行都填充 NaN
+                if q_type == "matrix":
+                    for row_key in sorted(matrix_rows.get(q_num_str, set()), key=lambda x: int(x) if x.isdigit() else x):
+                        row[f"q{q_num_str}_{row_key}"] = np.nan
+                else:
+                    row[f"q{q_num_str}"] = np.nan
+
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -180,7 +213,18 @@ def build_score_matrix(records: List[Dict]) -> Tuple[pd.DataFrame, List[int]]:
     df = df.dropna(axis=1, how="all")
 
     # 更新 question_nums 以匹配实际保留的列
-    question_nums = [int(col[1:]) for col in df.columns]
+    # 注意：矩阵题的子行（如 q6_0）会被提取为题号 6
+    question_nums = []
+    for col in df.columns:
+        if '_' in col:
+            # 矩阵题的子行，提取主题号
+            q_num = int(col.split('_')[0][1:])
+        else:
+            # 普通题
+            q_num = int(col[1:])
+        if q_num not in question_nums:
+            question_nums.append(q_num)
+    question_nums.sort()
 
     return df, question_nums
 
@@ -337,7 +381,9 @@ def perform_efa(df: pd.DataFrame) -> Tuple[Optional[int], Optional[List[float]],
             data_scaled = scaler.fit_transform(df_clean)
 
             # 第一步：用 PCA 获取所有特征值
-            pca_full = PCA(n_components=n_items)
+            # n_components 不能超过 min(样本数, 题目数)
+            max_components = min(n_samples, n_items)
+            pca_full = PCA(n_components=max_components)
             pca_full.fit(data_scaled)
 
             # 获取特征值（方差解释量）
@@ -437,7 +483,7 @@ def assign_questions_to_factors(loadings_df: pd.DataFrame, question_nums: List[i
     策略：每道题归属到载荷绝对值最高的因子。
 
     Args:
-        loadings_df: 因子载荷矩阵（行=题目列名如 "q1"，列=因子如 "Factor1"）
+        loadings_df: 因子载荷矩阵（行=题目列名如 "q1", "q6_0"，列=因子如 "Factor1"）
         question_nums: 原始题号列表（用于验证）
 
     Returns:
@@ -446,8 +492,12 @@ def assign_questions_to_factors(loadings_df: pd.DataFrame, question_nums: List[i
     factor_assignment: Dict[int, List[int]] = {}
 
     for col_name in loadings_df.index:
-        # 提取题号（col_name 格式为 "q1", "q2" 等）
-        q_num = int(col_name[1:])
+        # 提取题号（col_name 格式为 "q1", "q2", "q6_0", "q6_1" 等）
+        # 对于矩阵题的子行（如 q6_0），提取主题号 6
+        if '_' in col_name:
+            q_num = int(col_name.split('_')[0][1:])
+        else:
+            q_num = int(col_name[1:])
 
         # 找到该题在所有因子上的载荷绝对值最大的因子
         loadings_row = loadings_df.loc[col_name]
@@ -456,7 +506,9 @@ def assign_questions_to_factors(loadings_df: pd.DataFrame, question_nums: List[i
 
         if factor_id not in factor_assignment:
             factor_assignment[factor_id] = []
-        factor_assignment[factor_id].append(q_num)
+        # 避免重复添加同一题号（矩阵题的多行会映射到同一题号）
+        if q_num not in factor_assignment[factor_id]:
+            factor_assignment[factor_id].append(q_num)
 
     # 对每个因子的题号列表排序
     for factor_id in factor_assignment:
@@ -469,7 +521,7 @@ def calculate_factor_alphas(df: pd.DataFrame, factor_assignment: Dict[int, List[
     """分因子计算 Cronbach's Alpha
 
     Args:
-        df: 得分矩阵（行=样本，列=题目，列名如 "q1", "q2"）
+        df: 得分矩阵（行=样本，列=题目，列名如 "q1", "q2", "q6_0", "q6_1"）
         factor_assignment: 因子分配字典 {factor_id: [question_nums]}
 
     Returns:
@@ -479,9 +531,12 @@ def calculate_factor_alphas(df: pd.DataFrame, factor_assignment: Dict[int, List[
 
     for factor_id, q_nums in factor_assignment.items():
         # 构建该因子的子矩阵
-        col_names = [f"q{q}" for q in q_nums]
-        # 过滤掉不存在的列（防御性编程）
-        col_names = [c for c in col_names if c in df.columns]
+        # 需要找到所有匹配的列，包括矩阵题的子行（如 q6_0, q6_1）
+        col_names = []
+        for q in q_nums:
+            # 查找所有以 "q{q}" 开头的列（包括 q6, q6_0, q6_1 等）
+            matching_cols = [c for c in df.columns if c == f"q{q}" or c.startswith(f"q{q}_")]
+            col_names.extend(matching_cols)
 
         if len(col_names) < _MIN_ITEMS:
             factor_alphas[factor_id] = None

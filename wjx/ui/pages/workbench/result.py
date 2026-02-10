@@ -265,7 +265,6 @@ class ResultPage(QWidget):
         self._analysis_thread: Optional[QThread] = None
         self._analysis_worker: Optional[_AnalysisWorker] = None
         self._last_infobar_submission_count: int = -1  # 记录上次显示 InfoBar 时的提交次数
-        self._last_infobar_timestamp: str = ""  # 记录上次显示 InfoBar 时的时间戳
         self._build_ui()
         self._bind_events()
         self._connect_stats_signal()
@@ -697,8 +696,8 @@ class ResultPage(QWidget):
         # 将分析结果保存到当前统计数据中
         self._save_analysis_to_stats(result)
 
-        # 分析完成后自动保存统计文件（包含信效度数据）
-        self._auto_save_stats_after_analysis()
+        # 静默更新，不再弹出提示（避免每提交一份就弹一次）
+        # 用户可以在需要时手动点击"导出统计"按钮
 
         # ── Cronbach's Alpha ──
         if result.cronbach_alpha is not None:
@@ -825,58 +824,6 @@ class ResultPage(QWidget):
             current = stats_collector.get_current_stats()
             if current is not None:
                 current.reliability_validity = reliability_validity
-
-    def _auto_save_stats_after_analysis(self) -> None:
-        """信效度分析完成后，自动保存统计文件（更新现有文件）"""
-        # 获取设置，检查是否开启自动保存
-        settings = QSettings("FuckWjx", "Settings")
-        auto_save = settings.value("auto_save_stats", True, type=bool)
-        
-        # 获取统计数据
-        stats = self._current_stats or stats_collector.get_current_stats()
-        if stats is None:
-            return
-        
-        # 检查时间戳是否更新（避免重复显示 InfoBar）
-        current_timestamp = stats.updated_at
-        if current_timestamp == self._last_infobar_timestamp:
-            # 数据未更新，静默保存，不显示 InfoBar
-            if auto_save:
-                try:
-                    save_stats(stats)
-                    self._load_history_list()
-                except Exception:
-                    pass  # 静默失败
-            return
-        
-        # 数据已更新，记录当前时间戳
-        self._last_infobar_timestamp = current_timestamp
-        
-        if not auto_save:
-            # 未开启自动保存，仅显示提示
-            InfoBar.info(
-                "", "信效度分析已完成，可点击'导出统计'保存结果",
-                parent=self.window(),
-                position=InfoBarPosition.TOP, duration=3000,
-            )
-            return
-        
-        # 自动保存统计数据并显示提示
-        try:
-            path = save_stats(stats)
-            InfoBar.success(
-                "", f"信效度分析已完成并自动保存: {os.path.basename(path)}",
-                parent=self.window(),
-                position=InfoBarPosition.TOP, duration=4000,
-            )
-            # 刷新历史记录列表
-            self._load_history_list()
-        except Exception as exc:
-            InfoBar.warning(
-                "", f"信效度分析完成，但自动保存失败: {exc}\n请手动点击'导出统计'",
-                parent=self.window(),
-                position=InfoBarPosition.TOP, duration=4000,
-            )
 
     def _display_saved_analysis(self, reliability_validity: dict) -> None:
         """显示已保存的信效度分析结果

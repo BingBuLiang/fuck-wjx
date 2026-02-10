@@ -213,7 +213,7 @@ class PlaywrightDriver:
     def get(
         self,
         url: str,
-        timeout: int = 18000,
+        timeout: int = 20000,
         wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded",
     ) -> None:
         try:

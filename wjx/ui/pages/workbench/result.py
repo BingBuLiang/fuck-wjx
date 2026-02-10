@@ -1,4 +1,4 @@
-"""结果分析页面 - 展示作答统计与信效度分析"""
+﻿"""结果分析页面 - 展示作答统计与信效度分析"""
 
 import os
 from typing import Optional
@@ -134,7 +134,6 @@ class _BarRow(QWidget):
         name_label = BodyLabel(name, self)
         name_label.setFixedWidth(120)
         name_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        name_label.setToolTip(name)
         h.addWidget(name_label)
 
         # 进度条
@@ -165,7 +164,6 @@ class _TextAnswerRow(QWidget):
 
         display = text[:80] + "…" if len(text) > 80 else text
         text_label = BodyLabel(display, self)
-        text_label.setToolTip(text)
         h.addWidget(text_label, 1)
 
         count_label = CaptionLabel(f"× {count}", self)
@@ -182,7 +180,6 @@ class _MatrixCell(QWidget):
         self._value = value
         self._max_val = max(max_val, 1)
         self.setFixedSize(48, 32)
-        self.setToolTip(f"{value} 次")
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -238,13 +235,10 @@ class _MetricWidget(QWidget):
         layout.addWidget(self._value_label)
         layout.addWidget(self._desc_label)
 
-    def set_value(self, text: str, color: str, description: str,
-                  tooltip: str = "") -> None:
+    def set_value(self, text: str, color: str, description: str) -> None:
         self._value_label.setText(text)
         self._value_label.setStyleSheet(f"font-size: 20px; color: {color};")
         self._desc_label.setText(description)
-        if tooltip:
-            self._value_label.setToolTip(tooltip)
 
     def set_unavailable(self, reason: str = "") -> None:
         self._value_label.setText("--")
@@ -337,6 +331,10 @@ class ResultPage(QWidget):
         title_label = StrongBodyLabel("信效度分析", card)
         title_row.addWidget(title_label)
 
+        analysis_tip_label = CaptionLabel("⚠ 仅供参考，具体以 SPSS 分析结果为准", card)
+        analysis_tip_label.setStyleSheet("color: #b45309; font-size: 13px; font-weight: 600;")
+        title_row.addWidget(analysis_tip_label)
+
         self._analysis_status_label = CaptionLabel("", card)
         self._analysis_status_label.setStyleSheet("color: rgba(128,128,128,0.6);")
         title_row.addWidget(self._analysis_status_label)
@@ -348,32 +346,21 @@ class ResultPage(QWidget):
         title_row.addWidget(self._analysis_sample_label)
 
         v.addLayout(title_row)
+
+        self._analysis_notice_label = CaptionLabel("", card)
+        self._analysis_notice_label.setStyleSheet("color: rgba(128,128,128,0.6);")
+        self._analysis_notice_label.setVisible(False)
+        v.addWidget(self._analysis_notice_label)
+
         v.addWidget(_Divider(card))
 
         # 三个指标水平排列
         metrics_layout = QHBoxLayout()
         metrics_layout.setSpacing(18)
 
-        self._metric_alpha = _MetricWidget("Cronbach's Alpha（信度）", card)
-        self._metric_alpha.setToolTip(
-            "Cronbach's Alpha 用于评估问卷的内部一致性（可靠性）\n\n"
-            "衡量问卷中各题目是否在测量同一个构念\n"
-            "值越接近 1 表示内部一致性越好"
-        )
-
-        self._metric_kmo = _MetricWidget("KMO 检验（效度）", card)
-        self._metric_kmo.setToolTip(
-            "KMO (Kaiser-Meyer-Olkin) 检验用于评估数据是否适合做因子分析\n\n"
-            "衡量变量间的偏相关程度\n"
-            "值越接近 1 表示越适合做因子分析"
-        )
-
-        self._metric_bartlett = _MetricWidget("Bartlett 球形检验（效度）", card)
-        self._metric_bartlett.setToolTip(
-            "Bartlett 球形检验用于检验变量之间是否存在相关性\n\n"
-            "原假设：变量间无相关性（相关矩阵是单位矩阵）\n"
-            "p < 0.05 时拒绝原假设，说明适合做因子分析"
-        )
+        self._metric_alpha = _MetricWidget("Cronbach's α系数", card)
+        self._metric_kmo = _MetricWidget("KMO 检验", card)
+        self._metric_bartlett = _MetricWidget("Bartlett 球形检验", card)
 
         metrics_layout.addWidget(self._metric_alpha, 1)
         metrics_layout.addWidget(_VerticalDivider(card))
@@ -392,9 +379,20 @@ class ResultPage(QWidget):
         """重置信效度分析卡片到初始状态"""
         self._analysis_status_label.setText("")
         self._analysis_sample_label.setText("")
+        self._analysis_notice_label.setText("")
+        self._analysis_notice_label.setVisible(False)
         self._metric_alpha.set_unavailable("等待数据...")
         self._metric_kmo.set_unavailable("等待数据...")
         self._metric_bartlett.set_unavailable("等待数据...")
+
+    def _show_analysis_notice(self, text: str) -> None:
+        self._analysis_status_label.setText("")
+        self._analysis_notice_label.setText(text)
+        self._analysis_notice_label.setVisible(True)
+
+    def _hide_analysis_notice(self) -> None:
+        self._analysis_notice_label.setText("")
+        self._analysis_notice_label.setVisible(False)
 
     # ── 题目卡片构造 ──────────────────────────────────────────
 
@@ -616,7 +614,7 @@ class ResultPage(QWidget):
             self._clear_scroll()
             self._show_placeholder()
             self._reset_analysis_card()
-            self._analysis_status_label.setText("当前会话暂无数据")
+            self._show_analysis_notice("当前会话暂无数据")
             return
 
         self._update_question_cards(stats)
@@ -647,6 +645,7 @@ class ResultPage(QWidget):
 
     def _trigger_analysis(self) -> None:
         """触发后台信效度分析"""
+        self._hide_analysis_notice()
         jsonl_path = raw_data_storage.get_file_path()
         if not jsonl_path or not os.path.exists(jsonl_path):
             self._reset_analysis_card()
@@ -680,6 +679,7 @@ class ResultPage(QWidget):
 
     def _on_analysis_finished(self, result: AnalysisResult) -> None:
         """分析完成的回调（在主线程执行）"""
+        self._hide_analysis_notice()
         if result.error:
             self._analysis_status_label.setText(result.error)
             self._analysis_status_label.setStyleSheet("color: rgba(128,128,128,0.6);")
@@ -713,19 +713,7 @@ class ResultPage(QWidget):
             else:
                 color, desc = "#ef4444", "较差"
 
-            self._metric_alpha.set_value(
-                f"{alpha:.3f}", color, desc,
-                tooltip=(
-                    f"Cronbach's Alpha = {alpha:.4f}\n\n"
-                    f"内部一致性评级：{desc}\n\n"
-                    "评级标准：\n"
-                    "  >= 0.9  优秀\n"
-                    "  >= 0.8  良好\n"
-                    "  >= 0.7  可接受\n"
-                    "  >= 0.6  勉强可接受\n"
-                    "  <  0.6  较差，建议修改问卷"
-                ),
-            )
+            self._metric_alpha.set_value(f"{alpha:.3f}", color, desc)
         else:
             self._metric_alpha.set_unavailable("数据不足，无法计算")
 
@@ -743,19 +731,7 @@ class ResultPage(QWidget):
             else:
                 color, desc = "#ef4444", "不适合因子分析"
 
-            self._metric_kmo.set_value(
-                f"{kmo:.3f}", color, desc,
-                tooltip=(
-                    f"KMO = {kmo:.4f}\n\n"
-                    f"适合度评级：{desc}\n\n"
-                    "评级标准：\n"
-                    "  >= 0.9  非常适合\n"
-                    "  >= 0.8  适合\n"
-                    "  >= 0.7  中等\n"
-                    "  >= 0.6  勉强\n"
-                    "  <  0.6  不适合"
-                ),
-            )
+            self._metric_kmo.set_value(f"{kmo:.3f}", color, desc)
         else:
             self._metric_kmo.set_unavailable("数据不足，无法计算")
 
@@ -778,18 +754,7 @@ class ResultPage(QWidget):
                 p_text = f"{p:.4f}"
 
             display_text = f"p = {p_text}"
-            self._metric_bartlett.set_value(
-                display_text, color, desc,
-                tooltip=(
-                    f"Bartlett 球形检验\n\n"
-                    f"卡方值 (χ²) = {chi2:.2f}\n"
-                    f"p 值 = {p_text}\n\n"
-                    f"结论：{desc}\n\n"
-                    "判断标准：\n"
-                    "  p < 0.05  拒绝原假设 → 变量间存在相关性 → 适合因子分析\n"
-                    "  p >= 0.05 接受原假设 → 变量间无相关性 → 不适合因子分析"
-                ),
-            )
+            self._metric_bartlett.set_value(display_text, color, desc)
         else:
             self._metric_bartlett.set_unavailable("数据不足，无法计算")
 
@@ -831,6 +796,8 @@ class ResultPage(QWidget):
         Args:
             reliability_validity: 从统计文件加载的信效度分析结果字典
         """
+        self._hide_analysis_notice()
+
         # 如果有错误信息，显示错误
         error = reliability_validity.get("error")
         if error:
@@ -863,19 +830,7 @@ class ResultPage(QWidget):
             else:
                 color, desc = "#ef4444", "较差"
 
-            self._metric_alpha.set_value(
-                f"{alpha:.3f}", color, desc,
-                tooltip=(
-                    f"Cronbach's Alpha = {alpha:.4f}\n\n"
-                    f"内部一致性评级：{desc}\n\n"
-                    "评级标准：\n"
-                    "  >= 0.9  优秀\n"
-                    "  >= 0.8  良好\n"
-                    "  >= 0.7  可接受\n"
-                    "  >= 0.6  勉强可接受\n"
-                    "  <  0.6  较差，建议修改问卷"
-                ),
-            )
+            self._metric_alpha.set_value(f"{alpha:.3f}", color, desc)
         else:
             self._metric_alpha.set_unavailable("数据不足，无法计算")
 
@@ -893,19 +848,7 @@ class ResultPage(QWidget):
             else:
                 color, desc = "#ef4444", "不适合因子分析"
 
-            self._metric_kmo.set_value(
-                f"{kmo:.3f}", color, desc,
-                tooltip=(
-                    f"KMO = {kmo:.4f}\n\n"
-                    f"适合度评级：{desc}\n\n"
-                    "评级标准：\n"
-                    "  >= 0.9  非常适合\n"
-                    "  >= 0.8  适合\n"
-                    "  >= 0.7  中等\n"
-                    "  >= 0.6  勉强\n"
-                    "  <  0.6  不适合"
-                ),
-            )
+            self._metric_kmo.set_value(f"{kmo:.3f}", color, desc)
         else:
             self._metric_kmo.set_unavailable("数据不足，无法计算")
 
@@ -927,18 +870,7 @@ class ResultPage(QWidget):
                 p_text = f"{p:.4f}"
 
             display_text = f"p = {p_text}"
-            self._metric_bartlett.set_value(
-                display_text, color, desc,
-                tooltip=(
-                    f"Bartlett 球形检验\n\n"
-                    f"卡方值 (χ²) = {chi2:.2f}\n"
-                    f"p 值 = {p_text}\n\n"
-                    f"结论：{desc}\n\n"
-                    "判断标准：\n"
-                    "  p < 0.05  拒绝原假设 → 变量间存在相关性 → 适合因子分析\n"
-                    "  p >= 0.05 接受原假设 → 变量间无相关性 → 不适合因子分析"
-                ),
-            )
+            self._metric_bartlett.set_value(display_text, color, desc)
         else:
             self._metric_bartlett.set_unavailable("数据不足，无法计算")
 
@@ -1045,3 +977,4 @@ class ResultPage(QWidget):
                 parent=self.window(),
                 position=InfoBarPosition.TOP, duration=3000,
             )
+

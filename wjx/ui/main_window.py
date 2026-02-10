@@ -294,17 +294,27 @@ class MainWindow(FluentWindow):
 
     def closeEvent(self, e):
         """窗口关闭时询问用户是否保存配置"""
-        # 先停止所有定时器，防止在关闭过程中触发回调
+        # 先停止所有定时器和网络请求，防止在关闭过程中触发回调
         try:
+            # 断开网络管理器的所有信号连接，避免回调对象析构警告
+            if hasattr(self, '_network_manager') and self._network_manager:
+                try:
+                    self._network_manager.blockSignals(True)
+                except Exception:
+                    pass
+            
+            # 停止日志页面定时器
             if hasattr(self.log_page, '_refresh_timer'):
                 self.log_page._refresh_timer.stop()
+            
+            # 停止联系表单轮询
             if hasattr(self.support_page, 'contact_form'):
                 try:
                     self.support_page.contact_form.stop_status_polling()
                 except Exception:
-                    logging.debug("停止联系表单轮询失败", exc_info=True)
+                    pass  # 清理失败时静默处理
         except Exception:
-            logging.debug("窗口关闭前停止定时任务失败", exc_info=True)
+            pass  # 清理失败时静默处理
         
         if not self._skip_save_on_close:
             settings = QSettings("FuckWjx", "Settings")
@@ -564,7 +574,9 @@ class MainWindow(FluentWindow):
         from PySide6.QtCore import QUrl
         request = QNetworkRequest(QUrl(url))
         reply = self._network_manager.get(request)
-        reply.finished.connect(lambda: self._on_avatar_loaded(reply))
+        # 使用直接方法引用而不是lambda，避免回调析构警告
+        reply.finished.connect(lambda r=reply: self._on_avatar_loaded(r))
+
 
     def _on_avatar_loaded(self, reply: QNetworkReply):
         """头像加载完成"""

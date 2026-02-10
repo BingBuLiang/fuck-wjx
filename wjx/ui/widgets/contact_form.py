@@ -294,8 +294,16 @@ class ContactForm(StatusPollingMixin, QWidget):
         super().hideEvent(event)
 
     def closeEvent(self, event):
+        """关闭事件：停止轮询并断开信号"""
         self.stop_status_polling()
+        # 断开所有信号连接以避免回调析构警告
+        try:
+            self._sendFinished.disconnect()
+            self._statusLoaded.disconnect()
+        except Exception:
+            pass
         super().closeEvent(event)
+
 
     def start_status_polling(self):
         if self._polling_started:
@@ -518,8 +526,8 @@ class ContactForm(StatusPollingMixin, QWidget):
         email = (self.email_edit.text() or "").strip()
         self._current_has_email = bool(email)
 
-        QTimer.singleShot(10, lambda: self.email_edit.setSelection(0, 0))
-        QTimer.singleShot(10, lambda: self.send_btn.setFocus())
+        QTimer.singleShot(10, lambda: self._clear_email_selection())
+        QTimer.singleShot(10, lambda: self._focus_send_button())
 
         mtype = self.type_combo.currentText() or "报错反馈"
 
@@ -623,6 +631,20 @@ class ContactForm(StatusPollingMixin, QWidget):
                 self._sendFinished.emit(False, f"发送失败：{exc}")
 
         threading.Thread(target=_send, daemon=True).start()
+
+    def _clear_email_selection(self):
+        """清除邮箱选择（由QTimer调用）"""
+        try:
+            self.email_edit.setSelection(0, 0)
+        except (RuntimeError, AttributeError):
+            pass  # 对象已销毁，忽略
+
+    def _focus_send_button(self):
+        """聚焦发送按钮（由QTimer调用）"""
+        try:
+            self.send_btn.setFocus()
+        except (RuntimeError, AttributeError):
+            pass  # 对象已销毁，忽略
 
     def _on_send_finished(self, success: bool, error_msg: str):
         """发送完成回调（在主线程执行）"""

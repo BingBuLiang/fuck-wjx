@@ -1,7 +1,4 @@
 """随机 IP / 代理管理 - 获取和切换代理 IP"""
-import base64
-import hmac
-import hashlib
 import json
 import logging
 import os
@@ -10,7 +7,7 @@ import re
 import threading
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, List, Optional, Set
 
 try:
     import requests
@@ -26,7 +23,6 @@ from wjx.utils.app.config import (
     PROXY_MAX_PROXIES,
     PROXY_REMOTE_URL,
     STATUS_ENDPOINT,
-    get_card_token_secret,
 )
 from wjx.utils.logging.log_utils import (
     log_suppressed_exception,
@@ -37,12 +33,16 @@ from wjx.utils.logging.log_utils import (
 )
 from wjx.utils.system.registry_manager import RegistryManager
 
-_DEFAULT_RANDOM_IP_FREE_LIMIT = 20
+_DEFAULT_RANDOM_IP_FREE_LIMIT = 20  # 硬编码兜底值，仅在API获取失败时使用
 _PREMIUM_RANDOM_IP_LIMIT = 400
 _CARD_VERIFY_TIMEOUT = 8  # seconds
 
 STATUS_TIMEOUT_SECONDS = 5
 _quota_limit_dialog_shown = False
+_cached_default_quota: Optional[int] = None  # 缓存从API获取的默认额度
+_cached_default_quota_timestamp: float = 0.0  # 缓存时间戳
+_DEFAULT_QUOTA_CACHE_TTL = 3600  # 缓存有效期：1小时（秒）
+_DEFAULT_QUOTA_API_ENDPOINT = "https://api-wjx.hungrym0.top/api/default"  # 默认额度API端点
 _proxy_api_url_override: Optional[str] = None
 _proxy_area_code_override: Optional[str] = None
 # 代理源常量
@@ -120,16 +120,103 @@ def _fetch_cn_http_proxies_from_pikachu() -> List[str]:
     return cn_http_proxies
 
 
+def _fetch_default_quota_from_api() -> Optional[int]:
+    """从API获取默认随机IP额度
+
+    Returns:
+        成功返回额度数字，失败返回 None
+    """
+    if not requests:
+        logging.debug("requests 模块未安装，无法从API获取默认额度")
+        return None
+
+    try:
+        response = requests.get(
+            _DEFAULT_QUOTA_API_ENDPOINT,
+            timeout=5,
+            headers=DEFAULT_HTTP_HEADERS,
+            proxies={}
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        if not isinstance(data, dict):
+            logging.warning(f"默认额度API返回格式异常: {data}")
+            return None
+
+        quota = data.get("quota")
+        if quota is None:
+            logging.warning(f"默认额度API响应中缺少quota字段: {data}")
+            return None
+
+        quota_int = int(quota)
+        if quota_int <= 0:
+            logging.warning(f"默认额度API返回的quota值无效: {quota_int}")
+            return None
+
+        logging.debug(f"Fetched default quota from API: {quota_int}")
+        return quota_int
+
+    except requests.exceptions.Timeout:
+        logging.debug("获取默认额度API超时")
+        return None
+    except requests.exceptions.RequestException as exc:
+        logging.debug(f"获取默认额度API请求失败: {exc}")
+        return None
+    except (ValueError, TypeError) as exc:
+        logging.warning(f"解析默认额度API响应失败: {exc}")
+        return None
+    except Exception as exc:
+        log_suppressed_exception("random_ip._fetch_default_quota_from_api", exc)
+        return None
+
+
+def _get_default_quota_with_cache() -> int:
+    """获取默认额度（带缓存机制）
+
+    优先使用缓存，缓存过期或不存在时从API获取，API失败则使用硬编码兜底值
+
+    Returns:
+        默认随机IP额度
+    """
+    global _cached_default_quota, _cached_default_quota_timestamp
+
+    current_time = time.time()
+
+    # 检查缓存是否有效
+    if _cached_default_quota is not None:
+        cache_age = current_time - _cached_default_quota_timestamp
+        if cache_age < _DEFAULT_QUOTA_CACHE_TTL:
+            logging.debug(f"使用缓存的默认额度: {_cached_default_quota} (缓存剩余 {int(_DEFAULT_QUOTA_CACHE_TTL - cache_age)}秒)")
+            return _cached_default_quota
+
+    # 缓存过期或不存在，尝试从API获取
+    api_quota = _fetch_default_quota_from_api()
+    if api_quota is not None:
+        _cached_default_quota = api_quota
+        _cached_default_quota_timestamp = current_time
+        return api_quota
+
+    # API获取失败，使用硬编码兜底值
+    logging.debug(f"API获取默认额度失败，使用硬编码兜底值: {_DEFAULT_RANDOM_IP_FREE_LIMIT}")
+    return _DEFAULT_RANDOM_IP_FREE_LIMIT
+
+
 def get_random_ip_limit() -> int:
     """Read quota from registry with sane defaults."""
     try:
-        limit = RegistryManager.read_quota_limit(_DEFAULT_RANDOM_IP_FREE_LIMIT)  # type: ignore[attr-defined]
+        # 获取动态默认值（优先从API，失败则用硬编码）
+        default_quota = _get_default_quota_with_cache()
+
+        limit = RegistryManager.read_quota_limit(default_quota)  # type: ignore[attr-defined]
         limit = int(limit)
         if limit > 0:
             return limit
     except Exception as exc:
         log_suppressed_exception("random_ip.get_random_ip_limit", exc)
-    return _DEFAULT_RANDOM_IP_FREE_LIMIT
+
+    # 最终兜底：使用动态默认值
+    return _get_default_quota_with_cache()
 
 
 def _validate_proxy_api_url(api_url: Optional[str]) -> str:
@@ -504,30 +591,6 @@ def _summarize_http_response(response: Any) -> str:
         return f"无法摘要响应: {exc}"
 
 
-def _b64url_decode(data: str) -> bytes:
-    padding = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode((data + padding).encode("utf-8"))
-
-
-def _verify_jwt_hs256(token: str, secret: str) -> Dict[str, Any]:
-    if not token or token.count(".") != 2:
-        raise ValueError("JWT 格式错误")
-    if not secret:
-        raise ValueError("缺少 JWT 验签密钥")
-    header_b64, payload_b64, signature_b64 = token.split(".")
-    signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
-    expected_sig = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
-    actual_sig = _b64url_decode(signature_b64)
-    if not hmac.compare_digest(expected_sig, actual_sig):
-        raise ValueError("JWT 签名校验失败")
-    payload = json.loads(_b64url_decode(payload_b64))
-    now = int(time.time())
-    exp = int(payload.get("exp") or 0)
-    if exp and exp < now:
-        raise ValueError("JWT 已过期")
-    return payload
-
-
 def _proxy_is_responsive(proxy_address: str, skip_for_default: bool = True) -> bool:
     """检测代理是否可用
     
@@ -787,7 +850,13 @@ def refresh_ip_counter_display(gui: Any):
 
 
 def _validate_card(card_code: str) -> tuple[bool, Optional[int]]:
-    """调用远端接口验证卡密并返回额度（分钟/份）。"""
+    """调用远端接口验证卡密并返回额度（分钟/份）。
+
+    新API格式：
+    - 请求：POST /api/card/verify，Body: {"code": "卡密"}
+    - 成功响应：{"ok": true}
+    - 失败响应：{"detail": "invalid_code"} 或 {"detail": "invalid request body"}
+    """
     if not card_code:
         logging.warning("卡密为空")
         return False, None
@@ -797,15 +866,12 @@ def _validate_card(card_code: str) -> tuple[bool, Optional[int]]:
     if not CARD_VALIDATION_ENDPOINT:
         logging.error("未配置 CARD_VALIDATION_ENDPOINT，无法验证卡密")
         return False, None
-    secret = get_card_token_secret()
-    if not secret:
-        logging.error("未配置 CARD_TOKEN_SECRET，无法验签")
-        return False, None
 
     code = card_code.strip()
     masked = _mask_card_code(code)
     payload = {"code": code}
     headers = {"Content-Type": "application/json", **DEFAULT_HTTP_HEADERS}
+
     try:
         response = requests.post(
             CARD_VALIDATION_ENDPOINT,
@@ -818,34 +884,24 @@ def _validate_card(card_code: str) -> tuple[bool, Optional[int]]:
         logging.error(f"卡密验证请求失败: {exc}")
         return False, None
 
-    if response.status_code == 400:
-        logging.warning(f"卡密验证失败：卡密无效或已被使用 | {_summarize_http_response(response)}")
-        return False, None
-    if not response.ok:
-        logging.error(f"卡密验证接口异常: {_summarize_http_response(response)}")
-        return False, None
-
+    # 解析响应
     try:
         data = response.json()
     except Exception as exc:
         logging.error(f"解析卡密验证响应失败: {exc} | {_summarize_http_response(response)}")
         return False, None
 
-    token = str(data.get("token") or "").strip()
-    if not token:
-        logging.error("卡密验证响应缺少 token")
-        return False, None
+    # 检查响应格式
+    # 成功：{"ok": true}
+    if isinstance(data, dict) and data.get("ok") is True:
+        quota_val = _PREMIUM_RANDOM_IP_LIMIT
+        logging.info(f"卡密 {masked} 验证通过，额度 {quota_val}")
+        return True, quota_val
 
-    try:
-        payload_data = _verify_jwt_hs256(token, secret)
-    except Exception as exc:
-        logging.error(f"卡密验证失败：JWT 无效（{exc}）")
-        return False, None
-
-    quota_val = _PREMIUM_RANDOM_IP_LIMIT
-
-    logging.info(f"卡密 {masked} 验证通过，额度 {quota_val}")
-    return True, quota_val
+    # 失败：{"detail": "invalid_code"} 或其他错误信息
+    detail = data.get("detail", "未知错误") if isinstance(data, dict) else "响应格式异常"
+    logging.warning(f"卡密验证失败：{detail} | {_summarize_http_response(response)}")
+    return False, None
 
 
 def show_card_validation_dialog(gui: Any = None) -> bool:

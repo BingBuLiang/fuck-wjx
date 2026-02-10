@@ -126,10 +126,6 @@ def _resolve_env_value(key: str, default: str) -> str:
     return default
 
 
-def get_card_token_secret() -> str:
-    """动态读取卡密验签密钥，兼容安装后环境变量未刷新场景。"""
-    return _resolve_env_value("CARD_TOKEN_SECRET", "")
-
 def _r(s: str) -> str:
     try:
         return base64.b64decode(s).decode("utf-8")

@@ -6,11 +6,12 @@ from datetime import datetime
 from typing import Callable, List, Optional
 
 from PySide6.QtCore import QPoint, QEasingCurve, QPropertyAnimation, Qt
-from PySide6.QtWidgets import QHBoxLayout, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QListWidgetItem, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CardWidget,
     FluentIcon,
+    ListWidget,
     MessageBox,
     PrimaryPushButton,
     SubtitleLabel,
@@ -69,9 +70,7 @@ class ConfigDrawer(QWidget):
         self.hint_label.setStyleSheet("color: #6b6b6b;")
         card_layout.addWidget(self.hint_label)
 
-        self.list_widget = QListWidget(self.card)
-        self.list_widget.setAlternatingRowColors(True)
-        self.list_widget.setSpacing(3)
+        self.list_widget = ListWidget(self.card)
         card_layout.addWidget(self.list_widget, 1)
 
         self.empty_label = BodyLabel("configs 目录暂无配置文件", self.card)
@@ -151,7 +150,6 @@ class ConfigDrawer(QWidget):
                 bg=card_bg, border=border
             )
         )
-        self.list_widget.setStyleSheet(f"background-color: {card_bg}; border: none;")
 
     def open_drawer(self):
         """从右侧滑入显示抽屉。"""

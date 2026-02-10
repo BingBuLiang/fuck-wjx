@@ -13,16 +13,16 @@ CLAUDE.md
 Cloudflare Workers/
 
 # 编译环境
-build/
-dist/
-Setup/
+/build/
+/dist/
+/Setup/
 .env
 .gitignore
     
 # 运行环境
 __pycache__/
 *.pyc
-configs/
-logs/
-stats/
+/configs/
+/logs/
+/stats/
 

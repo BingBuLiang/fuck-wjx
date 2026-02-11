@@ -181,31 +181,30 @@ class AboutPage(ScrollArea):
         credit_layout = QVBoxLayout(credit_card)
         credit_layout.setContentsMargins(20, 16, 20, 16)
         credit_layout.setSpacing(12)
-        
-        credit_layout.addWidget(StrongBodyLabel("致谢与许可", self))
-        
+
+        license_layout = QHBoxLayout()
+        license_layout.addWidget(BodyLabel("License：", self))
+        license_layout.addWidget(BodyLabel("GPL-3.0 License", self))
+        license_layout.addStretch(1)
+        credit_layout.addLayout(license_layout)
+
         inspire_layout = QHBoxLayout()
         inspire_layout.addWidget(BodyLabel("Inspired by：", self))
         inspire_link = HyperlinkButton("https://github.com/Zemelee/wjx", "Zemelee/wjx", self)
         inspire_layout.addWidget(inspire_link)
         inspire_layout.addStretch(1)
         credit_layout.addLayout(inspire_layout)
-        
-        # 服务条款链接
-        terms_layout = QHBoxLayout()
-        terms_layout.addWidget(BodyLabel("服务条款与隐私声明：", self))
-        self.terms_btn = HyperlinkButton("", "查看详情", self)
-        self.terms_btn.clicked.connect(self._show_terms_of_service)
-        terms_layout.addWidget(self.terms_btn)
-        terms_layout.addStretch(1)
-        credit_layout.addLayout(terms_layout)
-        
-        license_layout = QHBoxLayout()
-        license_layout.addWidget(BodyLabel("License：", self))
-        license_layout.addWidget(BodyLabel("GPL-3.0 License", self))
-        license_layout.addStretch(1)
-        credit_layout.addLayout(license_layout)
-        
+
+        # 贡献者
+        contributors_layout = QHBoxLayout()
+        contributors_layout.addWidget(BodyLabel("贡献者：", self))
+        contributor1_link = HyperlinkButton("https://github.com/shiahonb777", "@shiahonb777", self)
+        contributor2_link = HyperlinkButton("https://github.com/BingBuLiang", "@BingBuLiang", self)
+        contributors_layout.addWidget(contributor1_link)
+        contributors_layout.addWidget(contributor2_link)
+        contributors_layout.addStretch(1)
+        credit_layout.addLayout(contributors_layout)
+
         third_party_layout = QHBoxLayout()
         third_party_layout.addWidget(BodyLabel("Third-party：", self))
         pyside_link = HyperlinkButton("https://doc.qt.io/qtforpython-6/", "PySide6 (LGPL)", self)
@@ -214,6 +213,15 @@ class AboutPage(ScrollArea):
         third_party_layout.addWidget(qfw_link)
         third_party_layout.addStretch(1)
         credit_layout.addLayout(third_party_layout)
+
+        # 服务条款链接
+        terms_layout = QHBoxLayout()
+        terms_layout.addWidget(BodyLabel("服务条款与隐私声明：", self))
+        self.terms_btn = HyperlinkButton("", "查看详情", self)
+        self.terms_btn.clicked.connect(self._show_terms_of_service)
+        terms_layout.addWidget(self.terms_btn)
+        terms_layout.addStretch(1)
+        credit_layout.addLayout(terms_layout)
         
         content_layout.addWidget(credit_card)
 
@@ -330,7 +338,6 @@ class AboutPage(ScrollArea):
     def _on_ip_balance_loaded(self, balance: float):
         """更新IP余额标签，显示剩余IP数"""
         try:
-            # 计算剩余IP数：经费除以0.0035，截断小数部分
             ip_count = int(float(balance) / 0.0035)
             display = str(ip_count)
         except Exception:

@@ -146,23 +146,31 @@ class ConfigDrawer(QWidget):
 
     def _apply_theme(self):
         if isDarkTheme():
-            panel_bg = "#1f1f1f"
-            card_bg = "#2a2a2a"
+            panel_bg = "rgba(31, 31, 31, 0.7)"
+            card_bg = "rgba(42, 42, 42, 0.7)"
             border = "#333333"
         else:
-            panel_bg = "#f4f4f5"
-            card_bg = "#ffffff"
+            panel_bg = "rgba(244, 244, 245, 0.7)"
+            card_bg = "rgba(255, 255, 255, 0.7)"
             border = "#e5e7eb"
-        self.setStyleSheet(
-            "#configDrawer {{ background-color: {bg}; }}\n"
-            "#configDrawer QLabel {{ background: transparent; }}\n"
-            "#configDrawerOverlay {{ background-color: rgba(0, 0, 0, 0); }}".format(bg=panel_bg)
-        )
-        self.card.setStyleSheet(
-            "#configDrawerCard {{ background-color: {bg}; border: 1px solid {border}; border-radius: 8px; }}".format(
-                bg=card_bg, border=border
-            )
-        )
+        self.setStyleSheet(f"""
+            #configDrawer {{
+                background-color: {panel_bg};
+            }}
+            #configDrawer QLabel {{
+                background: transparent;
+            }}
+            #configDrawerOverlay {{
+                background-color: rgba(0, 0, 0, 0.3);
+            }}
+        """)
+        self.card.setStyleSheet(f"""
+            #configDrawerCard {{
+                background-color: {card_bg};
+                border: 1px solid {border};
+                border-radius: 8px;
+            }}
+        """)
 
     def open_drawer(self):
         """从右侧滑入显示抽屉。"""

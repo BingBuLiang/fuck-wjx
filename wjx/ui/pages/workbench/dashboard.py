@@ -389,8 +389,6 @@ class DashboardPage(QWidget):
             RegistryManager.write_quota_limit(default_quota)
             # 清除验证标记
             RegistryManager.set_card_verified(False)
-            # 清除无限额度标记
-            RegistryManager.set_quota_unlimited(False)
 
             # 清空输入框
             self.url_edit.clear()
@@ -655,11 +653,11 @@ class DashboardPage(QWidget):
         cfg.random_ip_enabled = self.random_ip_cb.isChecked()
         return cfg
 
-    def update_random_ip_counter(self, count: int, limit: int, unlimited: bool, custom_api: bool):
+    def update_random_ip_counter(self, count: int, limit: int, custom_api: bool):
         from wjx.network.random_ip import _PREMIUM_RANDOM_IP_LIMIT
-        # 检查是否已验证过卡密或无限额度
+        # 检查是否已验证过卡密
         is_verified = RegistryManager.is_card_verified()
-        if is_verified or unlimited:
+        if is_verified:
             self.card_btn.setEnabled(False)
             self.card_btn.setText("已解锁")
         else:
@@ -669,10 +667,6 @@ class DashboardPage(QWidget):
         if custom_api:
             self.random_ip_hint.setText("自定义接口")
             self.random_ip_hint.setStyleSheet("color:#ff8c00;")
-            return
-        if unlimited:
-            self.random_ip_hint.setText("∞（无限额度）")
-            self.random_ip_hint.setStyleSheet("color:green;")
             return
         self.random_ip_hint.setText(f"{count}/{limit}")
         # 额度耗尽时变红
@@ -698,21 +692,20 @@ class DashboardPage(QWidget):
         if enabled:
             from wjx.utils.system.registry_manager import RegistryManager
             from wjx.network.random_ip import get_random_ip_limit
-            if not RegistryManager.is_quota_unlimited():
-                count = RegistryManager.read_submit_count()
-                limit = max(1, get_random_ip_limit())
-                if count >= limit:
-                    self._toast(f"随机IP已达{limit}份限制，请验证卡密后再启用。", "warning")
-                    self.random_ip_cb.blockSignals(True)
-                    self.random_ip_cb.setChecked(False)
-                    self.random_ip_cb.blockSignals(False)
-                    try:
-                        self.runtime_page.random_ip_switch.blockSignals(True)
-                        self.runtime_page.random_ip_switch.setChecked(False)
-                        self.runtime_page.random_ip_switch.blockSignals(False)
-                    except Exception:
-                        pass
-                    return
+            count = RegistryManager.read_submit_count()
+            limit = max(1, get_random_ip_limit())
+            if count >= limit:
+                self._toast(f"随机IP已达{limit}份限制，请验证卡密后再启用。", "warning")
+                self.random_ip_cb.blockSignals(True)
+                self.random_ip_cb.setChecked(False)
+                self.random_ip_cb.blockSignals(False)
+                try:
+                    self.runtime_page.random_ip_switch.blockSignals(True)
+                    self.runtime_page.random_ip_switch.setChecked(False)
+                    self.runtime_page.random_ip_switch.blockSignals(False)
+                except Exception:
+                    pass
+                return
         try:
             self.controller.adapter.random_ip_enabled_var.set(bool(enabled))
             on_random_ip_toggle(self.controller.adapter)

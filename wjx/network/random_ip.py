@@ -810,13 +810,12 @@ def on_random_ip_toggle(gui: Any):
     enabled = bool(var.get() if var and hasattr(var, "get") else False)
     if not enabled:
         return
-    if not RegistryManager.is_quota_unlimited():
-        count = RegistryManager.read_submit_count()
-        limit = max(1, get_random_ip_limit())
-        if count >= limit:
-            _invoke_popup(gui, "warning", "提示", f"随机IP已达{limit}份限制，请验证卡密后再启用。")
-            _set_random_ip_enabled(gui, False)
-            return
+    count = RegistryManager.read_submit_count()
+    limit = max(1, get_random_ip_limit())
+    if count >= limit:
+        _invoke_popup(gui, "warning", "提示", f"随机IP已达{limit}份限制，请验证卡密后再启用。")
+        _set_random_ip_enabled(gui, False)
+        return
     if confirm_random_ip_usage(gui):
         return
     _set_random_ip_enabled(gui, False)
@@ -841,11 +840,10 @@ def refresh_ip_counter_display(gui: Any):
         return
     limit = max(1, get_random_ip_limit())
     count = RegistryManager.read_submit_count()
-    unlimited = RegistryManager.is_quota_unlimited()
     custom_api = is_custom_proxy_api_active()
-    handler(count, limit, unlimited, custom_api)
+    handler(count, limit, custom_api)
     # 达到上限时自动关闭随机IP开关
-    if not unlimited and not custom_api and count >= limit:
+    if not custom_api and count >= limit:
         _set_random_ip_enabled(gui, False)
 
 
@@ -966,8 +964,6 @@ def handle_random_ip_submission(gui: Any, stop_signal: Optional[threading.Event]
     # 如果是自定义代理接口，不进行额度计数和限制
     if is_custom_proxy_api_active():
         return
-    if RegistryManager.is_quota_unlimited():
-        return
     limit = max(1, get_random_ip_limit())
     # 先检查当前计数是否已达限制
     current_count = RegistryManager.read_submit_count()
@@ -997,8 +993,6 @@ def normalize_random_ip_enabled_value(desired_enabled: bool) -> bool:
         return False
     # 如果是自定义代理接口，不受额度限制
     if is_custom_proxy_api_active():
-        return True
-    if RegistryManager.is_quota_unlimited():
         return True
     limit = max(1, get_random_ip_limit())
     count = RegistryManager.read_submit_count()

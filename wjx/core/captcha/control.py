@@ -68,10 +68,9 @@ def _trigger_aliyun_captcha_stop(
                 return
             
             # 检查配额情况
-            is_unlimited = RegistryManager.is_quota_unlimited()
             count = RegistryManager.read_submit_count()
             limit = max(1, get_random_ip_limit())
-            quota_exceeded = (not is_unlimited) and (count >= limit)
+            quota_exceeded = count >= limit
             
             # 根据配额情况构建不同的提示消息
             if quota_exceeded:

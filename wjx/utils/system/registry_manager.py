@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Windows 注册表管理模块，用于管理随机IP提交计数器
-有能力看懂源码，说明你也有能力轻易破解这个卡密验证，很简单的逻辑，随机ip是你应得的♥
-
-但请希望不要滥用
+请不要滥用
 
 """
 
@@ -21,9 +18,7 @@ else:
 class RegistryManager:
 
     REGISTRY_PATH = r"Software\FuckWJX"
-    REGISTRY_PATH = r"Software\FuckWJX"
     REGISTRY_KEY = "RandomIPSubmitCount"
-    REGISTRY_KEY_UNLIMITED = "UnlimitedQuota"
     REGISTRY_KEY_LIMIT = "RandomIPQuotaLimit"
     REGISTRY_KEY_CARD_VERIFIED = "CardVerified"
     
@@ -67,36 +62,6 @@ class RegistryManager:
         new_count = current + 1
         RegistryManager.write_submit_count(new_count)
         return new_count
-    
-    @staticmethod
-    def is_quota_unlimited() -> bool:
-        if winreg is None:
-            return False
-        
-        try:
-            hkey = winreg.HKEY_CURRENT_USER
-            with winreg.OpenKey(hkey, RegistryManager.REGISTRY_PATH) as key:
-                value, _ = winreg.QueryValueEx(key, RegistryManager.REGISTRY_KEY_UNLIMITED)
-                result = bool(int(value))
-                return result
-        except FileNotFoundError:
-            return False
-        except Exception as e:
-            return False
-    
-    @staticmethod
-    def set_quota_unlimited(unlimited: bool) -> bool:
-        if winreg is None:
-            return False
-        
-        try:
-            hkey = winreg.HKEY_CURRENT_USER
-            key = winreg.CreateKeyEx(hkey, RegistryManager.REGISTRY_PATH, 0, winreg.KEY_WRITE)
-            winreg.SetValueEx(key, RegistryManager.REGISTRY_KEY_UNLIMITED, 0, winreg.REG_DWORD, int(unlimited))
-            winreg.CloseKey(key)
-            return True
-        except Exception as e:
-            return False
 
     @staticmethod
     def read_quota_limit(default: int = 20) -> int:

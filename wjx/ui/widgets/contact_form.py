@@ -696,28 +696,6 @@ class ContactForm(StatusPollingMixin, QWidget):
         except Exception:
             return
 
-        parent = self.window() or self
-        was_unlimited = False
-        try:
-            was_unlimited = RegistryManager.is_quota_unlimited()
-        except Exception:
-            was_unlimited = False
-
-        if was_unlimited:
-            box = MessageBox(
-                "切换额度上限？",
-                "当前随机IP额度为“无限”。是否切换为白嫖额度（上限400）？",
-                parent,
-            )
-            box.yesButton.setText("切换为400")
-            box.cancelButton.setText("保持无限")
-            if not box.exec():
-                return
-            try:
-                RegistryManager.set_quota_unlimited(False)
-            except Exception:
-                pass
-
         current_limit = max(1, get_random_ip_limit())
         RegistryManager.write_quota_limit(current_limit + 200)
 

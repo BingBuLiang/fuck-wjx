@@ -629,7 +629,7 @@ class RunController(QObject):
         proxy_pool: List[str] = []
         if config.random_ip_enabled:
             # 检查是否已达随机IP上限
-            if not RegistryManager.is_quota_unlimited() and not is_custom_proxy_api_active():
+            if not is_custom_proxy_api_active():
                 count = RegistryManager.read_submit_count()
                 limit = max(1, get_random_ip_limit())
                 if count >= limit:

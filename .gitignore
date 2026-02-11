@@ -11,6 +11,10 @@ fuck-wjx-old_version/
 AGENTS.md
 CLAUDE.md
 Cloudflare Workers/
+# 测试内容
+docx/
+tests/
+
 
 # 编译环境
 /build/

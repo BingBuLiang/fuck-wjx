@@ -92,6 +92,7 @@ class MainWindow(FluentWindow):
     mirrorSwitched = Signal(str)  # new_mirror_key
 
     def __init__(self, parent=None):
+        self._boot_splash = None
         super().__init__(parent)
         qconfig.load(os.path.join(get_runtime_directory(), "wjx", "ui", "theme.json"))
         self._theme_sync_pending = False

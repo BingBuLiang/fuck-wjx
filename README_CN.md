@@ -1,10 +1,20 @@
-# fuck-wjx (问卷星速填)
+<div align="center">
+  <img src="assets/icon.png" alt="fuck-wjx" width="120" height="120" />
+  <h1>fuck-wjx (问卷星速填)</h1>
+  <p>一个支持图形化界面的问卷星自动填写工具，支持自定义答案分布与智能配置。</p>
 
-[English](./README.md) | 简体中文
+  [![GitHub Stars](https://img.shields.io/github/stars/hungryM0/fuck-wjx?style=flat&logo=github&color=yellow)](https://github.com/hungryM0/fuck-wjx/stargazers)
+  [![GitHub Forks](https://img.shields.io/github/forks/hungryM0/fuck-wjx?style=flat&logo=github)](https://github.com/hungryM0/fuck-wjx/network/members)
+  [![GitHub Release](https://img.shields.io/github/v/release/hungryM0/fuck-wjx?style=flat&logo=github&color=blue)](https://github.com/hungryM0/fuck-wjx/releases/latest)
+  [![Downloads](https://img.shields.io/github/downloads/hungryM0/fuck-wjx/total?style=flat&logo=github&color=green)](https://github.com/hungryM0/fuck-wjx/releases)
+  [![License](https://img.shields.io/github/license/hungryM0/fuck-wjx?style=flat&color=orange)](./LICENSE)
+  [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+  [![Issues](https://img.shields.io/github/issues/hungryM0/fuck-wjx?style=flat&logo=github)](https://github.com/hungryM0/fuck-wjx/issues)
+
+  [English](./README.md) | 简体中文
+</div>
 
 > 参考了 [Zemelee/wjx](https://github.com/Zemelee/wjx)，别忘了给大佬点个star
-
-一个支持图形化界面的问卷星自动填写工具，支持自定义答案分布与智能配置。
 
 > [!WARNING]
 > **仅供学习与测试使用。** 请确保有授权再使用。**严禁污染他人问卷数据！**

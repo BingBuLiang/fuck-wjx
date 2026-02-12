@@ -1,10 +1,20 @@
-# fuck-wjx
+<div align="center">
+  <img src="assets/icon.png" alt="fuck-wjx" width="120" height="120" />
+  <h1>fuck-wjx</h1>
+  <p>A GUI-based automation tool for WenJuanXing (wjx.cn) surveys with customizable answer distribution and intelligent configuration.</p>
 
-English | [简体中文](./README_CN.md)
+  [![GitHub Stars](https://img.shields.io/github/stars/hungryM0/fuck-wjx?style=flat&logo=github&color=yellow)](https://github.com/hungryM0/fuck-wjx/stargazers)
+  [![GitHub Forks](https://img.shields.io/github/forks/hungryM0/fuck-wjx?style=flat&logo=github)](https://github.com/hungryM0/fuck-wjx/network/members)
+  [![GitHub Release](https://img.shields.io/github/v/release/hungryM0/fuck-wjx?style=flat&logo=github&color=blue)](https://github.com/hungryM0/fuck-wjx/releases/latest)
+  [![Downloads](https://img.shields.io/github/downloads/hungryM0/fuck-wjx/total?style=flat&logo=github&color=green)](https://github.com/hungryM0/fuck-wjx/releases)
+  [![License](https://img.shields.io/github/license/hungryM0/fuck-wjx?style=flat&color=orange)](./LICENSE)
+  [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+  [![Issues](https://img.shields.io/github/issues/hungryM0/fuck-wjx?style=flat&logo=github)](https://github.com/hungryM0/fuck-wjx/issues)
+
+  English | [简体中文](./README_CN.md)
+</div>
 
 > Inspired by [Zemelee/wjx](https://github.com/Zemelee/wjx) - give that repo a star
-
-A GUI-based automation tool for WenJuanXing (wjx.cn) surveys with customizable answer distribution and intelligent configuration.
 
 > [!WARNING]
 > **For learning and testing only.** Ensure you have authorization. **DO NOT pollute others' survey data!**

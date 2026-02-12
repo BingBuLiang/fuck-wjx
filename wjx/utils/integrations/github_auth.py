@@ -10,7 +10,7 @@ import os
 import time
 from typing import Optional, Dict, Any, Callable
 
-import requests
+import wjx.network.http_client as http_client
 
 from wjx.utils.io.load_save import get_runtime_directory
 
@@ -114,7 +114,7 @@ class GitHubAuth:
         Returns:
             包含 device_code, user_code, verification_uri, expires_in, interval 的字典
         """
-        resp = requests.post(
+        resp = http_client.post(
             GITHUB_DEVICE_CODE_URL,
             data={
                 "client_id": GITHUB_CLIENT_ID,
@@ -156,7 +156,7 @@ class GitHubAuth:
             if should_stop and should_stop():
                 return False
             
-            resp = requests.post(
+            resp = http_client.post(
                 GITHUB_ACCESS_TOKEN_URL,
                 data={
                     "client_id": GITHUB_CLIENT_ID,
@@ -211,7 +211,7 @@ class GitHubAuth:
             return
         
         try:
-            resp = requests.get(
+            resp = http_client.get(
                 GITHUB_USER_API_URL,
                 headers={
                     "Authorization": f"Bearer {self._access_token}",
@@ -235,7 +235,7 @@ class GitHubAuth:
             return False
         
         try:
-            resp = requests.get(
+            resp = http_client.get(
                 f"https://api.github.com/user/starred/{owner}/{repo}",
                 headers={
                     "Authorization": f"Bearer {self._access_token}",
@@ -258,7 +258,7 @@ class GitHubAuth:
             return False
         
         try:
-            resp = requests.put(
+            resp = http_client.put(
                 f"https://api.github.com/user/starred/{owner}/{repo}",
                 headers={
                     "Authorization": f"Bearer {self._access_token}",
@@ -277,7 +277,7 @@ class GitHubAuth:
             return False
         
         try:
-            resp = requests.delete(
+            resp = http_client.delete(
                 f"https://api.github.com/user/starred/{owner}/{repo}",
                 headers={
                     "Authorization": f"Bearer {self._access_token}",
@@ -309,3 +309,4 @@ def get_github_auth() -> GitHubAuth:
     if _github_auth is None:
         _github_auth = GitHubAuth()
     return _github_auth
+

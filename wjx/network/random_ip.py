@@ -9,10 +9,7 @@ import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Any, Callable, List, Optional, Set
 
-try:
-    import requests
-except ImportError:  # pragma: no cover
-    requests = None
+import wjx.network.http_client as http_client
 from wjx.utils.app.config import (
     CARD_VALIDATION_ENDPOINT,
     CONTACT_API_URL,
@@ -71,11 +68,8 @@ def get_proxy_source() -> str:
 
 def _fetch_cn_http_proxies_from_pikachu() -> List[str]:
     """从皮卡丘代理站获取中国大陆 HTTP 代理"""
-    if not requests:
-        raise RuntimeError("缺少 requests 模块，无法获取代理")
-    
     try:
-        resp = requests.get(PIKACHU_PROXY_API, timeout=15, headers=DEFAULT_HTTP_HEADERS, proxies={})
+        resp = http_client.get(PIKACHU_PROXY_API, timeout=15, headers=DEFAULT_HTTP_HEADERS, proxies={})
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
@@ -126,12 +120,8 @@ def _fetch_default_quota_from_api() -> Optional[int]:
     Returns:
         成功返回额度数字，失败返回 None
     """
-    if not requests:
-        logging.debug("requests 模块未安装，无法从API获取默认额度")
-        return None
-
     try:
-        response = requests.get(
+        response = http_client.get(
             _DEFAULT_QUOTA_API_ENDPOINT,
             timeout=5,
             headers=DEFAULT_HTTP_HEADERS,
@@ -157,10 +147,10 @@ def _fetch_default_quota_from_api() -> Optional[int]:
         logging.debug(f"Fetched default quota from API: {quota_int}")
         return quota_int
 
-    except requests.exceptions.Timeout:
+    except http_client.exceptions.Timeout:
         logging.debug("获取默认额度API超时")
         return None
-    except requests.exceptions.RequestException as exc:
+    except http_client.exceptions.RequestException as exc:
         logging.debug(f"获取默认额度API请求失败: {exc}")
         return None
     except (ValueError, TypeError) as exc:
@@ -350,9 +340,7 @@ def _get_runtime_directory(base_dir: Optional[str] = None) -> str:
 
 def get_status() -> Any:
     """Fetch developer status endpoint."""
-    if requests is None:
-        raise RuntimeError("requests 模块未安装，无法获取在线状态")
-    response = requests.get(STATUS_ENDPOINT, timeout=STATUS_TIMEOUT_SECONDS, headers=DEFAULT_HTTP_HEADERS, proxies={})
+    response = http_client.get(STATUS_ENDPOINT, timeout=STATUS_TIMEOUT_SECONDS, headers=DEFAULT_HTTP_HEADERS, proxies={})
     response.raise_for_status()
     return response.json()
 
@@ -481,17 +469,14 @@ def test_custom_proxy_api(url: str) -> tuple[bool, str, List[str]]:
     if not (url.lower().startswith("http://") or url.lower().startswith("https://")):
         return False, "API地址必须以 http:// 或 https:// 开头", []
     
-    if not requests:
-        return False, "缺少 requests 模块", []
-    
     try:
-        resp = requests.get(url, timeout=10, headers=DEFAULT_HTTP_HEADERS, proxies={})
+        resp = http_client.get(url, timeout=10, headers=DEFAULT_HTTP_HEADERS, proxies={})
         resp.raise_for_status()
-    except requests.exceptions.Timeout:
+    except http_client.exceptions.Timeout:
         return False, "请求超时，请检查网络或API地址", []
-    except requests.exceptions.ConnectionError:
+    except http_client.exceptions.ConnectionError:
         return False, "连接失败，请检查API地址是否正确", []
-    except requests.exceptions.HTTPError as e:
+    except http_client.exceptions.HTTPError as e:
         return False, f"HTTP错误: {e.response.status_code}", []
     except Exception as e:
         return False, f"请求失败: {e}", []
@@ -604,16 +589,13 @@ def _proxy_is_responsive(proxy_address: str, skip_for_default: bool = True) -> b
         logging.debug(f"默认代理源，跳过健康检查: {masked_proxy}")
         return True
     
-    if not requests:
-        logging.warning("requests 模块未安装，无法检测代理可用性")
-        return False
     proxy_address = _normalize_proxy_address(proxy_address) or ""
     if not proxy_address:
         return False
     proxies = {"http": proxy_address, "https": proxy_address}
     try:
         start = time.perf_counter()
-        response = requests.get(PROXY_HEALTH_CHECK_URL, proxies=proxies, timeout=PROXY_HEALTH_CHECK_TIMEOUT)
+        response = http_client.get(PROXY_HEALTH_CHECK_URL, proxies=proxies, timeout=PROXY_HEALTH_CHECK_TIMEOUT)
         elapsed = time.perf_counter() - start
     except Exception as exc:
         logging.debug(f"代理 {masked_proxy} 验证失败: {exc}")
@@ -627,14 +609,12 @@ def _proxy_is_responsive(proxy_address: str, skip_for_default: bool = True) -> b
 
 def _proxy_is_responsive_fast(proxy_address: str) -> bool:
     """快速检测代理是否可用（3秒超时）"""
-    if not requests:
-        return False
     proxy_address = _normalize_proxy_address(proxy_address) or ""
     if not proxy_address:
         return False
     proxies = {"http": proxy_address, "https": proxy_address}
     try:
-        response = requests.get(PROXY_HEALTH_CHECK_URL, proxies=proxies, timeout=3)
+        response = http_client.get(PROXY_HEALTH_CHECK_URL, proxies=proxies, timeout=3)
         return response.status_code < 400
     except Exception:
         return False
@@ -647,9 +627,6 @@ def _fetch_new_proxy_batch(
     stop_signal: Optional[threading.Event] = None,
 ) -> List[str]:
     """Fetch a batch of proxy addresses."""
-    if not requests:
-        raise RuntimeError("缺少 requests 模块，无法获取随机IP")
-    
     # 根据代理源选择不同的获取方式
     current_source = get_proxy_source()
     # 如果配置了自定义API覆盖，视为自定义代理源
@@ -695,7 +672,7 @@ def _fetch_new_proxy_batch(
     has_area = bool(_normalize_area_code(area_code))
     for url in _proxy_api_candidates(expected_count, proxy_url):
         try:
-            resp = requests.get(url, timeout=10, headers=DEFAULT_HTTP_HEADERS, proxies={})
+            resp = http_client.get(url, timeout=10, headers=DEFAULT_HTTP_HEADERS, proxies={})
             resp.raise_for_status()
             if current_source == PROXY_SOURCE_DEFAULT and has_area:
                 try:
@@ -858,9 +835,6 @@ def _validate_card(card_code: str) -> tuple[bool, Optional[int]]:
     if not card_code:
         logging.warning("卡密为空")
         return False, None
-    if requests is None:
-        logging.warning("requests 模块未安装，无法验证卡密")
-        return False, None
     if not CARD_VALIDATION_ENDPOINT:
         logging.error("未配置 CARD_VALIDATION_ENDPOINT，无法验证卡密")
         return False, None
@@ -871,7 +845,7 @@ def _validate_card(card_code: str) -> tuple[bool, Optional[int]]:
     headers = {"Content-Type": "application/json", **DEFAULT_HTTP_HEADERS}
 
     try:
-        response = requests.post(
+        response = http_client.post(
             CARD_VALIDATION_ENDPOINT,
             json=payload,
             headers=headers,
@@ -1000,3 +974,4 @@ def normalize_random_ip_enabled_value(desired_enabled: bool) -> bool:
         logging.warning(f"配置中启用了随机IP，但已达到{limit}份限制，已禁用此选项")
         return False
     return True
+

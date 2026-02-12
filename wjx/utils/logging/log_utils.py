@@ -339,7 +339,7 @@ def set_debug_mode(enabled: bool):
     # 调试模式下允许第三方库输出 DEBUG 日志，否则抑制
     third_party_level = logging.DEBUG if enabled else logging.WARNING
     logging.getLogger("urllib3").setLevel(third_party_level)
-    logging.getLogger("requests").setLevel(third_party_level)
+    logging.getLogger("httpx").setLevel(third_party_level)
     logging.getLogger("selenium").setLevel(third_party_level)
     logging.getLogger("undetected_chromedriver").setLevel(third_party_level)
 
@@ -354,7 +354,7 @@ def setup_logging():
 
     # 抑制第三方库的 INFO/DEBUG 日志，避免刷屏
     logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("selenium").setLevel(logging.WARNING)
     logging.getLogger("undetected_chromedriver").setLevel(logging.WARNING)
 

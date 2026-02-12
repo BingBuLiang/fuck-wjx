@@ -32,6 +32,7 @@ from qfluentwidgets import (
 
 from wjx.ui.widgets.status_polling_mixin import StatusPollingMixin
 from wjx.ui.helpers.image_attachments import ImageAttachmentManager
+import wjx.network.http_client as http_client
 from wjx.utils.app.config import CONTACT_API_URL
 from wjx.utils.app.version import __VERSION__
 
@@ -599,12 +600,6 @@ class ContactForm(StatusPollingMixin, QWidget):
             InfoBar.warning("", "邮箱格式不正确", parent=self, position=InfoBarPosition.TOP, duration=2000)
             return
 
-        try:
-            from requests import post
-        except Exception:
-            InfoBar.error("", "requests 模块未安装，无法发送", parent=self, position=InfoBarPosition.TOP, duration=2500)
-            return
-
         version_str = __VERSION__
         full_message = f"来源：fuck-wjx v{version_str}\n类型：{mtype}\n"
         if email:
@@ -635,7 +630,7 @@ class ContactForm(StatusPollingMixin, QWidget):
                 if files_payload:
                     multipart_fields.extend(files_payload)
                 timeout = 20 if files_payload else 10
-                resp = post(api_url, files=multipart_fields, timeout=timeout)
+                resp = http_client.post(api_url, files=multipart_fields, timeout=timeout)
                 if resp.status_code == 200:
                     self._sendFinished.emit(True, "")
                 else:
@@ -755,3 +750,4 @@ class ContactForm(StatusPollingMixin, QWidget):
                     runtime_page_obj.random_ip_switch.blockSignals(False)
                 except Exception:
                     pass
+

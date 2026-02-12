@@ -7,7 +7,7 @@ GitHub Issue API 模块
 
 from typing import Optional, Dict, Any, List
 
-import requests
+import wjx.network.http_client as http_client
 
 from wjx.utils.app.version import GITHUB_OWNER, GITHUB_REPO
 
@@ -57,7 +57,7 @@ def create_issue(
         payload["labels"] = labels
     
     try:
-        resp = requests.post(
+        resp = http_client.post(
             GITHUB_ISSUES_API_URL,
             json=payload,
             headers=headers,
@@ -76,7 +76,7 @@ def create_issue(
             raise GitHubIssueError("请求参数无效")
         else:
             raise GitHubIssueError(f"创建 Issue 失败: {resp.status_code}")
-    except requests.RequestException as e:
+    except http_client.RequestException as e:
         raise GitHubIssueError(f"网络请求失败: {e}")
 
 
@@ -128,3 +128,4 @@ ISSUE_TYPES = {
 """
     }
 }
+

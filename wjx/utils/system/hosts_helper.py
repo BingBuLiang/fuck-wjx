@@ -13,7 +13,7 @@ import sys
 import tempfile
 from typing import Optional, Tuple
 
-import requests
+import wjx.network.http_client as http_client
 
 # GitHub520 hosts API
 GITHUB_HOSTS_API = "https://raw.hellogithub.com/hosts"
@@ -40,7 +40,7 @@ def is_admin() -> bool:
 def fetch_github_hosts() -> Optional[str]:
     """从 GitHub520 API 获取最新的 hosts 配置"""
     try:
-        resp = requests.get(GITHUB_HOSTS_API, timeout=15)
+        resp = http_client.get(GITHUB_HOSTS_API, timeout=15)
         resp.raise_for_status()
         content = resp.text
         
@@ -61,7 +61,7 @@ def fetch_github_hosts() -> Optional[str]:
             return None
         
         return "\n".join(lines)
-    except requests.exceptions.Timeout:
+    except http_client.exceptions.Timeout:
         logging.error("获取 GitHub hosts 超时")
         return None
     except Exception as exc:
@@ -219,7 +219,7 @@ def run_hosts_operation_as_admin(operation: str) -> Tuple[bool, str]:
     # 内联所有必要的代码，不依赖任何项目模块
     script_content = f'''# -*- coding: utf-8 -*-
 import re
-import requests
+import httpx
 
 GITHUB_HOSTS_API = "https://raw.hellogithub.com/hosts"
 HOSTS_MARKER_START = "# FuckWjx GitHub Hosts Start"
@@ -230,7 +230,7 @@ RESULT_PATH = r"{result_path}"
 
 def fetch_github_hosts():
     try:
-        resp = requests.get(GITHUB_HOSTS_API, timeout=15)
+        resp = httpx.get(GITHUB_HOSTS_API, timeout=15)
         resp.raise_for_status()
         lines = []
         for line in resp.text.splitlines():
@@ -336,3 +336,4 @@ with open(RESULT_PATH, "w", encoding="utf-8") as f:
                     os.remove(path)
             except Exception:
                 pass
+

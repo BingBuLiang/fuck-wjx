@@ -3,8 +3,8 @@ import threading
 import webbrowser
 import os
 import sys
-import requests
 from datetime import datetime
+import wjx.network.http_client as http_client
 
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QIcon
@@ -318,7 +318,7 @@ class AboutPage(ScrollArea):
         """异步加载IP余额"""
         def _do_load():
             try:
-                response = requests.get(
+                response = http_client.get(
                     "https://service.ipzan.com/userProduct-get",
                     params={"no": "20260112572376490874", "userId": "72FH7U4E0IG"},
                     timeout=5,
@@ -349,3 +349,4 @@ class AboutPage(ScrollArea):
         from wjx.ui.dialogs import TermsOfServiceDialog
         dlg = TermsOfServiceDialog(self.window())
         dlg.exec()
+

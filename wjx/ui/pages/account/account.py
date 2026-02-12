@@ -9,7 +9,7 @@ from typing import Optional
 from PySide6.QtCore import Qt, QThread, QTimer, Signal, QEvent
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QApplication, QPlainTextEdit, QTextBrowser, QStackedWidget, QStyle
-import requests
+import wjx.network.http_client as http_client
 from qfluentwidgets import (
     BodyLabel,
     PushButton,
@@ -143,7 +143,7 @@ class AvatarLoadWorker(QThread):
     
     def run(self):
         try:
-            resp = requests.get(self._url, timeout=10)
+            resp = http_client.get(self._url, timeout=10)
             if resp.status_code == 200:
                 self.finished.emit(resp.content)
         except Exception:
@@ -962,3 +962,4 @@ class _HostsResultEvent(QEvent):
         super().__init__(_HOSTS_RESULT_EVENT_TYPE)
         self.success = success
         self.message = message
+

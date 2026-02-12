@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """AI 服务模块 - 支持多种 AI API 调用"""
 import json
-import requests
 from typing import Optional, Dict, Any
+import wjx.network.http_client as http_client
 
 # AI 服务提供商配置
 # 注意: recommended_models 仅作为 UI 快捷选择建议,用户可以自由输入任意模型名
@@ -124,7 +124,7 @@ def _call_openai_compatible(
         "temperature": 0.7,
     }
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        resp = http_client.post(url, headers=headers, json=payload, timeout=timeout)
         resp.raise_for_status()
         data = resp.json()
         content = data.get("choices", [{}])[0].get("message", {}).get("content")
@@ -159,7 +159,7 @@ def _call_gemini(
         },
     }
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        resp = http_client.post(url, headers=headers, json=payload, timeout=timeout)
         resp.raise_for_status()
         data = resp.json()
         text = (
@@ -215,3 +215,4 @@ def test_connection() -> str:
         return f"连接成功！AI 回复: {result[:50]}..."
     except Exception as e:
         return f"连接失败: {e}"
+

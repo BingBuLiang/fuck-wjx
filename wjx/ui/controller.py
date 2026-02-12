@@ -8,10 +8,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-try:
-    import requests
-except ImportError:  # pragma: no cover
-    requests = None
+import wjx.network.http_client as http_client
 
 from PySide6.QtCore import QObject, Signal, QTimer, QCoreApplication
 
@@ -324,16 +321,15 @@ class RunController(QObject):
     def _parse_questions(self, url: str) -> Tuple[List[Dict[str, Any]], str]:
         info: Optional[List[Dict[str, Any]]] = None
         title = ""
-        if requests:
-            try:
-                resp = requests.get(url, timeout=12, headers=DEFAULT_HTTP_HEADERS, proxies={})
-                resp.raise_for_status()
-                html = resp.text
-                info = parse_survey_questions_from_html(html)
-                title = _extract_survey_title_from_html(html) or title
-            except Exception as exc:
-                logging.exception("使用 requests 获取问卷失败，url=%r", url)
-                info = None
+        try:
+            resp = http_client.get(url, timeout=12, headers=DEFAULT_HTTP_HEADERS, proxies={})
+            resp.raise_for_status()
+            html = resp.text
+            info = parse_survey_questions_from_html(html)
+            title = _extract_survey_title_from_html(html) or title
+        except Exception as exc:
+            logging.exception("使用 httpx 获取问卷失败，url=%r", url)
+            info = None
         if info is None:
             driver = None
             try:
@@ -829,3 +825,4 @@ class RunController(QObject):
     def save_stats_with_prompt(self) -> Optional[str]:
         """UI调用：保存统计数据（通常在用户确认后调用）"""
         return self._save_stats_if_available()
+

@@ -8,10 +8,7 @@ import time
 from threading import Thread
 from typing import Optional, Dict, Any, Callable
 
-try:
-    import requests
-except ImportError:  # pragma: no cover
-    requests = None
+import wjx.network.http_client as http_client
 
 try:
     from packaging import version
@@ -101,15 +98,15 @@ class UpdateManager:
     @staticmethod
     def check_updates() -> Optional[Dict[str, Any]]:
         """检查 GitHub 上是否有新版本。"""
-        if not requests or not version:
-            logging.warning("更新功能依赖 requests 和 packaging 模块")
+        if not version:
+            logging.warning("更新功能依赖 packaging 模块")
             return None
 
         try:
             headers = {"Accept": "application/vnd.github.v3+json"}
             if GITHUB_TOKEN:
                 headers["Authorization"] = f"token {GITHUB_TOKEN}"
-            response = requests.get(GITHUB_API_URL, headers=headers, timeout=(10, 30))
+            response = http_client.get(GITHUB_API_URL, headers=headers, timeout=(10, 30))
             response.raise_for_status()
             latest_release = response.json()
 
@@ -146,10 +143,10 @@ class UpdateManager:
                 "current_version": current_version,
             }
 
-        except requests.exceptions.Timeout:
+        except http_client.exceptions.Timeout:
             logging.warning("检查更新超时")
             return None
-        except requests.exceptions.RequestException as exc:
+        except http_client.exceptions.RequestException as exc:
             logging.warning(f"检查更新失败: {exc}")
             return None
         except Exception as exc:
@@ -159,15 +156,11 @@ class UpdateManager:
     @staticmethod
     def get_all_releases() -> list:
         """获取所有发行版信息。"""
-        if not requests:
-            logging.warning("获取发行版需要 requests 模块")
-            return []
-
         try:
             headers = {"Accept": "application/vnd.github.v3+json"}
             if GITHUB_TOKEN:
                 headers["Authorization"] = f"token {GITHUB_TOKEN}"
-            response = requests.get(GITHUB_RELEASES_URL, headers=headers, timeout=(10, 30))
+            response = http_client.get(GITHUB_RELEASES_URL, headers=headers, timeout=(10, 30))
             response.raise_for_status()
             releases = response.json()
             
@@ -196,10 +189,6 @@ class UpdateManager:
             cancel_check: 可调用对象，返回True表示取消下载
             on_mirror_switch: 镜像源切换时的回调，参数为新的镜像源 key
         """
-        if not requests:
-            logging.error("下载更新需要 requests 模块")
-            return None
-
         # 连接超时时间（秒）
         CONNECT_TIMEOUT = 2
         # 已尝试的镜像源
@@ -213,7 +202,7 @@ class UpdateManager:
             try:
                 logging.debug(f"正在连接下载服务器: {actual_url}")
                 # 使用较短的连接超时，较长的读取超时
-                response = requests.get(actual_url, timeout=(CONNECT_TIMEOUT, 60), stream=True)
+                response = http_client.get(actual_url, timeout=(CONNECT_TIMEOUT, 60), stream=True)
                 response.raise_for_status()
 
                 total_size = int(response.headers.get("content-length", 0))
@@ -266,7 +255,7 @@ class UpdateManager:
 
                 return target_file
 
-            except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as exc:
+            except (http_client.exceptions.ConnectTimeout, http_client.exceptions.ConnectionError) as exc:
                 logging.warning(f"镜像源 [{current_mirror}] 连接失败: {exc}")
                 
                 # 清理临时文件
@@ -545,3 +534,4 @@ def perform_update(gui, *, on_progress: Optional[Callable[[int, int, float], Non
                     gui.downloadFailed.emit(f"更新过程出错: {str(exc)}")
 
     Thread(target=do_update, daemon=True).start()
+

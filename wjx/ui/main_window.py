@@ -298,7 +298,7 @@ class MainWindow(FluentWindow):
                 try:
                     self._network_manager.blockSignals(True)
                 except Exception as exc:
-                    log_suppressed_exception("closeEvent: self._network_manager.blockSignals(True)", exc, level=logging.WARNING)
+                    log_suppressed_exception("closeEvent: self._network_manager.blockSignals(True)", exc)
             
             # 停止日志页面定时器
             if self._log_page and hasattr(self._log_page, '_refresh_timer'):
@@ -309,9 +309,9 @@ class MainWindow(FluentWindow):
                 try:
                     self._support_page.contact_form.stop_status_polling()
                 except Exception as exc:
-                    log_suppressed_exception("closeEvent: self._support_page.contact_form.stop_status_polling()", exc, level=logging.WARNING)
+                    log_suppressed_exception("closeEvent: self._support_page.contact_form.stop_status_polling()", exc)
         except Exception as exc:
-            log_suppressed_exception("closeEvent: if hasattr(self, '_network_manager') and self._network_manager: try: self._ne...", exc, level=logging.WARNING)
+            log_suppressed_exception("closeEvent: 清理资源时出错", exc)
         
         if not self._skip_save_on_close:
             settings = QSettings("FuckWjx", "Settings")
@@ -534,7 +534,6 @@ class MainWindow(FluentWindow):
         changelog_detail_page = self._get_changelog_detail_page()
         changelog_detail_page.setRelease(release)
         self.switchTo(changelog_detail_page)
-        self.switchTo(self.changelog_detail_page)
 
     def _show_about_menu(self):
         """显示关于子菜单"""
@@ -684,7 +683,9 @@ class MainWindow(FluentWindow):
 
     def _update_github_avatar(self):
         """更新登录页面状态和侧边栏导航项"""
-        self.login_page._update_ui_state()
+        account_page = self._get_login_page()
+        if account_page:
+            account_page._update_ui_state()
         self._add_login_navigation(is_init=False)
 
     def _center_on_screen(self):
@@ -1162,12 +1163,12 @@ class MainWindow(FluentWindow):
         from wjx.utils.app.config import GITHUB_MIRROR_SOURCES
         try:
             # 更新设置页面的下拉框
-            if hasattr(self, "settings_page") and hasattr(self.settings_page, "mirror_combo"):
-                idx = self.settings_page.mirror_combo.findData(new_mirror_key)
+            if hasattr(self, "_settings_page") and self._settings_page and hasattr(self._settings_page, "mirror_combo"):
+                idx = self._settings_page.mirror_combo.findData(new_mirror_key)
                 if idx >= 0:
-                    self.settings_page.mirror_combo.blockSignals(True)
-                    self.settings_page.mirror_combo.setCurrentIndex(idx)
-                    self.settings_page.mirror_combo.blockSignals(False)
+                    self._settings_page.mirror_combo.blockSignals(True)
+                    self._settings_page.mirror_combo.setCurrentIndex(idx)
+                    self._settings_page.mirror_combo.blockSignals(False)
             # 显示提示
             mirror_label = GITHUB_MIRROR_SOURCES.get(new_mirror_key, {}).get("label", new_mirror_key)
             self._toast(f"已自动切换到镜像源: {mirror_label}", "info")

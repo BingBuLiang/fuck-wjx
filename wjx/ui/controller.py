@@ -75,7 +75,7 @@ class EngineGuiAdapter:
         dispatcher: Callable[[Callable[[], None]], None],
         stop_signal: threading.Event,
         card_code_provider: Optional[Callable[[], Optional[str]]] = None,
-        on_ip_counter: Optional[Callable[[int, int, bool, bool], None]] = None,
+        on_ip_counter: Optional[Callable[[int, int, bool], None]] = None,
         async_dispatcher: Optional[Callable[[Callable[[], None]], None]] = None,
         cleanup_runner: Optional[CleanupRunner] = None,
     ):
@@ -251,7 +251,7 @@ class RunController(QObject):
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(600)
         self._status_timer.timeout.connect(self._emit_status)
-        self.on_ip_counter: Optional[Callable[[int, int, bool, bool], None]] = None
+        self.on_ip_counter: Optional[Callable[[int, int, bool], None]] = None
         self.card_code_provider: Optional[Callable[[], Optional[str]]] = None
         self._completion_cleanup_done = False
         self._cleanup_scheduled = False

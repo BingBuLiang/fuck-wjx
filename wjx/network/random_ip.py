@@ -846,16 +846,32 @@ def refresh_ip_counter_display(gui: Any):
     """Notify GUI about current random IP counter."""
     if gui is None:
         return
-    handler = getattr(gui, "update_random_ip_counter", None)
-    if not callable(handler):
-        return
-    limit = max(1, get_random_ip_limit())
-    count = RegistryManager.read_submit_count()
-    custom_api = is_custom_proxy_api_active()
-    handler(count, limit, custom_api)
-    # 达到上限时自动关闭随机IP开关
-    if not custom_api and count >= limit:
-        _set_random_ip_enabled(gui, False)
+    def _compute_and_update():
+        limit = max(1, get_random_ip_limit())
+        count = RegistryManager.read_submit_count()
+        custom_api = is_custom_proxy_api_active()
+
+        def _apply():
+            handler = getattr(gui, "update_random_ip_counter", None)
+            if not callable(handler):
+                return
+            handler(count, limit, custom_api)
+            # 达到上限时自动关闭随机IP开关
+            if not custom_api and count >= limit:
+                _set_random_ip_enabled(gui, False)
+
+        _schedule_on_gui_thread(gui, _apply)
+
+    # 若在主线程调用，避免阻塞 UI，改为后台计算后再回 UI 线程更新
+    if threading.current_thread() is threading.main_thread():
+        thread = threading.Thread(
+            target=_compute_and_update,
+            daemon=True,
+            name="IPCounterRefresh",
+        )
+        thread.start()
+    else:
+        _compute_and_update()
 
 
 def _validate_card(card_code: str) -> tuple[bool, Optional[int]]:

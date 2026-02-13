@@ -6,6 +6,7 @@ from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
 from PySide6.QtCore import Qt, QObject, QEvent
+from PySide6.QtGui import QContextMenuEvent
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -32,12 +33,15 @@ from qfluentwidgets import (
     FluentIcon,
     InfoBar,
     InfoBarPosition,
+    InfoBarIcon,
+    HyperlinkButton,
     ComboBox,
     MessageBox,
 )
 from qfluentwidgets import RoundMenu
 
 from wjx.ui.widgets import ConfigDrawer
+from wjx.ui.widgets.full_width_infobar import FullWidthInfoBar
 from wjx.ui.widgets.no_wheel import NoWheelSlider, NoWheelSpinBox
 from wjx.ui.controller import RunController
 from wjx.ui.dialogs.card_unlock import CardUnlockDialog
@@ -63,15 +67,16 @@ class _PasteOnlyMenu(QObject):
 
 
 
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.ContextMenu and isinstance(obj, LineEdit):
-            menu = RoundMenu(parent=obj)
-            paste_action = Action(FluentIcon.PASTE, "粘贴", parent=menu)
-            paste_action.triggered.connect(obj.paste)
-            menu.addAction(paste_action)
-            menu.exec(event.globalPos())
-            return True
-        return super().eventFilter(obj, event)
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.ContextMenu and isinstance(watched, LineEdit):
+            if isinstance(event, QContextMenuEvent):
+                menu = RoundMenu(parent=watched)
+                paste_action = Action(FluentIcon.PASTE, "粘贴", parent=menu)
+                paste_action.triggered.connect(watched.paste)
+                menu.addAction(paste_action)
+                menu.exec(event.globalPos())
+                return True
+        return super().eventFilter(watched, event)
 
 
 def _question_summary(entry: QuestionEntry) -> str:
@@ -133,6 +138,9 @@ class DashboardPage(QWidget):
         self._show_end_toast_after_cleanup = False
         self._last_progress = 0
         self._progress_infobar: Optional[InfoBar] = None  # 存储进度消息条的引用
+        self._ip_low_infobar: Optional[FullWidthInfoBar] = None
+        self._ip_low_infobar_dismissed = False
+        self._ip_low_threshold = 5000
         self._build_ui()
         self.config_drawer = ConfigDrawer(self, self._load_config_from_path)
         self._bind_events()
@@ -151,6 +159,23 @@ class DashboardPage(QWidget):
         layout = QVBoxLayout(inner)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
+
+        self._ip_low_infobar = FullWidthInfoBar(
+            icon=InfoBarIcon.WARNING,
+            title="",
+            content="随机IP剩余不足 5000，请提醒开发者及时充值",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.NONE,
+            duration=-1,
+            parent=inner,
+        )
+        self._ip_low_infobar.hide()
+        self._ip_low_infobar.closeButton.clicked.connect(self._on_ip_low_infobar_closed)
+        self._ip_low_contact_link = HyperlinkButton(FluentIcon.LINK, "", "前往联系", self._ip_low_infobar)
+        self._ip_low_contact_link.clicked.connect(lambda: self._open_contact_dialog(default_type="报错反馈"))
+        self._ip_low_infobar.addWidget(self._ip_low_contact_link)
+        layout.addWidget(self._ip_low_infobar)
 
         link_card = CardWidget(self)
         link_layout = QVBoxLayout(link_card)
@@ -672,6 +697,7 @@ class DashboardPage(QWidget):
         if custom_api:
             self.random_ip_hint.setText("自定义接口")
             self.random_ip_hint.setStyleSheet("color:#ff8c00;")
+            self._update_ip_low_infobar(count, limit, custom_api)
             return
         self.random_ip_hint.setText(f"{count}/{limit}")
         # 额度耗尽时变红
@@ -679,6 +705,7 @@ class DashboardPage(QWidget):
             self.random_ip_hint.setStyleSheet("color:red;")
         else:
             self.random_ip_hint.setStyleSheet("color:#6b6b6b;")
+        self._update_ip_low_infobar(count, limit, custom_api)
         # 达到上限时自动关闭随机IP开关
         if count >= limit and self.random_ip_cb.isChecked():
             self.random_ip_cb.blockSignals(True)
@@ -788,6 +815,27 @@ class DashboardPage(QWidget):
                 self.runtime_page.random_ip_switch.blockSignals(False)
             except Exception as exc:
                 log_suppressed_exception("_on_card_code_clicked: self.runtime_page.random_ip_switch.blockSignals(True)", exc, level=logging.WARNING)
+
+    def _on_ip_low_infobar_closed(self):
+        self._ip_low_infobar_dismissed = True
+        if self._ip_low_infobar:
+            self._ip_low_infobar.hide()
+
+    def _update_ip_low_infobar(self, count: int, limit: int, custom_api: bool):
+        if not self._ip_low_infobar:
+            return
+        if custom_api:
+            self._ip_low_infobar.hide()
+            self._ip_low_infobar_dismissed = False
+            return
+        remaining = max(0, int(limit) - int(count))
+        if remaining >= self._ip_low_threshold:
+            self._ip_low_infobar.hide()
+            self._ip_low_infobar_dismissed = False
+            return
+        if self._ip_low_infobar_dismissed:
+            return
+        self._ip_low_infobar.show()
 
     def _show_add_question_dialog(self):
         """新增题目 - 委托给 QuestionPage"""

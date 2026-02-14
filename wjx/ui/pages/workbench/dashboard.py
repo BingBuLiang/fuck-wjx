@@ -423,6 +423,12 @@ class DashboardPage(QWidget):
             from wjx.network.proxy import _get_default_quota_with_cache
             # 从 API 获取默认额度
             default_quota = _get_default_quota_with_cache()
+            if default_quota is None:
+                logging.warning("调试重置：默认额度API不可用，保持 --/-- 状态")
+                self.url_edit.clear()
+                refresh_ip_counter_display(self.controller.adapter)
+                self._toast("默认额度API不可用，随机IP额度保持未初始化（--/--）", "warning", duration=3000)
+                return
 
             # 重置计数为 0
             RegistryManager.write_submit_count(0)
@@ -710,6 +716,15 @@ class DashboardPage(QWidget):
             self.random_ip_hint.setStyleSheet("color:#ff8c00;")
             self._update_ip_low_infobar(count, limit, custom_api)
             return
+        if limit <= 0:
+            self.random_ip_hint.setText("--/--")
+            self.random_ip_hint.setStyleSheet("color:#6b6b6b;")
+            self._update_ip_low_infobar(count, limit, custom_api)
+            if self.random_ip_cb.isChecked():
+                self.random_ip_cb.blockSignals(True)
+                self.random_ip_cb.setChecked(False)
+                self.random_ip_cb.blockSignals(False)
+            return
         self.random_ip_hint.setText(f"{count}/{limit}")
         # 额度耗尽时变红
         if count >= limit:
@@ -736,7 +751,20 @@ class DashboardPage(QWidget):
             from wjx.utils.system.registry_manager import RegistryManager
             from wjx.network.proxy import get_random_ip_limit
             count = RegistryManager.read_submit_count()
-            limit = max(1, get_random_ip_limit())
+            limit = int(get_random_ip_limit() or 0)
+            if limit <= 0:
+                self._toast("随机IP额度不可用（本地未初始化且默认额度API不可用）", "warning")
+                self.random_ip_cb.blockSignals(True)
+                self.random_ip_cb.setChecked(False)
+                self.random_ip_cb.blockSignals(False)
+                try:
+                    self.runtime_page.random_ip_switch.blockSignals(True)
+                    self.runtime_page.random_ip_switch.setChecked(False)
+                    self.runtime_page.random_ip_switch.blockSignals(False)
+                except Exception as exc:
+                    log_suppressed_exception("_on_random_ip_toggled disable: runtime random_ip_switch sync", exc, level=logging.WARNING)
+                refresh_ip_counter_display(self.controller.adapter)
+                return
             if count >= limit:
                 self._toast(f"随机IP已达{limit}份限制，请验证卡密后再启用。", "warning")
                 self.random_ip_cb.blockSignals(True)

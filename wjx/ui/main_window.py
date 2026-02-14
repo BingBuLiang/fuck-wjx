@@ -64,6 +64,7 @@ from wjx.utils.app.version import __VERSION__, ISSUE_FEEDBACK_URL
 from wjx.network.proxy import (
     get_status,
     _format_status_payload,
+    get_random_ip_counter_snapshot_local,
     refresh_ip_counter_display,
 )
 from wjx.utils.app.runtime_paths import _get_resource_path as get_resource_path
@@ -752,6 +753,12 @@ class MainWindow(FluentWindow):
         self.runtime_page.apply_config(cfg)
         self.dashboard.apply_config(cfg)
         self.question_page.set_entries(cfg.question_entries or [], self.controller.questions_info)
+        # 先显示本地快照，避免启动阶段显示 --/--
+        try:
+            count, limit, custom_api = get_random_ip_counter_snapshot_local()
+            self.dashboard.update_random_ip_counter(count, limit, custom_api)
+        except Exception:
+            logging.debug("初始化随机IP本地计数失败", exc_info=True)
         # 后台异步刷新随机 IP 计数，避免阻塞启动
         threading.Thread(
             target=lambda: refresh_ip_counter_display(self.controller.adapter),

@@ -69,7 +69,18 @@ def _trigger_aliyun_captcha_stop(
             
             # 检查配额情况
             count = RegistryManager.read_submit_count()
-            limit = max(1, get_random_ip_limit())
+            limit = int(get_random_ip_limit() or 0)
+            if limit <= 0:
+                message = (
+                    "检测到阿里云智能验证，为避免继续失败提交已停止所有任务。\n\n"
+                    "随机IP额度当前不可用（本地未初始化且默认额度API不可用），\n"
+                    "请稍后重试或切换自定义代理接口。"
+                )
+                if gui_instance and hasattr(gui_instance, "_log_popup_warning"):
+                    gui_instance._log_popup_warning("智能验证提示", message, icon="warning")
+                else:
+                    log_popup_warning("智能验证提示", message)
+                return
             quota_exceeded = count >= limit
             
             # 根据配额情况构建不同的提示消息

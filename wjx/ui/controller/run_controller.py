@@ -627,7 +627,11 @@ class RunController(QObject):
             # 检查是否已达随机IP上限
             if not is_custom_proxy_api_active():
                 count = RegistryManager.read_submit_count()
-                limit = max(1, get_random_ip_limit())
+                limit = int(get_random_ip_limit() or 0)
+                if limit <= 0:
+                    logging.warning("随机IP额度不可用，无法启动随机IP模式")
+                    self.runFailed.emit("随机IP额度不可用（本地未初始化且默认额度API不可用），请稍后重试或改用自定义代理接口")
+                    return
                 if count >= limit:
                     logging.warning(f"随机IP已达{limit}份上限，无法启动")
                     self.runFailed.emit(f"随机IP已达{limit}份上限，请关闭随机IP开关或解锁大额IP后再试")

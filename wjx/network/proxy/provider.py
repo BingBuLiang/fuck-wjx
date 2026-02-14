@@ -30,7 +30,7 @@ from wjx.utils.logging.log_utils import (
 )
 from wjx.utils.system.registry_manager import RegistryManager
 
-_DEFAULT_RANDOM_IP_FREE_LIMIT = 20  # 硬编码兜底值，仅在API获取失败时使用
+_DEFAULT_RANDOM_IP_FREE_LIMIT = 20  # 仅用于兼容旧数据，不再作为网络失败兜底
 _PREMIUM_RANDOM_IP_LIMIT = 400
 _CARD_VERIFY_TIMEOUT = 8  # seconds
 
@@ -163,13 +163,13 @@ def _fetch_default_quota_from_api() -> Optional[int]:
         return None
 
 
-def _get_default_quota_with_cache() -> int:
+def _get_default_quota_with_cache() -> Optional[int]:
     """获取默认额度（带缓存机制）
 
     优先使用缓存，缓存过期或不存在时从API获取，API失败则使用硬编码兜底值
 
     Returns:
-        默认随机IP额度
+        默认随机IP额度；当 API 不可用时返回 None
     """
     global _cached_default_quota, _cached_default_quota_timestamp
 
@@ -192,9 +192,8 @@ def _get_default_quota_with_cache() -> int:
         _cached_default_quota_timestamp = current_time
         return api_quota
 
-    # API获取失败，使用硬编码兜底值
-    logging.debug(f"API获取默认额度失败，使用硬编码兜底值: {_DEFAULT_RANDOM_IP_FREE_LIMIT}")
-    return _DEFAULT_RANDOM_IP_FREE_LIMIT
+    logging.warning("API获取默认额度失败，随机IP额度保持未初始化状态")
+    return None
 
 
 def _update_quota_cache_async() -> None:
@@ -228,19 +227,35 @@ def _update_quota_cache_async() -> None:
 def get_random_ip_limit() -> int:
     """Read quota from registry with sane defaults."""
     try:
-        # 获取动态默认值（优先从缓存，后台异步更新）
-        default_quota = _get_default_quota_with_cache()
-
-
-        limit = RegistryManager.read_quota_limit(default_quota)  # type: ignore[attr-defined]
+        # 优先读取本地额度，避免每次启动都触发网络请求
+        limit = RegistryManager.read_quota_limit(0)  # type: ignore[attr-defined]
         limit = int(limit)
         if limit > 0:
             return limit
     except Exception as exc:
         log_suppressed_exception("random_ip.get_random_ip_limit", exc)
 
-    # 最终兜底：使用动态默认值
-    return _get_default_quota_with_cache()
+    # 本地没有额度时，才回退到动态默认值（可能触发 API）
+    default_quota = _get_default_quota_with_cache()
+    if default_quota is None:
+        logging.warning("本地随机IP额度不存在且默认额度API不可用，随机IP功能将不可用")
+        return 0
+    try:
+        # 持久化默认额度，后续启动可直接走本地值
+        RegistryManager.write_quota_limit(default_quota)
+    except Exception as exc:
+        log_suppressed_exception("random_ip.get_random_ip_limit write default quota", exc)
+    return default_quota
+
+
+def get_random_ip_counter_snapshot_local() -> tuple[int, int, bool]:
+    """快速返回本地随机 IP 计数与额度（不触发网络请求）。"""
+    count = RegistryManager.read_submit_count()
+    limit = int(RegistryManager.read_quota_limit(0))
+    if limit < 0:
+        limit = 0
+    custom_api = is_custom_proxy_api_active()
+    return count, limit, custom_api
 
 
 def _validate_proxy_api_url(api_url: Optional[str]) -> str:
@@ -809,7 +824,11 @@ def on_random_ip_toggle(gui: Any):
     if not enabled:
         return
     count = RegistryManager.read_submit_count()
-    limit = max(1, get_random_ip_limit())
+    limit = int(get_random_ip_limit() or 0)
+    if limit <= 0:
+        _invoke_popup(gui, "warning", "提示", "随机IP额度不可用（本地未初始化且默认额度API不可用）。")
+        _set_random_ip_enabled(gui, False)
+        return
     if count >= limit:
         _invoke_popup(gui, "warning", "提示", f"随机IP已达{limit}份限制，请验证卡密后再启用。")
         _set_random_ip_enabled(gui, False)
@@ -834,7 +853,7 @@ def refresh_ip_counter_display(gui: Any):
     if gui is None:
         return
     def _compute_and_update():
-        limit = max(1, get_random_ip_limit())
+        limit = int(get_random_ip_limit() or 0)
         count = RegistryManager.read_submit_count()
         custom_api = is_custom_proxy_api_active()
 
@@ -844,7 +863,7 @@ def refresh_ip_counter_display(gui: Any):
                 return
             handler(count, limit, custom_api)
             # 达到上限时自动关闭随机IP开关
-            if not custom_api and count >= limit:
+            if not custom_api and limit > 0 and count >= limit:
                 _set_random_ip_enabled(gui, False)
 
         _schedule_on_gui_thread(gui, _apply)
@@ -975,7 +994,13 @@ def handle_random_ip_submission(gui: Any, stop_signal: Optional[threading.Event]
     # 如果是自定义代理接口，不进行额度计数和限制
     if is_custom_proxy_api_active():
         return
-    limit = max(1, get_random_ip_limit())
+    limit = int(get_random_ip_limit() or 0)
+    if limit <= 0:
+        logging.warning("随机IP额度不可用（本地未初始化且默认额度API不可用），停止任务")
+        if stop_signal:
+            stop_signal.set()
+        _set_random_ip_enabled(gui, False)
+        return
     # 先检查当前计数是否已达限制
     current_count = RegistryManager.read_submit_count()
     if current_count >= limit:
@@ -1005,7 +1030,10 @@ def normalize_random_ip_enabled_value(desired_enabled: bool) -> bool:
     # 如果是自定义代理接口，不受额度限制
     if is_custom_proxy_api_active():
         return True
-    limit = max(1, get_random_ip_limit())
+    limit = int(get_random_ip_limit() or 0)
+    if limit <= 0:
+        logging.warning("配置中启用了随机IP，但额度不可用（本地未初始化且默认额度API不可用），已禁用")
+        return False
     count = RegistryManager.read_submit_count()
     if count >= limit:
         logging.warning(f"配置中启用了随机IP，但已达到{limit}份限制，已禁用此选项")

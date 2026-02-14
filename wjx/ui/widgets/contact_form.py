@@ -709,7 +709,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         except Exception:
             return
 
-        current_limit = max(1, get_random_ip_limit())
+        current_limit = int(get_random_ip_limit() or 0)
         RegistryManager.write_quota_limit(current_limit + 200)
 
         host = self._find_controller_host()

@@ -46,7 +46,7 @@ pip install -r requirements.txt
 python fuck-wjx.py
 ```
 
-**环境要求：** Windows 10/11 或 Linux，Python 3.8+
+**环境要求：** Windows 10/11，Python 3.8+
 
 ---
 

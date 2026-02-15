@@ -1,0 +1,26 @@
+# 开发环境
+*.code-workspace
+.github_token
+.clinerules/
+.claude/
+desktop.ini
+push.bat
+.venv/
+control/
+fuck-wjx-old_version/
+AGENTS.md
+CLAUDE.md
+Cloudflare Workers/
+
+# 编译环境
+/build/
+/dist/
+/Setup/
+.env
+
+# 运行环境
+__pycache__/
+*.pyc
+/configs/
+/logs/
+/stats/

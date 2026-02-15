@@ -382,11 +382,22 @@ def get_status() -> Any:
 def _format_status_payload(payload: Any) -> tuple[str, str]:
     """Format online status payload into (text, color)."""
     if not isinstance(payload, dict):
-        return "作者当前在线状态：返回数据格式异常", "#cc0000"
+        return "未知：返回数据格式异常", "#666666"
     online = payload.get("online", None)
-    online_text = "在线" if online is True else ("离线" if online is False else "未知")
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        if online is True:
+            message = "系统正常运行中"
+        elif online is False:
+            message = "系统当前不在线"
+        else:
+            message = "状态未知"
     color = "#228B22" if online is True else ("#cc0000" if online is False else "#666666")
-    return f"作者当前在线状态：{online_text}", color
+    if online is True:
+        return f"在线：{message}", color
+    if online is False:
+        return f"离线：{message}", color
+    return f"未知：{message}", color
 
 
 def _proxy_api_candidates(expected_count: int, proxy_url: Optional[str]) -> List[str]:

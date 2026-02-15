@@ -20,7 +20,7 @@ class StatusFetchWorker(QObject):
         """执行状态查询，完成后发送 finished 信号"""
         if self._stopped:
             return
-        text = "作者当前在线状态：未知"
+        text = "未知：状态未知"
         color = "#666666"
         try:
             if self._stopped:
@@ -33,11 +33,28 @@ class StatusFetchWorker(QObject):
                 if isinstance(fmt_result, tuple) and len(fmt_result) >= 2:
                     text, color = str(fmt_result[0]), str(fmt_result[1])
             else:
-                online = bool(result.get("online")) if isinstance(result, dict) else True
-                text = f"作者当前在线状态：{'在线' if online else '离线'}"
-                color = "#228B22" if online else "#cc0000"
+                if isinstance(result, dict):
+                    online = result.get("online", None)
+                    message = str(result.get("message") or "").strip()
+                    if not message:
+                        if online is True:
+                            message = "系统正常运行中"
+                        elif online is False:
+                            message = "系统当前不在线"
+                        else:
+                            message = "状态未知"
+                    if online is True:
+                        text = f"在线：{message}"
+                    elif online is False:
+                        text = f"离线：{message}"
+                    else:
+                        text = f"未知：{message}"
+                    color = "#228B22" if online is True else ("#cc0000" if online is False else "#666666")
+                else:
+                    text = "未知：返回数据格式异常"
+                    color = "#666666"
         except Exception:
-            text = "作者当前在线状态：未知"
+            text = "未知：状态获取失败"
             color = "#666666"
         
         if not self._stopped:

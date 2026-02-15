@@ -18,6 +18,7 @@ from qfluentwidgets import (
     IndeterminateProgressRing,
     Action,
     FluentIcon,
+    IconWidget,
     MessageBox,
     RoundMenu,
     InfoBar,
@@ -122,9 +123,13 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
         self.status_spinner = IndeterminateProgressRing(self)
         self.status_spinner.setFixedSize(16, 16)
         self.status_spinner.setStrokeWidth(2)
+        self.status_icon = IconWidget(FluentIcon.INFO, self)
+        self.status_icon.setFixedSize(16, 16)
+        self.status_icon.hide()
         self.status_label = BodyLabel("作者当前在线状态：获取中...", self)
         self.status_label.setStyleSheet("color:#BA8303;")
         status_row.addWidget(self.status_spinner)
+        status_row.addWidget(self.status_icon)
         status_row.addWidget(self.status_label)
         status_row.addStretch(1)
         layout.addLayout(status_row)
@@ -194,6 +199,13 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
         """信号槽：在主线程更新状态标签"""
         try:
             self.status_spinner.hide()
+            self.status_icon.show()
+            if color.lower() == "#228b22":
+                self.status_icon.setIcon(FluentIcon.ACCEPT)
+            elif color.lower() == "#cc0000":
+                self.status_icon.setIcon(FluentIcon.REMOVE_FROM)
+            else:
+                self.status_icon.setIcon(FluentIcon.INFO)
             self.status_label.setText(text)
             self.status_label.setStyleSheet(f"color:{color};")
         except RuntimeError as exc:

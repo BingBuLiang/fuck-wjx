@@ -52,7 +52,7 @@ class StatusPollingMixin:
     def _start_status_polling(self):
         """启动状态轮询"""
         if not callable(self._status_fetcher):
-            self._on_status_loaded("作者当前在线状态：未知", "#666666")
+            self._on_status_loaded("未知：状态获取器未配置", "#666666")
             return
         
         # 立即执行一次查询

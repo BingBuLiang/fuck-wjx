@@ -29,6 +29,7 @@ from qfluentwidgets import (
     MessageBox,
     Action,
     FluentIcon,
+    IconWidget,
     RoundMenu,
     PlainTextEdit,
 )
@@ -239,9 +240,13 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.status_spinner = IndeterminateProgressRing(self)
         self.status_spinner.setFixedSize(16, 16)
         self.status_spinner.setStrokeWidth(2)
+        self.status_icon = IconWidget(FluentIcon.INFO, self)
+        self.status_icon.setFixedSize(16, 16)
+        self.status_icon.hide()
         self.online_label = BodyLabel("作者当前在线状态：查询中...", self)
         self.online_label.setStyleSheet("color:#BA8303;")
         status_row.addWidget(self.status_spinner)
+        status_row.addWidget(self.status_icon)
         status_row.addWidget(self.online_label)
         status_row.addStretch(1)
         wrapper.addLayout(status_row)
@@ -317,6 +322,7 @@ class ContactForm(StatusPollingMixin, QWidget):
             return
         self._polling_started = True
         self.status_spinner.show()
+        self.status_icon.hide()
         self.online_label.setText("作者当前在线状态：查询中...")
         self.online_label.setStyleSheet("color:#BA8303;")
         self._start_status_polling()
@@ -518,6 +524,13 @@ class ContactForm(StatusPollingMixin, QWidget):
         """信号槽：在主线程更新状态标签"""
         try:
             self.status_spinner.hide()
+            self.status_icon.show()
+            if color.lower() == "#228b22":
+                self.status_icon.setIcon(FluentIcon.ACCEPT)
+            elif color.lower() == "#cc0000":
+                self.status_icon.setIcon(FluentIcon.REMOVE_FROM)
+            else:
+                self.status_icon.setIcon(FluentIcon.INFO)
             self.online_label.setText(text)
             self.online_label.setStyleSheet(f"color:{color};")
         except RuntimeError as exc:

@@ -103,14 +103,35 @@ def reorder(driver: BrowserDriver, current: int) -> None:
             break
     if not order_items:
         return
+    numeric_rank_mode = False
+    try:
+        numeric_inputs_probe = 0
+        for li in order_items:
+            inputs = li.find_elements(By.CSS_SELECTOR, "input")
+            for ipt in inputs:
+                ipt_type = (ipt.get_attribute("type") or "").strip().lower()
+                if ipt_type in ("hidden", "checkbox", "radio"):
+                    continue
+                numeric_inputs_probe += 1
+                break
+        numeric_rank_mode = numeric_inputs_probe == len(order_items) and len(order_items) > 0
+    except Exception:
+        numeric_rank_mode = False
     rank_mode = False
     if container:
         try:
-            sortnum_elements = container.find_elements(By.CSS_SELECTOR, ".sortnum, .sortnum-sel")
-            rank_mode = bool(sortnum_elements)
+            rank_mode = bool(
+                container.find_elements(
+                    By.CSS_SELECTOR,
+                    ".sortnum, .sortnum-sel, .order-number, .order-index, "
+                    ".ui-sortable, .ui-sortable-handle, [class*='sort'], [class*='rank']",
+                )
+            )
         except Exception:
             rank_mode = False
-    if container and not rank_mode:
+    if rank_mode:
+        numeric_rank_mode = False
+    if container and not rank_mode and not numeric_rank_mode:
         try:
             driver.execute_script("arguments[0].scrollIntoView({block:'center'});", container)
         except Exception:
@@ -278,20 +299,7 @@ def reorder(driver: BrowserDriver, current: int) -> None:
         if _is_rank_selected(li):
             return True
 
-        page = getattr(driver, "page", None)
         count_before = _count_selected()
-
-        # 方式1: 元素直接点击
-        try:
-            li = _get_rank_item(option_idx)
-            if li:
-                li.click()
-                time.sleep(0.06)
-                li = _get_rank_item(option_idx)
-                if li and _is_rank_selected(li) and _count_selected() >= count_before:
-                    return True
-        except Exception:
-            pass
 
         # 方式2: JavaScript 模拟完整点击事件
         try:
@@ -315,37 +323,28 @@ def reorder(driver: BrowserDriver, current: int) -> None:
         except Exception:
             pass
 
-        # 方式3: 点击内部元素
-        for inner_css in ("span", "div", "input[type='hidden']"):
-            try:
-                li = _get_rank_item(option_idx)
-                if li:
-                    inner = li.find_element(By.CSS_SELECTOR, inner_css)
-                    inner.click()
-                    time.sleep(0.05)
+        # 方式3: 元素直接点击（放到后面，减少自动滚动概率）
+        try:
+            li = _get_rank_item(option_idx)
+            if li:
+                in_view = driver.execute_script(
+                    r"""
+                    const el = arguments[0];
+                    if (!el || !el.getBoundingClientRect) return false;
+                    const rect = el.getBoundingClientRect();
+                    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+                    return rect.top >= 0 && rect.bottom <= vh && rect.height > 0;
+                    """,
+                    li,
+                )
+                if in_view:
+                    li.click()
+                    time.sleep(0.06)
                     li = _get_rank_item(option_idx)
                     if li and _is_rank_selected(li) and _count_selected() >= count_before:
                         return True
-            except Exception:
-                pass
-
-        # 方式4: 鼠标坐标点击
-        if page:
-            try:
-                li = _get_rank_item(option_idx)
-                if li:
-                    box = driver.execute_script(
-                        "const r = arguments[0].getBoundingClientRect(); return {x: r.left + r.width/2, y: r.top + r.height/2};",
-                        li,
-                    )
-                    if box and box.get("x", 0) > 0 and box.get("y", 0) > 0:
-                        page.mouse.click(box["x"], box["y"])
-                        time.sleep(0.06)
-                        li = _get_rank_item(option_idx)
-                        if li and _is_rank_selected(li) and _count_selected() >= count_before:
-                            return True
-            except Exception:
-                pass
+        except Exception:
+            pass
 
         li = _get_rank_item(option_idx)
         if not li:
@@ -365,20 +364,10 @@ def reorder(driver: BrowserDriver, current: int) -> None:
                 success = True
                 break
             time.sleep(0.05)
-        item = _get_rank_item(option_idx)
-        if item is not None and not success and not _is_rank_selected(item):
-            _force_mark_rank_selected(item, rank)
+        _ = rank
 
     def _rank_remedy_missing(click_indices: List[int]) -> None:
         """补救遗漏的排序项"""
-        existing_ranks = []
-        for idx in click_indices:
-            item = _get_rank_item(idx)
-            b = _get_item_badge_text(item)
-            if b and b.isdigit():
-                existing_ranks.append(int(b))
-        next_rank = max(existing_ranks) + 1 if existing_ranks else 1
-
         for retry in range(2):
             missing = []
             for i in click_indices:
@@ -391,12 +380,7 @@ def reorder(driver: BrowserDriver, current: int) -> None:
                 item = _get_rank_item(option_idx)
                 if item is None:
                     continue
-                if not _robust_click_rank_item(option_idx):
-                    item = _get_rank_item(option_idx)
-                    if item is None:
-                        continue
-                    _force_mark_rank_selected(item, next_rank)
-                next_rank += 1
+                _robust_click_rank_item(option_idx)
                 time.sleep(0.04)
             time.sleep(0.06)
 
@@ -661,30 +645,42 @@ def reorder(driver: BrowserDriver, current: int) -> None:
     detected_min_limit, detected_max_limit = detect_multiple_choice_limit_range(driver, current)
     min_select_limit, max_select_limit = detected_min_limit, detected_max_limit
 
-    if rank_mode and container:
-        fragments: List[str] = []
+    explicit_required: Optional[int] = None
+    explicit_min: Optional[int] = None
+    explicit_max: Optional[int] = None
+    if container:
+        explicit_fragments: List[str] = []
         for selector in (".qtypetip", ".topichtml", ".field-label"):
             try:
-                fragments.append(container.find_element(By.CSS_SELECTOR, selector).text)
+                txt = (container.find_element(By.CSS_SELECTOR, selector).text or "").strip()
             except Exception:
-                continue
-        cand_min, cand_max = _extract_multi_limit_range_from_text("\n".join(fragments))
-        if cand_min is not None:
-            if min_select_limit is None:
-                min_select_limit = cand_min
-            else:
-                min_select_limit = max(min_select_limit, cand_min)
-        if cand_max is not None:
-            if max_select_limit is None:
-                max_select_limit = cand_max
-            else:
-                max_select_limit = min(max_select_limit, cand_max)
-        if (
-            min_select_limit is not None
-            and max_select_limit is not None
-            and min_select_limit > max_select_limit
-        ):
-            min_select_limit, max_select_limit = detected_min_limit, detected_max_limit
+                txt = ""
+            if txt:
+                explicit_fragments.append(txt)
+        combined_text = "\n".join(explicit_fragments)
+        if combined_text:
+            for fragment in explicit_fragments:
+                cand_required = _extract_reorder_required_from_text(fragment, total_options)
+                if cand_required is not None:
+                    explicit_required = cand_required
+                    break
+            explicit_min, explicit_max = _extract_multi_limit_range_from_text(combined_text)
+
+    # 只按题干明确要求限制数量；题干未明确时默认全选参与排序
+    has_explicit_limit = (
+        explicit_required is not None
+        or explicit_min is not None
+        or explicit_max is not None
+    )
+    if has_explicit_limit:
+        if explicit_required is not None:
+            required_count = explicit_required
+        min_select_limit = explicit_min
+        max_select_limit = explicit_max
+    else:
+        required_count = total_options
+        min_select_limit = None
+        max_select_limit = None
 
     force_select_all = required_count is not None and required_count == total_options
     if force_select_all and max_select_limit is not None and required_count is not None and max_select_limit < required_count:
@@ -737,6 +733,56 @@ def reorder(driver: BrowserDriver, current: int) -> None:
         effective_limit = max(effective_limit, min_select_limit)
     effective_limit = max(1, min(effective_limit, len(order_items)))
 
+    if numeric_rank_mode:
+        plan_count = effective_limit
+        if required_count is None and min_select_limit is None and max_select_limit is None:
+            plan_count = total_options
+        plan_count = max(1, min(int(plan_count), total_options))
+        selected_indices = list(range(total_options))
+        random.shuffle(selected_indices)
+        selected_indices = selected_indices[:plan_count]
+        rank_map = {idx: str(pos + 1) for pos, idx in enumerate(selected_indices)}
+
+        for idx, li in enumerate(order_items):
+            target_input = None
+            try:
+                inputs = li.find_elements(By.CSS_SELECTOR, "input")
+            except Exception:
+                inputs = []
+            for ipt in inputs:
+                ipt_type = (ipt.get_attribute("type") or "").strip().lower()
+                if ipt_type in ("hidden", "checkbox", "radio"):
+                    continue
+                target_input = ipt
+                break
+            if target_input is None:
+                continue
+
+            value = rank_map.get(idx, "")
+            try:
+                target_input.clear()
+            except Exception:
+                pass
+            try:
+                target_input.send_keys(value)
+            except Exception:
+                try:
+                    driver.execute_script(
+                        r"""
+                        const el = arguments[0];
+                        const val = arguments[1] || '';
+                        if (!el) return;
+                        el.value = String(val);
+                        try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (err) {}
+                        try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (err) {}
+                        """,
+                        target_input,
+                        value,
+                    )
+                except Exception:
+                    pass
+        return
+
     # ── 分支2: rank_mode（非 force_select_all）──
     if rank_mode:
         plan_count = effective_limit
@@ -777,81 +823,5 @@ def reorder(driver: BrowserDriver, current: int) -> None:
                 continue
             if _click_item(option_idx, item):
                 selected_count += 1
-
-    selected_count = _count_selected()
-    if selected_count < effective_limit and container:
-        try:
-            order = list(range(len(order_items)))
-            random.shuffle(order)
-            driver.execute_script(
-                r"""
-                const container = arguments[0];
-                const order = arguments[1];
-                const limit = arguments[2];
-                if (!container || !Array.isArray(order)) return;
-                const items = Array.from(container.querySelectorAll('ul > li, ol > li'));
-                const maxCount = Math.max(1, Math.min(Number(limit || items.length) || items.length, items.length));
-                const chosen = order.slice(0, maxCount);
-                const chosenSet = new Set(chosen);
-
-                chosen.forEach((idx, pos) => {
-                    const li = items[idx];
-                    if (!li) return;
-                    const rank = pos + 1;
-                    li.classList.add('selected', 'jqchecked', 'on', 'check');
-                    li.setAttribute('aria-checked', 'true');
-                    li.setAttribute('data-checked', 'true');
-                    const badge = li.querySelector('.sortnum, .sortnum-sel, .order-number, .order-index');
-                    if (badge) {
-                        badge.textContent = String(rank);
-                        badge.style.display = '';
-                    }
-                    const hidden = li.querySelector("input.custom[type='hidden'][name^='q'], input[type='hidden'][name^='q']");
-                    if (hidden) {
-                        hidden.value = String(rank);
-                        hidden.setAttribute('data-forced', '1');
-                        hidden.setAttribute('data-checked', 'true');
-                        hidden.setAttribute('aria-checked', 'true');
-                    }
-                    const box = li.querySelector("input[type='checkbox'], input[type='radio']");
-                    if (box) {
-                        box.checked = true;
-                        box.value = String(rank);
-                        box.setAttribute('checked', 'checked');
-                        box.setAttribute('data-checked', 'true');
-                        box.setAttribute('aria-checked', 'true');
-                        try { box.dispatchEvent(new Event('change', {bubbles:true})); } catch (err) {}
-                    }
-                });
-
-                items.forEach((li, idx) => {
-                    if (chosenSet.has(idx)) return;
-                    li.classList.remove('selected', 'jqchecked', 'on', 'check');
-                    li.removeAttribute('aria-checked');
-                    li.removeAttribute('data-checked');
-                    const badge = li.querySelector('.sortnum, .sortnum-sel, .order-number, .order-index');
-                    if (badge) badge.textContent = '';
-                    const hidden = li.querySelector("input.custom[type='hidden'][name^='q'], input[type='hidden'][name^='q']");
-                    if (hidden) {
-                        hidden.value = '';
-                        hidden.removeAttribute('data-forced');
-                        hidden.removeAttribute('data-checked');
-                        hidden.removeAttribute('aria-checked');
-                    }
-                    const box = li.querySelector("input[type='checkbox'], input[type='radio']");
-                    if (box) {
-                        box.checked = false;
-                        box.removeAttribute('checked');
-                        box.removeAttribute('data-checked');
-                        box.removeAttribute('aria-checked');
-                    }
-                });
-                """,
-                container,
-                order,
-                effective_limit,
-            )
-        except Exception:
-            pass
 
     _wait_until_reorder_done(effective_limit)

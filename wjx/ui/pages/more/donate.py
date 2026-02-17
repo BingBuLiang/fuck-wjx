@@ -3,14 +3,15 @@ import sys
 import os
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QBoxLayout
 from qfluentwidgets import (
     ScrollArea,
     TitleLabel,
     BodyLabel,
     CaptionLabel,
-    ImageLabel,
     CardWidget,
+    StrongBodyLabel,
 )
 
 
@@ -32,6 +33,8 @@ class DonatePage(ScrollArea):
         self.setWidget(self.view)
         self.setWidgetResizable(True)
         self.enableTransparentBackground()
+        self._compact = False
+        self._qr_items = []
         self._build_ui()
 
     def _build_ui(self):
@@ -51,25 +54,22 @@ class DonatePage(ScrollArea):
 
         layout.addSpacing(10)
 
-        # 二维码卡片
-        card = CardWidget(self)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(24, 20, 24, 20)
-        card_layout.setSpacing(12)
-        card_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        # 二维码卡片（微信/支付宝）
+        self.qr_row = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.qr_row.setSpacing(16)
+        self.qr_row.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        # 二维码图片
-        qr_path = get_resource_path("assets/payment.png")
-        qr_label = ImageLabel(qr_path, self)
-        qr_label.scaledToWidth(280)
-        card_layout.addWidget(qr_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        wechat_path = get_resource_path("assets/WeDonate.png")
+        alipay_path = get_resource_path("assets/AliDonate.jpg")
 
-        # 提示文字
-        tip = CaptionLabel("微信扫一扫，随意打赏", self)
-        tip.setStyleSheet("color: #888;")
-        card_layout.addWidget(tip, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.qr_row.addWidget(
+            self._build_qr_card("微信赞赏", wechat_path, "微信扫一扫")
+        )
+        self.qr_row.addWidget(
+            self._build_qr_card("支付宝赞赏", alipay_path, "支付宝扫一扫")
+        )
 
-        layout.addWidget(card, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addLayout(self.qr_row)
 
         layout.addSpacing(16)
 
@@ -79,3 +79,62 @@ class DonatePage(ScrollArea):
         layout.addWidget(thanks, 0, Qt.AlignmentFlag.AlignHCenter)
 
         layout.addStretch(1)
+
+        self._update_layout()
+
+    def _build_qr_card(self, title: str, qr_path: str, tip_text: str) -> CardWidget:
+        card = CardWidget(self)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(24, 20, 24, 20)
+        card_layout.setSpacing(10)
+        card_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        title_label = StrongBodyLabel(title, card)
+        card_layout.addWidget(title_label, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        qr_label = QLabel(card)
+        qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        qr_label.setStyleSheet(
+            "border: 1px solid rgba(128,128,128,0.15); border-radius: 8px; padding: 4px;"
+        )
+        pixmap = QPixmap(qr_path) if os.path.exists(qr_path) else None
+        if pixmap and not pixmap.isNull():
+            self._qr_items.append((qr_label, pixmap))
+        else:
+            qr_label.setText(f"二维码未找到\n{os.path.basename(qr_path)}")
+        card_layout.addWidget(qr_label, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        tip = CaptionLabel(tip_text, card)
+        tip.setStyleSheet("color: #888;")
+        card_layout.addWidget(tip, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        return card
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_layout()
+
+    def _update_layout(self):
+        compact = self.viewport().width() < 720
+        if compact != self._compact:
+            self._compact = compact
+            self.qr_row.setDirection(
+                QBoxLayout.Direction.TopToBottom if compact else QBoxLayout.Direction.LeftToRight
+            )
+        self._apply_qr_pixmaps()
+
+    def _apply_qr_pixmaps(self):
+        base_width = 200 if self._compact else 240
+        for label, pixmap in self._qr_items:
+            if pixmap.isNull():
+                continue
+            ratio = pixmap.height() / pixmap.width() if pixmap.width() else 1
+            height = max(160, int(base_width * ratio))
+            label.setFixedSize(base_width, height)
+            label.setPixmap(
+                pixmap.scaled(
+                    label.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )

@@ -242,13 +242,29 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
             log_suppressed_exception("_open_donate: confirm_box.yesButton.setText(\"继续\")", exc, level=logging.WARNING)
         if not confirm_box.exec():
             return
+        # 优先在应用内打开捐助页面（展示二维码）
         try:
-            payment_path = os.path.join(get_assets_directory(), "payment.png")
-            if os.path.exists(payment_path):
-                webbrowser.open(payment_path)
+            main_window = self.window()
+            if hasattr(main_window, "_get_donate_page") and hasattr(main_window, "_switch_to_more_page"):
+                donate_page = main_window._get_donate_page()
+                main_window._switch_to_more_page(donate_page)
                 return
         except Exception as exc:
-            log_suppressed_exception("_open_donate: payment_path = os.path.join(get_assets_directory(), \"payment.png\")", exc, level=logging.WARNING)
+            log_suppressed_exception("_open_donate: switch to donate page", exc, level=logging.WARNING)
+        # 兜底：打开本地二维码文件
+        try:
+            assets_dir = get_assets_directory()
+            wechat_path = os.path.join(assets_dir, "WeDonate.png")
+            alipay_path = os.path.join(assets_dir, "AliDonate.jpg")
+            if os.path.exists(wechat_path):
+                webbrowser.open(wechat_path)
+                return
+            if os.path.exists(alipay_path):
+                webbrowser.open(alipay_path)
+                return
+        except Exception as exc:
+            log_suppressed_exception("_open_donate: open local qr", exc, level=logging.WARNING)
+        # 兜底中的兜底：再打开仓库
         webbrowser.open("https://github.com/hungryM0/fuck-wjx")
 
     def _show_card_edit_menu(self, pos):

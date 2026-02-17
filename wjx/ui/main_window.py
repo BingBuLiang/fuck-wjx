@@ -49,7 +49,7 @@ from wjx.ui.pages.more.about import AboutPage
 from wjx.ui.pages.account.account import AccountPage
 from wjx.ui.pages.more.changelog import ChangelogPage, ChangelogDetailPage
 from wjx.ui.pages.more.donate import DonatePage
-from wjx.ui.pages.more.qq_group import QQGroupPage
+from wjx.ui.pages.more.community import CommunityPage
 
 # 导入对话框
 from wjx.ui.dialogs.card_unlock import CardUnlockDialog
@@ -139,7 +139,7 @@ class MainWindow(FluentWindow):
         self._result_page = None
         self._log_page = None
         self._support_page = None
-        self._qq_group_page = None
+        self._community_page = None
         self._about_page = None
         self._changelog_page = None
         self._changelog_detail_page = None
@@ -467,15 +467,15 @@ class MainWindow(FluentWindow):
                 self.stackedWidget.addWidget(self._support_page)
         return self._support_page
 
-    def _get_qq_group_page(self):
-        """懒加载QQ群页面"""
-        if self._qq_group_page is None:
-            from wjx.ui.pages.more.qq_group import QQGroupPage
-            self._qq_group_page = QQGroupPage(self)
-            self._qq_group_page.setObjectName("qq_group")
-            if self.stackedWidget.indexOf(self._qq_group_page) == -1:
-                self.stackedWidget.addWidget(self._qq_group_page)
-        return self._qq_group_page
+    def _get_community_page(self):
+        """懒加载社区页面"""
+        if self._community_page is None:
+            from wjx.ui.pages.more.community import CommunityPage
+            self._community_page = CommunityPage(self)
+            self._community_page.setObjectName("community")
+            if self.stackedWidget.indexOf(self._community_page) == -1:
+                self.stackedWidget.addWidget(self._community_page)
+        return self._community_page
 
     def _get_about_page(self):
         """懒加载关于页面"""
@@ -525,13 +525,13 @@ class MainWindow(FluentWindow):
         # 连接信号：点击列表项时切换到详情页
         changelog_page.detailRequested.connect(self._show_changelog_detail)
         # 连接信号：点击返回按钮时切换回列表页
-        changelog_detail_page.backRequested.connect(lambda: self.switchTo(changelog_page))
+        changelog_detail_page.backRequested.connect(lambda: self._switch_to_more_page(changelog_page))
 
     def _show_changelog_detail(self, release: dict):
         """显示更新日志详情"""
         changelog_detail_page = self._get_changelog_detail_page()
         changelog_detail_page.setRelease(release)
-        self.switchTo(changelog_detail_page)
+        self._switch_to_more_page(changelog_detail_page)
 
     def _show_about_menu(self):
         """显示关于子菜单"""
@@ -548,27 +548,27 @@ class MainWindow(FluentWindow):
 
         # 更新日志
         changelog_action = Action(FluentIcon.HISTORY, "更新日志")
-        changelog_action.triggered.connect(lambda: self.switchTo(self._get_changelog_page()))
+        changelog_action.triggered.connect(lambda: self._switch_to_more_page(self._get_changelog_page()))
         menu.addAction(changelog_action)
 
-        # QQ群
-        qq_group_action = Action(FluentIcon.CHAT, "QQ群")
-        qq_group_action.triggered.connect(lambda: self.switchTo(self._get_qq_group_page()))
-        menu.addAction(qq_group_action)
+        # 社区
+        community_action = Action(FluentIcon.CHAT, "社区")
+        community_action.triggered.connect(lambda: self._switch_to_more_page(self._get_community_page()))
+        menu.addAction(community_action)
 
         # 客服与支持
         support_action = Action(FluentIcon.HELP, "客服与支持")
-        support_action.triggered.connect(lambda: self.switchTo(self._get_support_page()))
+        support_action.triggered.connect(lambda: self._switch_to_more_page(self._get_support_page()))
         menu.addAction(support_action)
 
         # 捐助
         donate_action = Action(FluentIcon.HEART, "捐助")
-        donate_action.triggered.connect(lambda: self.switchTo(self._get_donate_page()))
+        donate_action.triggered.connect(lambda: self._switch_to_more_page(self._get_donate_page()))
         menu.addAction(donate_action)
 
         # 关于
         about_action = Action(FluentIcon.INFO, "关于")
-        about_action.triggered.connect(lambda: self.switchTo(self._get_about_page()))
+        about_action.triggered.connect(lambda: self._switch_to_more_page(self._get_about_page()))
         menu.addAction(about_action)
 
         menu.addSeparator()
@@ -652,9 +652,17 @@ class MainWindow(FluentWindow):
                 icon=FluentIcon.MORE,
                 text="更多",
                 onClick=self._show_about_menu,
-                selectable=False,
+                selectable=True,
                 position=NavigationItemPosition.BOTTOM
             )
+
+    def _switch_to_more_page(self, page):
+        """切换到“更多”相关页面，并同步侧边栏高亮"""
+        self.switchTo(page)
+        try:
+            self.navigationInterface.setCurrentItem("about_menu")
+        except Exception:
+            logging.debug("同步“更多”侧边栏高亮失败", exc_info=True)
 
     def _load_avatar(self, url: str):
         """异步加载头像"""

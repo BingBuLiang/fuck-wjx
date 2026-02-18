@@ -8,8 +8,8 @@ import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
-from PySide6.QtCore import Qt, QObject, QEvent, Signal
-from PySide6.QtGui import QContextMenuEvent
+from PySide6.QtCore import Qt, QObject, QEvent, Signal, QMimeData, QTimer
+from PySide6.QtGui import QContextMenuEvent, QDragEnterEvent, QDropEvent, QClipboard
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -155,6 +155,7 @@ class DashboardPage(QWidget):
         self._last_ip_balance_fetch_ts = 0.0
         self._ip_balance_fetch_interval_sec = 30.0
         self._debug_reset_in_progress = False
+        self._clipboard_parse_ticket = 0
         self._build_ui()
         self.config_drawer = ConfigDrawer(self, self._load_config_from_path)
         self._bind_events()
@@ -191,8 +192,10 @@ class DashboardPage(QWidget):
         self._ip_low_infobar.addWidget(self._ip_low_contact_link)
         layout.addWidget(self._ip_low_infobar)
 
-        link_card = CardWidget(self)
-        link_layout = QVBoxLayout(link_card)
+        self.link_card = CardWidget(self)
+        self.link_card.setAcceptDrops(True)
+        self.link_card.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        link_layout = QVBoxLayout(self.link_card)
         link_layout.setContentsMargins(12, 12, 12, 12)
         link_layout.setSpacing(8)
         
@@ -216,9 +219,12 @@ class DashboardPage(QWidget):
         self.qr_btn = PushButton("上传问卷二维码图片", self, FluentIcon.QRCODE)
         input_row.addWidget(self.qr_btn)
         self.url_edit = LineEdit(self)
-        self.url_edit.setPlaceholderText("在此处输入问卷链接")
+        self.url_edit.setPlaceholderText("在此拖入/粘贴问卷二维码图片或输入问卷链接")
         self.url_edit.setClearButtonEnabled(True)
-        # 仅问卷链接输入框需要 qfluentwidgets 风格的“粘贴”单项菜单
+        # 启用拖放功能
+        self.url_edit.setAcceptDrops(True)
+        self.url_edit.installEventFilter(self)
+        # 仅问卷链接输入框需要 qfluentwidgets 风格的"粘贴"单项菜单
         self._paste_only_menu = _PasteOnlyMenu(self)
         self.url_edit.installEventFilter(self._paste_only_menu)
         input_row.addWidget(self.url_edit, 1)
@@ -231,7 +237,22 @@ class DashboardPage(QWidget):
         btn_row.addWidget(self.parse_btn)
         btn_row.addStretch(1)
         link_layout.addLayout(btn_row)
-        layout.addWidget(link_card)
+        layout.addWidget(self.link_card)
+
+        # 整个“问卷入口”卡片都支持粘贴/拖入二维码
+        self._link_entry_widgets = (
+            self.link_card,
+            self.config_list_btn,
+            self.load_cfg_btn,
+            self.save_cfg_btn,
+            self.qr_btn,
+            self.url_edit,
+            self.parse_btn,
+        )
+        for widget in self._link_entry_widgets:
+            if widget is self.url_edit:
+                continue
+            widget.installEventFilter(self)
 
         exec_card = CardWidget(self)
         exec_layout = QVBoxLayout(exec_card)
@@ -369,6 +390,10 @@ class DashboardPage(QWidget):
         self.card_btn.clicked.connect(self._on_card_code_clicked)
         # 监听问卷链接输入框的文本变化（用于检测 reset 命令）
         self.url_edit.textChanged.connect(self._on_url_text_changed)
+        # 监听剪贴板变化，自动处理粘贴的图片
+        from PySide6.QtWidgets import QApplication
+        clipboard = QApplication.clipboard()
+        clipboard.dataChanged.connect(self._on_clipboard_changed)
         # CommandBar Actions
         self.select_all_action.triggered.connect(self._toggle_select_all_action)
         self.add_action.triggered.connect(self._show_add_question_dialog)
@@ -391,6 +416,199 @@ class DashboardPage(QWidget):
             self.config_drawer.sync_to_parent()
         except Exception as exc:
             log_suppressed_exception("resizeEvent: self.config_drawer.sync_to_parent()", exc, level=logging.WARNING)
+
+    def eventFilter(self, watched, event):
+        """处理拖放和粘贴事件"""
+        if watched in getattr(self, "_link_entry_widgets", ()):
+            # 处理拖入事件
+            if event.type() == QEvent.Type.DragEnter:
+                if isinstance(event, QDragEnterEvent):
+                    mime_data = event.mimeData()
+                    # 接受图片文件或图片数据
+                    if mime_data.hasUrls() or mime_data.hasImage():
+                        event.acceptProposedAction()
+                        return True
+                return False
+
+            # 处理放下事件
+            elif event.type() == QEvent.Type.Drop:
+                if isinstance(event, QDropEvent):
+                    mime_data = event.mimeData()
+
+                    # 优先处理文件路径
+                    if mime_data.hasUrls():
+                        urls = mime_data.urls()
+                        if urls:
+                            file_path = urls[0].toLocalFile()
+                            if file_path and os.path.exists(file_path):
+                                # 检查是否为图片文件
+                                if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
+                                    self._process_qrcode_image(file_path)
+                                    event.acceptProposedAction()
+                                    return True
+
+                    # 处理直接拖入的图片数据（兼容微信 MIME）
+                    pil_image = self._extract_pil_image_from_clipboard(mime_data)
+                    if pil_image is not None:
+                        self._process_qrcode_image(pil_image)
+                        event.acceptProposedAction()
+                        return True
+                return False
+
+            # 处理粘贴事件（Ctrl+V）
+            elif event.type() == QEvent.Type.KeyPress:
+                from PySide6.QtGui import QKeyEvent
+                from PySide6.QtCore import Qt
+                if isinstance(event, QKeyEvent):
+                    if event.key() == Qt.Key.Key_V and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                        from PySide6.QtWidgets import QApplication
+                        clipboard = QApplication.clipboard()
+                        mime_data = clipboard.mimeData(QClipboard.Mode.Clipboard)
+                        # 剪贴板有图片时拦截粘贴，转为二维码解析（兼容微信剪贴板格式）
+                        pil_image = self._extract_pil_image_from_clipboard(mime_data, clipboard)
+                        if pil_image is not None:
+                            try:
+                                # 递增 ticket，使 _on_clipboard_changed 的延迟任务失效，避免重复触发
+                                self._clipboard_parse_ticket += 1
+                                self._process_qrcode_image(pil_image)
+                            except Exception:
+                                pass
+                            return True  # 拦截默认粘贴行为
+                        # 剪贴板有图片文件路径时也处理（仅当没有图片数据时）
+                        elif mime_data.hasUrls():
+                            urls = mime_data.urls()
+                            if urls:
+                                file_path = urls[0].toLocalFile()
+                                if file_path and os.path.exists(file_path):
+                                    if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
+                                        self._process_qrcode_image(file_path)
+                                        return True
+
+        return super().eventFilter(watched, event)
+
+    def _on_clipboard_changed(self):
+        """监听剪贴板变化，自动处理粘贴的图片"""
+        # 仅当“问卷入口”卡片区域内控件获得焦点时才处理剪贴板
+        if not self._is_focus_in_link_entry():
+            return
+
+        # 延迟读取剪贴板，避免系统尚未准备好时触发 Qt Warning
+        self._schedule_clipboard_parse(delay_ms=30, retries=3)
+
+    def _schedule_clipboard_parse(self, delay_ms: int = 30, retries: int = 3):
+        self._clipboard_parse_ticket += 1
+        ticket = self._clipboard_parse_ticket
+
+        def _run():
+            self._try_process_clipboard_image(ticket, retries)
+
+        QTimer.singleShot(delay_ms, _run)
+
+    def _try_process_clipboard_image(self, ticket: int, retries: int):
+        # 只处理最新一次请求，旧任务直接丢弃
+        if ticket != self._clipboard_parse_ticket:
+            return
+        if not self._is_focus_in_link_entry():
+            return
+
+        from PySide6.QtWidgets import QApplication
+        clipboard = QApplication.clipboard()
+        mime_data = clipboard.mimeData(QClipboard.Mode.Clipboard)
+        if mime_data is None:
+            if retries > 0:
+                self._schedule_clipboard_parse(delay_ms=50, retries=retries - 1)
+            return
+
+        pil_image = self._extract_pil_image_from_clipboard(mime_data, clipboard)
+        if pil_image is not None:
+            try:
+                self._process_qrcode_image(pil_image)
+            except Exception:
+                pass  # 图片处理失败，静默忽略
+
+    def _is_focus_in_link_entry(self) -> bool:
+        from PySide6.QtWidgets import QApplication
+        focus_widget = QApplication.focusWidget()
+        if focus_widget is None:
+            return False
+        current = focus_widget
+        while current is not None:
+            if current is self.link_card:
+                return True
+            current = current.parentWidget()
+        return False
+
+    def _qimage_to_pil(self, image):
+        """将 QImage 安全转换为 PIL Image。"""
+        from PySide6.QtGui import QImage
+        from PySide6.QtCore import QBuffer, QIODevice
+        if not isinstance(image, QImage) or image.isNull():
+            return None
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        if not image.save(buffer, b"PNG"):
+            buffer.close()
+            return None
+        buffer.close()
+        from io import BytesIO
+        from PIL import Image
+        return Image.open(BytesIO(bytes(buffer.data())))  # type: ignore[arg-type]
+
+    def _extract_pil_image_from_clipboard(self, mime_data: QMimeData, clipboard: Optional[QClipboard] = None):
+        """从剪贴板数据提取 PIL Image，兼容微信常见图片格式。"""
+        # 普通图片剪贴板（截图工具、浏览器等）
+        if mime_data.hasImage():
+            image = mime_data.imageData()
+            pil_image = self._qimage_to_pil(image)
+            if pil_image is not None:
+                return pil_image
+
+        # 微信等应用在 Windows 下可能使用自定义 MIME（PNG / DIB）
+        windows_image_formats = [
+            'application/x-qt-windows-mime;value="PNG"',
+            'application/x-qt-windows-mime;value="DeviceIndependentBitmap"',
+            "image/png",
+            "image/bmp",
+            "image/jpeg",
+        ]
+        for fmt in windows_image_formats:
+            try:
+                raw = mime_data.data(fmt)
+                if raw.isEmpty():
+                    continue
+                from io import BytesIO
+                from PIL import Image
+                return Image.open(BytesIO(bytes(raw)))  # type: ignore[arg-type]
+            except Exception:
+                continue
+
+        # 兜底：有些来源能从 clipboard.image() 取到图，但 hasImage() 为 False
+        if clipboard is not None:
+            try:
+                image = clipboard.image()
+                pil_image = self._qimage_to_pil(image)
+                if pil_image is not None:
+                    return pil_image
+            except Exception as exc:
+                log_suppressed_exception("_extract_pil_image_from_clipboard: clipboard.image()", exc, level=logging.DEBUG)
+
+        return None
+
+    def _process_qrcode_image(self, image_source):
+        """处理二维码图片（文件路径或PIL Image对象）"""
+        try:
+            url = decode_qrcode(image_source)
+            if not url:
+                self._toast("未能识别二维码中的链接", "error")
+                return
+
+            # 设置链接到输入框
+            self.url_edit.setText(url)
+            # 自动触发解析
+            self._on_parse_clicked()
+        except Exception as exc:
+            self._toast(f"处理二维码图片失败：{exc}", "error")
+            log_suppressed_exception("_process_qrcode_image", exc, level=logging.WARNING)
 
     def _has_question_entries(self) -> bool:
         try:

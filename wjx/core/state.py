@@ -71,6 +71,7 @@ random_proxy_ip_enabled = False
 proxy_ip_pool: List[str] = []
 random_user_agent_enabled = False
 user_agent_pool_keys: List[str] = []
+user_agent_ratios: Dict[str, int] = {"wechat": 33, "mobile": 33, "pc": 34}  # 设备类型占比
 _aliyun_captcha_stop_triggered = False
 _aliyun_captcha_stop_lock = threading.Lock()
 _aliyun_captcha_popup_shown = False

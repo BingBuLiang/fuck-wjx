@@ -38,7 +38,7 @@ from wjx.core.stats.persistence import save_stats
 
 
 def _is_wjx_domain(url_value: str) -> bool:
-    """仅接受 wjx.cn 及子域名。"""
+    """接受问卷星域名：wjx.top、wjx.cn、wjx.com 及其子域名。"""
     if not url_value:
         return False
     text = str(url_value).strip()
@@ -51,7 +51,12 @@ def _is_wjx_domain(url_value: str) -> bool:
     except Exception:
         return False
     host = (parsed.netloc or "").split(":", 1)[0].lower()
-    return bool(host == "wjx.cn" or host.endswith(".wjx.cn"))
+    # 支持 wjx.top、wjx.cn、wjx.com 及其子域名
+    allowed_domains = ["wjx.top", "wjx.cn", "wjx.com"]
+    for domain in allowed_domains:
+        if host == domain or host.endswith(f".{domain}"):
+            return True
+    return False
 
 
 class BoolVar:
@@ -569,6 +574,7 @@ class RunController(QObject):
         state.proxy_ip_pool = proxy_pool if config.random_ip_enabled else []
         state.random_user_agent_enabled = config.random_ua_enabled
         state.user_agent_pool_keys = config.random_ua_keys
+        state.user_agent_ratios = getattr(config, "random_ua_ratios", {"wechat": 33, "mobile": 33, "pc": 34})
         state.stop_on_fail_enabled = config.fail_stop_enabled
         state.pause_on_aliyun_captcha = bool(getattr(config, "pause_on_aliyun_captcha", True))
         # sync module-level aliases used elsewhere in this file

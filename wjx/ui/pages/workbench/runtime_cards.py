@@ -1,12 +1,11 @@
 """运行参数页 - 专属设置卡片组件（随机IP、随机UA、定时模式等）"""
 import logging
-from typing import Dict, Optional
+from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
-    CheckBox,
     ComboBox,
     ExpandGroupSettingCard,
     FluentIcon,
@@ -24,7 +23,6 @@ from qfluentwidgets import (
 
 from wjx.ui.widgets.no_wheel import NoWheelSpinBox
 from wjx.ui.widgets.setting_cards import SpinBoxSettingCard, SwitchSettingCard
-from wjx.utils.app.config import USER_AGENT_PRESETS
 
 
 class RandomIPSettingCard(ExpandGroupSettingCard):
@@ -381,11 +379,10 @@ class TimedModeSettingCard(SettingCard):
 
 
 class RandomUASettingCard(ExpandGroupSettingCard):
-    """随机UA设置卡 - 包含UA类型选择"""
+    """随机UA设置卡 - 包含设备类型占比配置"""
 
     def __init__(self, parent=None):
         super().__init__(FluentIcon.ROBOT, "随机 UA", "模拟不同的 User-Agent，例如微信环境或浏览器直链环境", parent)
-        self.checkboxes: Dict[str, CheckBox] = {}
 
         # 开关
         self.switchButton = SwitchButton(self, IndicatorPosition.RIGHT)
@@ -393,23 +390,28 @@ class RandomUASettingCard(ExpandGroupSettingCard):
         self.switchButton.setOffText("关")
         self.addWidget(self.switchButton)
 
-        # UA 类型选择容器
+        # 设备占比配置容器
         container = QWidget()
-        grid = QGridLayout(container)
-        grid.setContentsMargins(48, 12, 48, 12)
-        grid.setSpacing(12)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(48, 12, 48, 12)
+        layout.setSpacing(16)
 
-        col, row = 0, 0
-        for key, preset in USER_AGENT_PRESETS.items():
-            label = preset.get("label") or key
-            cb = CheckBox(label, container)
-            cb.setChecked(key == "pc_web")
-            self.checkboxes[key] = cb
-            grid.addWidget(cb, row, col)
-            col += 1
-            if col >= 3:
-                col = 0
-                row += 1
+        # 提示信息
+        hint_label = BodyLabel("配置不同设备类型的访问占比，三个滑块占比总和必须为 100%", container)
+        hint_label.setStyleSheet("color: #606060; font-size: 12px;")
+        layout.addWidget(hint_label)
+
+        # 三联动占比滑块
+        from wjx.ui.widgets.ratio_slider import RatioSlider
+        self.ratioSlider = RatioSlider(
+            labels={
+                "wechat": "微信访问占比",
+                "mobile": "手机访问占比",
+                "pc": "链接访问占比",
+            },
+            parent=container
+        )
+        layout.addWidget(self.ratioSlider)
 
         self.addGroupWidget(container)
 
@@ -420,8 +422,15 @@ class RandomUASettingCard(ExpandGroupSettingCard):
         self.switchButton.setChecked(checked)
 
     def setUAEnabled(self, enabled):
-        for cb in self.checkboxes.values():
-            cb.setEnabled(enabled)
+        self.ratioSlider.setEnabled(enabled)
+
+    def getRatios(self) -> dict:
+        """获取当前设备占比配置"""
+        return self.ratioSlider.getValues()
+
+    def setRatios(self, ratios: dict):
+        """设置设备占比配置"""
+        self.ratioSlider.setValues(ratios)
 
 
 class TimeRangeSettingCard(SettingCard):

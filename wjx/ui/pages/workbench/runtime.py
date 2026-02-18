@@ -70,7 +70,6 @@ class RuntimePage(ScrollArea):
         self.setWidgetResizable(True)
         self.enableTransparentBackground()
         self.view.setObjectName("settings_view")
-        self.ua_checkboxes: Dict[str, CheckBox] = {}
         self._build_ui()
         self._bind_events()
         self._sync_random_ua(self.random_ua_card.isChecked())
@@ -197,7 +196,6 @@ class RuntimePage(ScrollArea):
 
         self.random_ip_card = RandomIPSettingCard(parent=feature_group)
         self.random_ua_card = RandomUASettingCard(parent=feature_group)
-        self.ua_checkboxes = self.random_ua_card.checkboxes
 
         feature_group.addSettingCard(self.random_ip_card)
         feature_group.addSettingCard(self.random_ua_card)
@@ -276,7 +274,8 @@ class RuntimePage(ScrollArea):
 
     def _sync_random_ua(self, enabled: bool):
         try:
-            self.random_ua_card.setUAEnabled(bool(enabled))
+            # 允许用户在开关关闭时预先调整占比，开关仅控制是否生效
+            self.random_ua_card.setUAEnabled(True)
         except Exception as exc:
             log_suppressed_exception("_sync_random_ua: self.random_ua_card.setUAEnabled(bool(enabled))", exc, level=logging.WARNING)
 
@@ -376,7 +375,7 @@ class RuntimePage(ScrollArea):
         cfg.timed_mode_enabled = self.timed_switch.isChecked()
         cfg.random_ip_enabled = self.random_ip_switch.isChecked()
         cfg.random_ua_enabled = self.random_ua_switch.isChecked()
-        cfg.random_ua_keys = [k for k, cb in self.ua_checkboxes.items() if cb.isChecked()] if cfg.random_ua_enabled else []
+        cfg.random_ua_ratios = self.random_ua_card.getRatios() if cfg.random_ua_enabled else {"wechat": 33, "mobile": 33, "pc": 34}
         cfg.fail_stop_enabled = self.fail_stop_switch.isChecked()
         cfg.pause_on_aliyun_captcha = self.pause_on_aliyun_switch.isChecked()
         try:
@@ -418,9 +417,17 @@ class RuntimePage(ScrollArea):
         self.random_ua_switch.setChecked(cfg.random_ua_enabled)
         self._sync_browser_icon()
 
-        active = set(cfg.random_ua_keys or [])
-        for key, cb in self.ua_checkboxes.items():
-            cb.setChecked((not active and key == "pc_web") or key in active)
+        # 应用UA占比配置
+        try:
+            ratios = getattr(cfg, "random_ua_ratios", None)
+            if ratios and isinstance(ratios, dict):
+                self.random_ua_card.setRatios(ratios)
+            else:
+                self.random_ua_card.setRatios({"wechat": 33, "mobile": 33, "pc": 34})
+        except Exception as exc:
+            log_suppressed_exception("apply_config: self.random_ua_card.setRatios(ratios)", exc, level=logging.WARNING)
+            self.random_ua_card.setRatios({"wechat": 33, "mobile": 33, "pc": 34})
+
         self._sync_random_ua(self.random_ua_switch.isChecked())
         self.fail_stop_switch.setChecked(cfg.fail_stop_enabled)
         self.pause_on_aliyun_switch.setChecked(getattr(cfg, "pause_on_aliyun_captcha", True))

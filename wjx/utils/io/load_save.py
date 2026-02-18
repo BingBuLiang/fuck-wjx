@@ -56,6 +56,7 @@ def get_assets_directory() -> str:
 __all__ = [
     "_sanitize_filename",
     "_select_user_agent_from_keys",
+    "_select_user_agent_from_ratios",
     "build_default_config_filename",
     "RuntimeConfig",
     "serialize_question_entry",
@@ -88,6 +89,48 @@ def _select_user_agent_from_keys(selected_keys: List[str]) -> Tuple[Optional[str
     if not pool:
         return None, None
     key = random.choice(pool)
+    preset = USER_AGENT_PRESETS.get(key) or {}
+    return preset.get("ua"), preset.get("label")
+
+
+def _select_user_agent_from_ratios(ratios: Dict[str, int]) -> Tuple[Optional[str], Optional[str]]:
+    """
+    根据设备类型占比选择 User-Agent
+
+    Args:
+        ratios: 设备类型占比字典，格式为 {"wechat": 33, "mobile": 33, "pc": 34}
+                - wechat: 微信访问（安卓微信）
+                - mobile: 手机访问（安卓手机浏览器）
+                - pc: 链接访问（电脑网页端）
+
+    Returns:
+        (ua, label) 元组
+    """
+    # 映射设备类型到UA预设键
+    device_to_ua_keys = {
+        "wechat": ["wechat_android"],
+        "mobile": ["mobile_android"],
+        "pc": ["pc_web"],
+    }
+
+    # 先按占比选择设备类型
+    weighted_devices = []
+    for device_type, weight in ratios.items():
+        if weight > 0:
+            weighted_devices.extend([device_type] * weight)
+
+    if not weighted_devices:
+        return None, None
+
+    # 随机选择设备类型
+    device_type = random.choice(weighted_devices)
+
+    # 从该设备类型的UA键中随机选一个
+    ua_keys = device_to_ua_keys.get(device_type, [])
+    if not ua_keys:
+        return None, None
+
+    key = random.choice(ua_keys)
     preset = USER_AGENT_PRESETS.get(key) or {}
     return preset.get("ua"), preset.get("label")
 
@@ -130,6 +173,7 @@ class RuntimeConfig:
     proxy_area_code: Optional[str] = None
     random_ua_enabled: bool = False
     random_ua_keys: List[str] = field(default_factory=lambda: list(DEFAULT_RANDOM_UA_KEYS))
+    random_ua_ratios: Dict[str, int] = field(default_factory=lambda: {"wechat": 33, "mobile": 33, "pc": 34})  # 设备类型占比
     fail_stop_enabled: bool = True
     pause_on_aliyun_captcha: bool = True
     debug_mode: bool = False
@@ -364,6 +408,24 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     config.random_ua_enabled = bool(raw.get("random_ua_enabled") if "random_ua_enabled" in raw else legacy_ua.get("enabled"))
     selected_ua_keys = raw.get("random_ua_keys") if "random_ua_keys" in raw else legacy_ua.get("selected")
     config.random_ua_keys = _filter_valid_user_agent_keys(selected_ua_keys or [])
+
+    # random UA ratios: 设备类型占比配置
+    raw_ratios = raw.get("random_ua_ratios")
+    if isinstance(raw_ratios, dict):
+        # 验证占比总和是否为100
+        total = sum(_as_int(v, 0) for v in raw_ratios.values())
+        if total == 100:
+            config.random_ua_ratios = {
+                "wechat": _as_int(raw_ratios.get("wechat"), 33),
+                "mobile": _as_int(raw_ratios.get("mobile"), 33),
+                "pc": _as_int(raw_ratios.get("pc"), 34),
+            }
+        else:
+            # 占比不合法，使用默认值
+            config.random_ua_ratios = {"wechat": 33, "mobile": 33, "pc": 34}
+    else:
+        config.random_ua_ratios = {"wechat": 33, "mobile": 33, "pc": 34}
+
     config.fail_stop_enabled = bool(raw.get("fail_stop_enabled", True))
     config.pause_on_aliyun_captcha = bool(raw.get("pause_on_aliyun_captcha", True))
     config.debug_mode = bool(raw.get("debug_mode", False))

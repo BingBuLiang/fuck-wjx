@@ -357,6 +357,20 @@ class ResultPage(QWidget):
 
         v.addWidget(_Divider(card))
 
+        # 信度指标（按维度）
+        reliability_label = StrongBodyLabel("内部一致性信度（按维度）", card)
+        reliability_label.setStyleSheet("font-size: 14px; margin-bottom: 8px;")
+        v.addWidget(reliability_label)
+
+        # 维度信度容器（动态填充）
+        self._dimensions_container = QWidget(card)
+        self._dimensions_layout = QVBoxLayout(self._dimensions_container)
+        self._dimensions_layout.setContentsMargins(0, 0, 0, 0)
+        self._dimensions_layout.setSpacing(12)
+        v.addWidget(self._dimensions_container)
+
+        v.addWidget(_Divider(card))
+
         # 效度指标（全量）
         validity_label = StrongBodyLabel("结构效度（全量）", card)
         validity_label.setStyleSheet("font-size: 14px; margin-bottom: 8px;")
@@ -374,20 +388,6 @@ class ResultPage(QWidget):
         validity_metrics_layout.addStretch(1)
 
         v.addLayout(validity_metrics_layout)
-
-        v.addWidget(_Divider(card))
-
-        # 信度指标（按维度）
-        reliability_label = StrongBodyLabel("内部一致性信度（按维度）", card)
-        reliability_label.setStyleSheet("font-size: 14px; margin-bottom: 8px;")
-        v.addWidget(reliability_label)
-
-        # 维度信度容器（动态填充）
-        self._dimensions_container = QWidget(card)
-        self._dimensions_layout = QVBoxLayout(self._dimensions_container)
-        self._dimensions_layout.setContentsMargins(0, 0, 0, 0)
-        self._dimensions_layout.setSpacing(12)
-        v.addWidget(self._dimensions_container)
 
         # 初始状态
         self._reset_analysis_card()

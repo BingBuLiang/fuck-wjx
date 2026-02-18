@@ -482,8 +482,13 @@ class DashboardPage(QWidget):
         if not url:
             self._toast("请粘贴问卷链接", "warning")
             return
+        # 第一层检测：是否为问卷星域名
         if not self._is_wjx_domain(url):
             self._toast("仅支持问卷星链接", "error")
+            return
+        # 第二层检测：是否为问卷域名（排除投票和考试）
+        if not self._is_survey_domain(url):
+            self._toast("不支持投票与考试链接", "error")
             return
         # 使用进度消息条显示解析状态，duration=-1 表示不自动关闭
         self._toast("正在解析问卷...", "info", duration=-1, show_progress=True)
@@ -520,7 +525,7 @@ class DashboardPage(QWidget):
 
     @staticmethod
     def _is_wjx_domain(url: str) -> bool:
-        """前端轻量域名白名单：wjx.cn 及其子域。"""
+        """前端轻量域名白名单：wjx.top、wjx.cn、wjx.com 及其子域。"""
         if not url:
             return False
         text = str(url).strip()
@@ -533,7 +538,30 @@ class DashboardPage(QWidget):
         except Exception:
             return False
         host = (parsed.netloc or "").split(":", 1)[0].lower()
-        return bool(host == "wjx.cn" or host.endswith(".wjx.cn"))
+        # 支持 wjx.top、wjx.cn、wjx.com 及其子域名
+        allowed_domains = ["wjx.top", "wjx.cn", "wjx.com"]
+        for domain in allowed_domains:
+            if host == domain or host.endswith(f".{domain}"):
+                return True
+        return False
+
+    @staticmethod
+    def _is_survey_domain(url: str) -> bool:
+        """检查是否为问卷域名（v.wjx.cn 及其子域），排除投票和考试链接。"""
+        if not url:
+            return False
+        text = str(url).strip()
+        if not text:
+            return False
+        candidate = text if "://" in text else f"http://{text}"
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(candidate)
+        except Exception:
+            return False
+        host = (parsed.netloc or "").split(":", 1)[0].lower()
+        # 只接受 v.wjx.cn 及其子域名（问卷链接）
+        return bool(host == "v.wjx.cn" or host.endswith(".v.wjx.cn"))
 
     def _on_show_config_list(self):
         try:

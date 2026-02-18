@@ -41,8 +41,24 @@ _MIN_ITEMS = 2
 
 
 @dataclass
+class DimensionInfo:
+    """单个维度的信度分析结果
+
+    Attributes:
+        dimension_name: 维度名称（如"满意度"、"信任感"等）
+        question_nums: 归属该维度的题号列表
+        cronbach_alpha: 该维度的 Cronbach's Alpha 系数
+        item_count: 该维度的题目数（变量数）
+    """
+    dimension_name: str
+    question_nums: List[int]
+    cronbach_alpha: Optional[float] = None
+    item_count: int = 0
+
+
+@dataclass
 class FactorInfo:
-    """单个因子的详细信息
+    """单个因子的详细信息（已废弃，保留用于向后兼容）
 
     Attributes:
         factor_id: 因子编号（从 1 开始）
@@ -65,16 +81,19 @@ class AnalysisResult:
     """统计分析结果
 
     Attributes:
-        cronbach_alpha: 全量 Cronbach's Alpha 系数，None 表示无法计算
-        kmo_value: KMO 检验值，None 表示无法计算
-        bartlett_chi2: Bartlett 球形检验卡方值
-        bartlett_p: Bartlett 球形检验 p 值
+        cronbach_alpha: 全量 Cronbach's Alpha 系数（已废弃，保留向后兼容），None 表示无法计算
+        kmo_value: KMO 检验值（全量），None 表示无法计算
+        bartlett_chi2: Bartlett 球形检验卡方值（全量）
+        bartlett_p: Bartlett 球形检验 p 值（全量）
         sample_count: 用于分析的样本数
         item_count: 用于分析的题目数（变量数）
         item_columns: 参与分析的题号列表
         error: 错误信息，None 表示成功
 
-        # EFA 相关字段
+        # 维度分析相关字段（新）
+        dimensions: 各维度的信度分析结果列表
+
+        # EFA 相关字段（已废弃，保留向后兼容）
         efa_performed: 是否成功执行了探索性因子分析
         n_factors: 提取的因子数量
         factors: 各因子的详细信息列表
@@ -91,7 +110,10 @@ class AnalysisResult:
     item_columns: List[int] = field(default_factory=list)
     error: Optional[str] = None
 
-    # EFA 相关字段
+    # 维度分析相关字段
+    dimensions: List[DimensionInfo] = field(default_factory=list)
+
+    # EFA 相关字段（已废弃）
     efa_performed: bool = False
     n_factors: int = 0
     factors: List[FactorInfo] = field(default_factory=list)
@@ -553,14 +575,65 @@ def calculate_factor_alphas(df: pd.DataFrame, factor_assignment: Dict[int, List[
     return factor_alphas
 
 
-def run_analysis(jsonl_path: str) -> AnalysisResult:
+def calculate_dimension_alphas(df: pd.DataFrame, dimension_map: Dict[str, List[int]]) -> List[DimensionInfo]:
+    """按维度分组计算 Cronbach's Alpha
+
+    Args:
+        df: 得分矩阵（行=样本，列=题目，列名如 "q1", "q2", "q6_0", "q6_1"）
+        dimension_map: 维度映射字典 {dimension_name: [question_nums]}
+
+    Returns:
+        各维度的信度分析结果列表
+    """
+    dimension_results: List[DimensionInfo] = []
+
+    for dimension_name, q_nums in dimension_map.items():
+        # 构建该维度的子矩阵
+        # 需要找到所有匹配的列，包括矩阵题的子行（如 q6_0, q6_1）
+        col_names = []
+        for q in q_nums:
+            # 查找所有以 "q{q}" 开头的列（包括 q6, q6_0, q6_1 等）
+            matching_cols = [c for c in df.columns if c == f"q{q}" or c.startswith(f"q{q}_")]
+            col_names.extend(matching_cols)
+
+        item_count = len(col_names)
+
+        # 如果题目数不足，记录但不计算 Alpha
+        if item_count < _MIN_ITEMS:
+            dimension_results.append(DimensionInfo(
+                dimension_name=dimension_name,
+                question_nums=sorted(q_nums),
+                cronbach_alpha=None,
+                item_count=item_count
+            ))
+            continue
+
+        df_dimension = df[col_names]
+        alpha = calculate_cronbach_alpha(df_dimension)
+
+        dimension_results.append(DimensionInfo(
+            dimension_name=dimension_name,
+            question_nums=sorted(q_nums),
+            cronbach_alpha=alpha,
+            item_count=item_count
+        ))
+
+    return dimension_results
+
+
+def run_analysis(jsonl_path: str, dimension_map: Optional[Dict[str, List[int]]] = None) -> AnalysisResult:
     """执行完整的统计分析（入口函数）
 
     从 JSONL 文件读取数据，构建得分矩阵，计算信度和效度。
+    - 结构检验（KMO、Bartlett）：全量计算
+    - 信度（Cronbach's Alpha）：按维度分组计算
+
     这个函数设计为在后台线程中调用，不会阻塞 GUI。
 
     Args:
         jsonl_path: 原始答卷 JSONL 文件路径
+        dimension_map: 维度映射字典 {dimension_name: [question_nums]}，
+                      如果为 None，则所有题目归为"未分组"维度
 
     Returns:
         AnalysisResult 包含所有分析结果
@@ -598,13 +671,7 @@ def run_analysis(jsonl_path: str) -> AnalysisResult:
         result.error = f"适合分析的题目不足（当前 {result.item_count} 道，至少需要 {_MIN_ITEMS} 道）"
         return result
 
-    # 3. 计算信度（Cronbach's Alpha - 全量）
-    try:
-        result.cronbach_alpha = calculate_cronbach_alpha(df)
-    except Exception as exc:
-        log_suppressed_exception("run_analysis: result.cronbach_alpha = calculate_cronbach_alpha(df)", exc, level=logging.WARNING)
-
-    # 4. 计算效度（KMO + Bartlett）
+    # 3. 计算效度（KMO + Bartlett - 全量）
     try:
         kmo, chi2, p = calculate_validity(df)
         result.kmo_value = kmo
@@ -613,68 +680,17 @@ def run_analysis(jsonl_path: str) -> AnalysisResult:
     except Exception as exc:
         log_suppressed_exception("run_analysis: kmo, chi2, p = calculate_validity(df)", exc, level=logging.WARNING)
 
-    # 5. 执行探索性因子分析（EFA）
+    # 4. 按维度计算信度（Cronbach's Alpha）
     try:
-        n_factors, eigenvalues, loadings_df = perform_efa(df)
+        # 如果没有提供维度映射，则将所有题目归为"未分组"
+        if dimension_map is None or not dimension_map:
+            from wjx.utils.app.config import DIMENSION_UNGROUPED
+            dimension_map = {DIMENSION_UNGROUPED: question_nums}
 
-        # 保存特征值（即使 EFA 失败也可能有特征值）
-        if eigenvalues is not None:
-            result.eigenvalues = eigenvalues
-
-        # 如果成功提取多个因子，进行分维度分析
-        if n_factors is not None and n_factors > 1 and loadings_df is not None:
-            result.efa_performed = True
-            result.n_factors = n_factors
-            result.loadings_matrix = loadings_df
-
-            # 计算总方差解释率
-            if eigenvalues:
-                total_variance = sum(eigenvalues)
-                explained_variance = sum(eigenvalues[:n_factors])
-                result.total_variance_explained = (explained_variance / total_variance) * 100
-
-            # 分配题目到各因子
-            factor_assignment = assign_questions_to_factors(loadings_df, question_nums)
-
-            # 计算各因子的 Alpha
-            factor_alphas = calculate_factor_alphas(df, factor_assignment)
-
-            # 构建 FactorInfo 列表
-            for factor_id in sorted(factor_assignment.keys()):
-                q_nums = factor_assignment[factor_id]
-
-                # 生成因子名称（如 "Q1-Q3 维度"）
-                if len(q_nums) == 1:
-                    factor_name = f"Q{q_nums[0]} 维度"
-                else:
-                    factor_name = f"Q{q_nums[0]}-Q{q_nums[-1]} 维度"
-
-                # 获取该因子的特征值和方差解释率
-                eigenvalue = None
-                variance_explained = None
-                if eigenvalues and factor_id <= len(eigenvalues):
-                    eigenvalue = eigenvalues[factor_id - 1]
-                    total_variance = sum(eigenvalues)
-                    variance_explained = (eigenvalue / total_variance) * 100
-
-                factor_info = FactorInfo(
-                    factor_id=factor_id,
-                    factor_name=factor_name,
-                    question_nums=q_nums,
-                    cronbach_alpha=factor_alphas.get(factor_id),
-                    eigenvalue=eigenvalue,
-                    variance_explained=variance_explained
-                )
-                result.factors.append(factor_info)
-
-            logging.info(f"EFA 分析完成：{n_factors} 个因子，总方差解释率 {result.total_variance_explained:.2f}%")
-        else:
-            # EFA 失败或只有 1 个因子，降级到全量分析
-            logging.info("EFA 未执行或只有单因子，使用全量 Alpha")
-            result.efa_performed = False
+        result.dimensions = calculate_dimension_alphas(df, dimension_map)
+        logging.info(f"维度分析完成：共 {len(result.dimensions)} 个维度")
 
     except Exception as e:
-        logging.warning(f"EFA 流程异常: {e}")
-        result.efa_performed = False
+        logging.warning(f"维度分析异常: {e}")
 
     return result

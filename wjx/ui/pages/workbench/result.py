@@ -2,7 +2,7 @@
 
 import os
 import logging
-from typing import Optional
+from typing import Optional, Dict, List
 
 from PySide6.QtCore import Qt, QThread, QObject, Signal, QSettings
 from PySide6.QtGui import QColor, QPainter, QBrush, QPen, QFont
@@ -58,12 +58,13 @@ class _AnalysisWorker(QObject):
     """后台线程中执行统计分析，避免阻塞 GUI"""
     finished = Signal(object)  # AnalysisResult
 
-    def __init__(self, jsonl_path: str) -> None:
+    def __init__(self, jsonl_path: str, dimension_map: Optional[Dict[str, List[int]]] = None) -> None:
         super().__init__()
         self._path = jsonl_path
+        self._dimension_map = dimension_map
 
     def run(self) -> None:
-        result = run_analysis(self._path)
+        result = run_analysis(self._path, self._dimension_map)
         self.finished.emit(result)
 
 
@@ -321,7 +322,7 @@ class ResultPage(QWidget):
         self._show_placeholder()
 
     def _build_analysis_card(self) -> SimpleCardWidget:
-        """信效度分析卡片：Cronbach's Alpha / KMO / Bartlett"""
+        """信效度分析卡片：按维度展示信度 + 全量效度"""
         card = SimpleCardWidget(self)
         v = QVBoxLayout(card)
         v.setContentsMargins(28, 16, 28, 16)
@@ -356,21 +357,37 @@ class ResultPage(QWidget):
 
         v.addWidget(_Divider(card))
 
-        # 三个指标水平排列
-        metrics_layout = QHBoxLayout()
-        metrics_layout.setSpacing(18)
+        # 效度指标（全量）
+        validity_label = StrongBodyLabel("结构效度（全量）", card)
+        validity_label.setStyleSheet("font-size: 14px; margin-bottom: 8px;")
+        v.addWidget(validity_label)
 
-        self._metric_alpha = _MetricWidget("Cronbach's α系数", card)
+        validity_metrics_layout = QHBoxLayout()
+        validity_metrics_layout.setSpacing(18)
+
         self._metric_kmo = _MetricWidget("KMO 检验", card)
         self._metric_bartlett = _MetricWidget("Bartlett 球形检验", card)
 
-        metrics_layout.addWidget(self._metric_alpha, 1)
-        metrics_layout.addWidget(_VerticalDivider(card))
-        metrics_layout.addWidget(self._metric_kmo, 1)
-        metrics_layout.addWidget(_VerticalDivider(card))
-        metrics_layout.addWidget(self._metric_bartlett, 1)
+        validity_metrics_layout.addWidget(self._metric_kmo, 1)
+        validity_metrics_layout.addWidget(_VerticalDivider(card))
+        validity_metrics_layout.addWidget(self._metric_bartlett, 1)
+        validity_metrics_layout.addStretch(1)
 
-        v.addLayout(metrics_layout)
+        v.addLayout(validity_metrics_layout)
+
+        v.addWidget(_Divider(card))
+
+        # 信度指标（按维度）
+        reliability_label = StrongBodyLabel("内部一致性信度（按维度）", card)
+        reliability_label.setStyleSheet("font-size: 14px; margin-bottom: 8px;")
+        v.addWidget(reliability_label)
+
+        # 维度信度容器（动态填充）
+        self._dimensions_container = QWidget(card)
+        self._dimensions_layout = QVBoxLayout(self._dimensions_container)
+        self._dimensions_layout.setContentsMargins(0, 0, 0, 0)
+        self._dimensions_layout.setSpacing(12)
+        v.addWidget(self._dimensions_container)
 
         # 初始状态
         self._reset_analysis_card()
@@ -383,9 +400,15 @@ class ResultPage(QWidget):
         self._analysis_sample_label.setText("")
         self._analysis_notice_label.setText("")
         self._analysis_notice_label.setVisible(False)
-        self._metric_alpha.set_unavailable("等待数据...")
         self._metric_kmo.set_unavailable("等待数据...")
         self._metric_bartlett.set_unavailable("等待数据...")
+
+        # 清空维度容器
+        while self._dimensions_layout.count():
+            item = self._dimensions_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
 
     def _show_analysis_notice(self, text: str) -> None:
         self._analysis_status_label.setText("")
@@ -670,9 +693,12 @@ class ResultPage(QWidget):
         self._analysis_status_label.setText("分析中...")
         self._analysis_status_label.setStyleSheet("color: #f59e0b;")
 
+        # 构建维度映射（从当前配置中提取）
+        dimension_map = self._build_dimension_map()
+
         # 在后台线程执行分析
         self._analysis_thread = QThread()
-        self._analysis_worker = _AnalysisWorker(jsonl_path)
+        self._analysis_worker = _AnalysisWorker(jsonl_path, dimension_map)
         self._analysis_worker.moveToThread(self._analysis_thread)
 
         self._analysis_thread.started.connect(self._analysis_worker.run)
@@ -680,6 +706,46 @@ class ResultPage(QWidget):
         self._analysis_worker.finished.connect(self._analysis_thread.quit)
 
         self._analysis_thread.start()
+
+    def _build_dimension_map(self) -> Optional[Dict[str, List[int]]]:
+        """从当前配置中构建维度映射"""
+        try:
+            from wjx.utils.io.load_save import load_config
+            from wjx.utils.app.config import DIMENSION_UNGROUPED
+
+            # 尝试加载当前配置
+            config = load_config()
+            if not config or not config.question_entries:
+                return None
+
+            dimension_map: Dict[str, List[int]] = {}
+
+            for entry in config.question_entries:
+                # 只统计适合信度分析的题型
+                if entry.question_type not in {"single", "scale", "score", "dropdown", "slider", "matrix"}:
+                    continue
+
+                q_num = entry.question_num
+                if q_num is None:
+                    continue
+
+                try:
+                    q_num_int = int(q_num)
+                except (ValueError, TypeError):
+                    continue
+
+                # 获取维度，未指定则归为"未分组"
+                dimension = entry.dimension if entry.dimension else DIMENSION_UNGROUPED
+
+                if dimension not in dimension_map:
+                    dimension_map[dimension] = []
+                dimension_map[dimension].append(q_num_int)
+
+            return dimension_map if dimension_map else None
+
+        except Exception as e:
+            logging.warning(f"构建维度映射失败: {e}")
+            return None
 
     def _cleanup_analysis_thread(self) -> None:
         """清理旧的分析线程"""
@@ -699,7 +765,6 @@ class ResultPage(QWidget):
         if result.error:
             self._analysis_status_label.setText(result.error)
             self._analysis_status_label.setStyleSheet("color: rgba(128,128,128,0.6);")
-            self._metric_alpha.set_unavailable(result.error)
             self._metric_kmo.set_unavailable(result.error)
             self._metric_bartlett.set_unavailable(result.error)
             return
@@ -711,27 +776,6 @@ class ResultPage(QWidget):
 
         # 将分析结果保存到当前统计数据中
         self._save_analysis_to_stats(result)
-
-        # 静默更新，不再弹出提示（避免每提交一份就弹一次）
-        # 用户可以在需要时手动点击"导出统计"按钮
-
-        # ── Cronbach's Alpha ──
-        if result.cronbach_alpha is not None:
-            alpha = result.cronbach_alpha
-            if alpha >= 0.9:
-                color, desc = "#22c55e", "优秀"
-            elif alpha >= 0.8:
-                color, desc = "#22c55e", "良好"
-            elif alpha >= 0.7:
-                color, desc = "#f59e0b", "可接受"
-            elif alpha >= 0.6:
-                color, desc = "#f59e0b", "勉强可接受"
-            else:
-                color, desc = "#ef4444", "较差"
-
-            self._metric_alpha.set_value(f"{alpha:.3f}", color, desc)
-        else:
-            self._metric_alpha.set_unavailable("数据不足，无法计算")
 
         # ── KMO ──
         if result.kmo_value is not None:
@@ -770,9 +814,82 @@ class ResultPage(QWidget):
                 p_text = f"{p:.4f}"
 
             display_text = f"p = {p_text}"
+            if chi2 is not None:
+                display_text = f"χ² = {chi2:.2f}, {display_text}"
+
             self._metric_bartlett.set_value(display_text, color, desc)
         else:
             self._metric_bartlett.set_unavailable("数据不足，无法计算")
+
+        # ── 按维度展示 Cronbach's Alpha ──
+        # 清空旧的维度组件
+        while self._dimensions_layout.count():
+            item = self._dimensions_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        if result.dimensions:
+            for dim_info in result.dimensions:
+                dim_widget = self._build_dimension_widget(dim_info)
+                self._dimensions_layout.addWidget(dim_widget)
+        else:
+            # 没有维度数据时显示提示
+            no_data_label = CaptionLabel("暂无维度信息", self._dimensions_container)
+            no_data_label.setStyleSheet("color: rgba(128,128,128,0.6);")
+            self._dimensions_layout.addWidget(no_data_label)
+
+    def _build_dimension_widget(self, dim_info) -> QWidget:
+        """构建单个维度的信度展示组件"""
+        from wjx.core.stats.analysis import DimensionInfo
+
+        widget = QWidget(self._dimensions_container)
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        # 维度名称
+        dim_name_label = BodyLabel(dim_info.dimension_name, widget)
+        dim_name_label.setStyleSheet("font-weight: 600; font-size: 13px;")
+        dim_name_label.setFixedWidth(120)
+        layout.addWidget(dim_name_label)
+
+        # 题目列表
+        q_nums_text = "、".join(f"Q{q}" for q in dim_info.question_nums)
+        q_nums_label = CaptionLabel(f"({q_nums_text})", widget)
+        q_nums_label.setStyleSheet("color: rgba(128,128,128,0.7);")
+        q_nums_label.setFixedWidth(200)
+        layout.addWidget(q_nums_label)
+
+        # Cronbach's Alpha 值
+        if dim_info.cronbach_alpha is not None:
+            alpha = dim_info.cronbach_alpha
+            if alpha >= 0.9:
+                color, desc = "#22c55e", "优秀"
+            elif alpha >= 0.8:
+                color, desc = "#22c55e", "良好"
+            elif alpha >= 0.7:
+                color, desc = "#f59e0b", "可接受"
+            elif alpha >= 0.6:
+                color, desc = "#f59e0b", "勉强可接受"
+            else:
+                color, desc = "#ef4444", "较差"
+
+            alpha_value_label = StrongBodyLabel(f"α = {alpha:.3f}", widget)
+            alpha_value_label.setStyleSheet(f"color: {color}; font-size: 16px;")
+            layout.addWidget(alpha_value_label)
+
+            alpha_desc_label = CaptionLabel(desc, widget)
+            alpha_desc_label.setStyleSheet(f"color: {color};")
+            layout.addWidget(alpha_desc_label)
+        else:
+            unavailable_label = CaptionLabel("数据不足，无法计算", widget)
+            unavailable_label.setStyleSheet("color: rgba(128,128,128,0.5);")
+            layout.addWidget(unavailable_label)
+
+        layout.addStretch(1)
+
+        return widget
 
     def _save_analysis_to_stats(self, result: AnalysisResult) -> None:
         """将信效度分析结果保存到统计数据中

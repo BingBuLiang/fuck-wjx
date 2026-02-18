@@ -260,6 +260,18 @@ QUESTION_TYPE_LABELS = {
 LOCATION_QUESTION_LABEL = "位置题"
 DEFAULT_FILL_TEXT = "无"  # 填空选项留空时的默认文本
 
+# ==================== 维度配置 ====================
+# 预设的常用维度列表（用户也可以自定义新维度）
+PRESET_DIMENSIONS = [
+    "满意度",
+    "信任感",
+    "使用意愿",
+    "感知价值",
+    "服务质量",
+    "产品质量",
+]
+DIMENSION_UNGROUPED = "未分组"  # 未指定维度的题目归为此组
+
 # ==================== 正则表达式配置 ====================
 _HTML_SPACE_RE = re.compile(r"\s+")
 _LNGLAT_PATTERN = re.compile(r"^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$")

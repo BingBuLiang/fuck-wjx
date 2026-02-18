@@ -78,6 +78,7 @@ class QuestionEntry:
     option_fill_texts: Optional[List[Optional[str]]] = None
     fillable_option_indices: Optional[List[int]] = None
     is_location: bool = False
+    dimension: Optional[str] = None  # 题目所属维度（如"满意度"、"信任感"等），None 表示未分组
 
     def summary(self) -> str:
         def _mode_text(mode: Optional[str]) -> str:

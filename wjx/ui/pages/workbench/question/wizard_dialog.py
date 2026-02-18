@@ -1,33 +1,174 @@
 """配置向导弹窗：用滑块快速设置权重/概率，编辑填空题答案。"""
 import copy
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QDialog,
+    QSizePolicy,
 )
 from qfluentwidgets import (
     ScrollArea,
     SubtitleLabel,
     BodyLabel,
+    CaptionLabel,
     CardWidget,
     PushButton,
     PrimaryPushButton,
     LineEdit,
     CheckBox,
+    PillPushButton,
+    TransparentPushButton,
+    FluentIcon,
 )
+from qfluentwidgets import FlowLayout
 
 from wjx.ui.widgets.no_wheel import NoWheelSlider
 from wjx.core.questions.config import QuestionEntry
-from wjx.utils.app.config import DEFAULT_FILL_TEXT
+from wjx.utils.app.config import DEFAULT_FILL_TEXT, PRESET_DIMENSIONS, DIMENSION_UNGROUPED
 from wjx.ui.helpers.ai_fill import ensure_ai_ready
 
 from .constants import _get_entry_type_label
 from .utils import _shorten_text, _apply_label_color, _bind_slider_input
 
+
+# ---------------------------------------------------------------------------
+# DimensionCard — 单个维度的卡片，内含 PillPushButton 多选过滤器
+# ---------------------------------------------------------------------------
+
+class DimensionCard(CardWidget):
+    """一个维度的配置卡片，使用 PillPushButton 多选题目。"""
+
+    dimensionChanged = Signal()   # 维度内容发生变化时发出
+    removeRequested = Signal(object)  # 请求删除自身
+
+    def __init__(
+        self,
+        dimension_name: str,
+        question_labels: List[str],
+        selected_indices: Set[int],
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.dimension_name = dimension_name
+        self._question_labels = question_labels
+        self._pills: List[PillPushButton] = []
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(16, 12, 16, 14)
+        root_layout.setSpacing(10)
+
+        # ---- 标题行 ----
+        header = QHBoxLayout()
+        header.setSpacing(8)
+
+        self.name_edit = LineEdit(self)
+        self.name_edit.setText(dimension_name)
+        self.name_edit.setPlaceholderText("维度名称")
+        self.name_edit.setMinimumWidth(120)
+        self.name_edit.setMaximumWidth(240)
+        self.name_edit.editingFinished.connect(self._on_name_edited)
+        header.addWidget(self.name_edit)
+
+        self.count_badge = CaptionLabel(self)
+        self._update_count_badge(len(selected_indices))
+        header.addWidget(self.count_badge)
+
+        header.addStretch(1)
+
+        # 全选 / 清空按钮
+        select_all_btn = TransparentPushButton("全选", self)
+        select_all_btn.setFixedHeight(28)
+        select_all_btn.clicked.connect(self._select_all)
+        header.addWidget(select_all_btn)
+
+        clear_btn = TransparentPushButton("清空", self)
+        clear_btn.setFixedHeight(28)
+        clear_btn.clicked.connect(self._clear_all)
+        header.addWidget(clear_btn)
+
+        del_btn = TransparentPushButton(FluentIcon.DELETE, "删除维度", self)
+        del_btn.setFixedHeight(28)
+        del_btn.clicked.connect(lambda: self.removeRequested.emit(self))
+        header.addWidget(del_btn)
+
+        root_layout.addLayout(header)
+
+        # ---- 多选过滤器区域 ----
+        self.flow = FlowLayout(needAni=True, isTight=True)
+        self.flow.setHorizontalSpacing(6)
+        self.flow.setVerticalSpacing(6)
+        self.flow.setContentsMargins(0, 0, 0, 0)
+        self.flow.setAnimation(250)
+
+        for i, label in enumerate(question_labels):
+            pill = PillPushButton(label, self)
+            pill.setCheckable(True)
+            pill.setChecked(i in selected_indices)
+            pill.setMinimumHeight(30)
+            pill.clicked.connect(self._on_pill_toggled)
+            self.flow.addWidget(pill)
+            self._pills.append(pill)
+
+        flow_container = QWidget(self)
+        flow_container.setLayout(self.flow)
+        root_layout.addWidget(flow_container)
+
+    # -- 公开接口 --
+
+    def get_name(self) -> str:
+        return self.name_edit.text().strip() or self.dimension_name
+
+    def get_selected_indices(self) -> Set[int]:
+        return {i for i, pill in enumerate(self._pills) if pill.isChecked()}
+
+    def set_pill_checked(self, idx: int, checked: bool, block_signal: bool = False):
+        if 0 <= idx < len(self._pills):
+            pill = self._pills[idx]
+            if block_signal:
+                pill.blockSignals(True)
+            pill.setChecked(checked)
+            if block_signal:
+                pill.blockSignals(False)
+        self._update_count_badge(len(self.get_selected_indices()))
+
+    # -- 内部 --
+
+    def _on_name_edited(self):
+        text = self.name_edit.text().strip()
+        if text:
+            self.dimension_name = text
+        self.dimensionChanged.emit()
+
+    def _on_pill_toggled(self):
+        self._update_count_badge(len(self.get_selected_indices()))
+        self.dimensionChanged.emit()
+
+    def _select_all(self):
+        for pill in self._pills:
+            pill.setChecked(True)
+        self._update_count_badge(len(self._pills))
+        self.dimensionChanged.emit()
+
+    def _clear_all(self):
+        for pill in self._pills:
+            pill.setChecked(False)
+        self._update_count_badge(0)
+        self.dimensionChanged.emit()
+
+    def _update_count_badge(self, count: int):
+        total = len(self._pills)
+        self.count_badge.setText(f"已选 {count}/{total} 题")
+        color = "#0078d4" if count > 0 else "#888888"
+        self.count_badge.setStyleSheet(f"color: {color}; font-size: 12px; margin-left: 4px;")
+
+
+# ---------------------------------------------------------------------------
+# QuestionWizardDialog — 主对话框
+# ---------------------------------------------------------------------------
 
 class QuestionWizardDialog(QDialog):
     """配置向导：用滑块快速设置权重/概率，编辑填空题答案。"""
@@ -110,7 +251,7 @@ class QuestionWizardDialog(QDialog):
         if survey_title:
             window_title = f"{window_title} - {_shorten_text(survey_title, 36)}"
         self.setWindowTitle(window_title)
-        self.resize(720, 640)
+        self.resize(900, 800)
         self.entries = entries
         self.info = info or []
         self.slider_map: Dict[int, List[NoWheelSlider]] = {}
@@ -122,6 +263,23 @@ class QuestionWizardDialog(QDialog):
         self._entry_snapshots: List[QuestionEntry] = [copy.deepcopy(entry) for entry in entries]
         self._has_content = False
 
+        # 构建题目标签列表（供维度卡片使用）
+        self._question_labels: List[str] = []
+        for idx, entry in enumerate(entries):
+            qnum = ""
+            title_text = ""
+            if idx < len(self.info):
+                qnum = str(self.info[idx].get("num") or "")
+                title_text = str(self.info[idx].get("title") or "")
+            num_str = qnum or str(idx + 1)
+            type_str = _get_entry_type_label(entry)
+            short_title = _shorten_text(title_text, 20) if title_text else ""
+            if short_title:
+                label = f"Q{num_str} {short_title}"
+            else:
+                label = f"Q{num_str}({type_str})"
+            self._question_labels.append(label)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(16)
@@ -131,6 +289,10 @@ class QuestionWizardDialog(QDialog):
         intro.setStyleSheet("font-size: 13px;")
         _apply_label_color(intro, "#666666", "#bfbfbf")
         layout.addWidget(intro)
+
+        # 维度设置区域
+        self._dimension_cards: List[DimensionCard] = []
+        self._build_dimension_section(layout)
 
         # 滚动区域
         scroll = ScrollArea(self)
@@ -152,7 +314,7 @@ class QuestionWizardDialog(QDialog):
             inner.addWidget(empty_label)
 
         inner.addStretch(1)
-        layout.addWidget(scroll, 1)
+        layout.addWidget(scroll, 3)
 
         # 底部按钮
         btn_row = QHBoxLayout()
@@ -168,6 +330,145 @@ class QuestionWizardDialog(QDialog):
 
         ok_btn.clicked.connect(self.accept)
         cancel_btn.clicked.connect(self.reject)
+
+    # ------------------------------------------------------------------ #
+    #  维度管理 — 新版 UI                                                  #
+    # ------------------------------------------------------------------ #
+
+    def _build_dimension_section(self, layout: QVBoxLayout) -> None:
+        """构建维度管理区域：可添加多个维度卡片，每个卡片内用 PillPushButton 选择题目。"""
+        section_card = CardWidget(self)
+        section_layout = QVBoxLayout(section_card)
+        section_layout.setContentsMargins(16, 12, 16, 14)
+        section_layout.setSpacing(10)
+
+        # 标题行
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        header.addWidget(SubtitleLabel("维度设置", section_card))
+        hint = BodyLabel("创建维度并用多选过滤器选择每个维度包含的题目", section_card)
+        hint.setStyleSheet("font-size: 12px;")
+        _apply_label_color(hint, "#666666", "#bfbfbf")
+        header.addWidget(hint)
+        header.addStretch(1)
+
+        add_dim_btn = PushButton(FluentIcon.ADD, "添加维度", section_card)
+        add_dim_btn.setFixedHeight(30)
+        add_dim_btn.clicked.connect(self._add_dimension)
+        header.addWidget(add_dim_btn)
+        section_layout.addLayout(header)
+
+        # 维度卡片容器（使用 ScrollArea 以防维度过多）
+        self._dim_scroll = ScrollArea(section_card)
+        self._dim_scroll.setWidgetResizable(True)
+        self._dim_scroll.setMinimumHeight(80)
+        self._dim_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._dim_scroll.enableTransparentBackground()
+
+        dim_container = QWidget(section_card)
+        self._dim_scroll.setWidget(dim_container)
+        self._dim_container_layout = QVBoxLayout(dim_container)
+        self._dim_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._dim_container_layout.setSpacing(10)
+
+        # 从 entries 中收集已有维度
+        existing_dims = self._collect_existing_dimensions()
+
+        if existing_dims:
+            for dim_name, indices in existing_dims.items():
+                self._create_dimension_card(dim_name, indices)
+        else:
+            # 没有已有维度时自动创建一个空白维度
+            pass  # 用户可以通过"添加维度"按钮添加
+
+        self._dim_container_layout.addStretch(1)
+        section_layout.addWidget(self._dim_scroll, 1)
+
+        # 未分组提示
+        self._ungrouped_label = CaptionLabel("", section_card)
+        self._ungrouped_label.setStyleSheet("font-size: 12px;")
+        _apply_label_color(self._ungrouped_label, "#888888", "#a6a6a6")
+        section_layout.addWidget(self._ungrouped_label)
+        self._update_ungrouped_hint()
+
+        layout.addWidget(section_card, 2)
+
+    def _collect_existing_dimensions(self) -> Dict[str, Set[int]]:
+        """从 entries 中收集已有的维度分组。"""
+        dims: Dict[str, Set[int]] = {}
+        for idx, entry in enumerate(self.entries):
+            dim = getattr(entry, "dimension", None)
+            if dim and dim != DIMENSION_UNGROUPED:
+                dim = str(dim).strip()
+                if dim:
+                    if dim not in dims:
+                        dims[dim] = set()
+                    dims[dim].add(idx)
+        return dims
+
+    def _create_dimension_card(self, name: str, selected: Set[int]) -> DimensionCard:
+        card = DimensionCard(name, self._question_labels, selected, parent=None)
+        card.dimensionChanged.connect(self._on_dimension_data_changed)
+        card.removeRequested.connect(self._remove_dimension_card)
+        # 插入到 stretch 之前
+        count = self._dim_container_layout.count()
+        insert_pos = max(0, count - 1)  # 在 stretch 之前
+        self._dim_container_layout.insertWidget(insert_pos, card)
+        self._dimension_cards.append(card)
+        self._update_ungrouped_hint()
+        return card
+
+    def _add_dimension(self) -> None:
+        """添加一个新的空白维度。"""
+        existing_names = {c.get_name() for c in self._dimension_cards}
+        # 从预设维度中找一个未使用的名称
+        new_name = ""
+        for preset in PRESET_DIMENSIONS:
+            if preset not in existing_names:
+                new_name = preset
+                break
+        if not new_name:
+            # 所有预设都用完了，生成一个编号名
+            idx = len(self._dimension_cards) + 1
+            while f"维度{idx}" in existing_names:
+                idx += 1
+            new_name = f"维度{idx}"
+        self._create_dimension_card(new_name, set())
+
+    def _remove_dimension_card(self, card: DimensionCard) -> None:
+        if card in self._dimension_cards:
+            self._dimension_cards.remove(card)
+            self._dim_container_layout.removeWidget(card)
+            card.deleteLater()
+            self._update_ungrouped_hint()
+
+    def _on_dimension_data_changed(self) -> None:
+        """任何维度卡片的内容发生变化时更新未分组提示。"""
+        self._update_ungrouped_hint()
+
+    def _update_ungrouped_hint(self) -> None:
+        """更新"未分组题目"提示文本。"""
+        all_assigned: Set[int] = set()
+        for card in self._dimension_cards:
+            all_assigned |= card.get_selected_indices()
+        total = len(self.entries)
+        ungrouped_count = total - len(all_assigned)
+        if ungrouped_count > 0:
+            ungrouped_indices = sorted(set(range(total)) - all_assigned)
+            if len(ungrouped_indices) <= 8:
+                nums = ", ".join(f"Q{i+1}" for i in ungrouped_indices)
+                self._ungrouped_label.setText(f"未分组的题目 ({ungrouped_count} 题)：{nums}")
+            else:
+                self._ungrouped_label.setText(f"未分组的题目：{ungrouped_count} 题")
+        else:
+            if total > 0:
+                self._ungrouped_label.setText("✓ 所有题目均已分组")
+            else:
+                self._ungrouped_label.setText("")
+
+    # ------------------------------------------------------------------ #
+    #  题目配置卡片 — 保持与之前兼容（去掉每题的维度下拉框）                     #
+    # ------------------------------------------------------------------ #
 
     def _build_entry_card(self, idx: int, entry: QuestionEntry, container: QWidget, inner: QVBoxLayout) -> None:
         """构建单个题目的配置卡片。"""
@@ -207,6 +508,7 @@ class QuestionWizardDialog(QDialog):
         type_label = BodyLabel(f"[{_get_entry_type_label(entry)}]", card)
         type_label.setStyleSheet("color: #0078d4; font-size: 12px;")
         header.addWidget(type_label)
+
         header.addStretch(1)
         if entry.question_type == "slider":
             slider_note = BodyLabel("目标值会自动做小幅随机抖动，避免每份都填同一个数", card)
@@ -551,6 +853,10 @@ class QuestionWizardDialog(QDialog):
         self._restore_entries()
         super().reject()
 
+    # ------------------------------------------------------------------ #
+    #  结果获取接口                                                        #
+    # ------------------------------------------------------------------ #
+
     def get_results(self) -> Dict[int, Any]:
         """获取滑块权重/概率结果"""
         result: Dict[int, Any] = {}
@@ -583,3 +889,25 @@ class QuestionWizardDialog(QDialog):
     def get_ai_flags(self) -> Dict[int, bool]:
         """获取填空题是否启用 AI"""
         return {idx: cb.isChecked() for idx, cb in self.ai_check_map.items()}
+
+    def get_dimension_results(self) -> Dict[int, str]:
+        """获取维度/分组结果 — 从维度卡片的多选状态推导每个题目的维度归属。"""
+        result: Dict[int, str] = {}
+        total = len(self.entries)
+
+        # 倒序遍历维度卡片，后创建的维度优先级更高（处理重复选中的情况）
+        # 但一般用户不会重复选同一题到多个维度，如果重复则以第一个命中为准
+        assigned: Set[int] = set()
+        for card in self._dimension_cards:
+            dim_name = card.get_name()
+            for idx in card.get_selected_indices():
+                if idx not in assigned and 0 <= idx < total:
+                    result[idx] = dim_name
+                    assigned.add(idx)
+
+        # 未分组的题目设置为 DIMENSION_UNGROUPED
+        for idx in range(total):
+            if idx not in result:
+                result[idx] = DIMENSION_UNGROUPED
+
+        return result

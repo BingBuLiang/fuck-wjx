@@ -20,13 +20,14 @@ from qfluentwidgets import (
     PushButton,
     PrimaryPushButton,
     ComboBox,
+    EditableComboBox,
     LineEdit,
     CheckBox,
 )
 
 from wjx.ui.widgets.no_wheel import NoWheelSlider, NoWheelSpinBox
 from wjx.core.questions.config import QuestionEntry
-from wjx.utils.app.config import DEFAULT_FILL_TEXT
+from wjx.utils.app.config import DEFAULT_FILL_TEXT, PRESET_DIMENSIONS, DIMENSION_UNGROUPED
 from wjx.ui.helpers.ai_fill import ensure_ai_ready
 
 from .constants import TYPE_CHOICES, STRATEGY_CHOICES, _get_type_label
@@ -94,6 +95,21 @@ class QuestionAddDialog(QDialog):
         self.strategy_combo.setCurrentIndex(0)
         strategy_row.addWidget(self.strategy_combo, 1)
         base_layout.addWidget(self.strategy_row_widget)
+
+        # 所属维度
+        dimension_row_widget = QWidget(base_card)
+        dimension_row = QHBoxLayout(dimension_row_widget)
+        dimension_row.setContentsMargins(0, 0, 0, 0)
+        dimension_row.setSpacing(8)
+        dimension_row.addWidget(BodyLabel("所属维度：", base_card))
+        self.dimension_combo = EditableComboBox(base_card)
+        self.dimension_combo.addItem(DIMENSION_UNGROUPED, DIMENSION_UNGROUPED)
+        for dim in PRESET_DIMENSIONS:
+            self.dimension_combo.addItem(dim, dim)
+        self.dimension_combo.setText(DIMENSION_UNGROUPED)
+        self.dimension_combo.setPlaceholderText("选择或输入维度名称")
+        dimension_row.addWidget(self.dimension_combo, 1)
+        base_layout.addWidget(dimension_row_widget)
 
         # 选项数量 / 列数
         self.option_row_widget = QWidget(base_card)
@@ -629,6 +645,11 @@ class QuestionAddDialog(QDialog):
         option_count = self._current_option_count()
         rows = self._current_row_count()
 
+        # 获取维度信息
+        dimension = self.dimension_combo.currentText().strip()
+        if not dimension or dimension == DIMENSION_UNGROUPED:
+            dimension = None
+
         if q_type in ("text", "multi_text"):
             self._sync_text_answers_from_edits()
             texts = [t for t in (self._text_answers or []) if t]
@@ -643,6 +664,7 @@ class QuestionAddDialog(QDialog):
                 custom_weights=None,
                 question_num=str(self._entry_index),
                 ai_enabled=bool(self._ai_enabled) if q_type == "text" else False,
+                dimension=dimension,
             )
         if q_type == "order":
             return QuestionEntry(
@@ -654,6 +676,7 @@ class QuestionAddDialog(QDialog):
                 distribution_mode="random",
                 custom_weights=None,
                 question_num=str(self._entry_index),
+                dimension=dimension,
             )
         if q_type == "matrix":
             matrix_strategy = self._resolve_matrix_strategy()
@@ -670,6 +693,7 @@ class QuestionAddDialog(QDialog):
                     distribution_mode="custom",
                     custom_weights=cast(Any, weights),
                     question_num=str(self._entry_index),
+                    dimension=dimension,
                 )
             return QuestionEntry(
                 question_type=q_type,
@@ -680,6 +704,7 @@ class QuestionAddDialog(QDialog):
                 distribution_mode="random",
                 custom_weights=None,
                 question_num=str(self._entry_index),
+                dimension=dimension,
             )
 
         strategy = self._resolve_strategy()
@@ -703,6 +728,7 @@ class QuestionAddDialog(QDialog):
             distribution_mode=strategy,
             custom_weights=custom_weights,
             question_num=str(self._entry_index),
+            dimension=dimension,
         )
 
     def _on_accept(self) -> None:

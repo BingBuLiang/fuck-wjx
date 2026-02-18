@@ -1021,6 +1021,10 @@ class DashboardPage(QWidget):
             if 0 <= idx < len(entries):
                 entry = entries[idx]
                 entry.ai_enabled = bool(enabled) if entry.question_type == "text" else False
+        dimension_updates = dlg.get_dimension_results()
+        for idx, dimension in dimension_updates.items():
+            if 0 <= idx < len(entries):
+                entries[idx].dimension = dimension
 
     def _run_question_wizard(self, entries: List[QuestionEntry], info: List[Dict[str, Any]], survey_title: Optional[str] = None) -> bool:
         if not entries:

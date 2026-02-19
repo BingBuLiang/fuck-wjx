@@ -2,20 +2,17 @@
 import os
 import copy
 import threading
-import time
-from typing import List, Dict, Any, Optional
+from typing import Optional
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
-from PySide6.QtCore import Qt, QObject, QEvent, Signal, QMimeData, QTimer
-from PySide6.QtGui import QContextMenuEvent, QDragEnterEvent, QDropEvent, QClipboard
+from PySide6.QtCore import Qt, QObject, QEvent, Signal
+from PySide6.QtGui import QContextMenuEvent
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QDialog,
-    QTableWidgetItem,
     QFileDialog,
 )
 from qfluentwidgets import (
@@ -38,31 +35,23 @@ from qfluentwidgets import (
     InfoBarPosition,
     InfoBarIcon,
     HyperlinkButton,
-    ComboBox,
     MessageBox,
 )
 from qfluentwidgets import RoundMenu
 
+from wjx.ui.pages.workbench.dashboard_clipboard import DashboardClipboardMixin
+from wjx.ui.pages.workbench.dashboard_entries import DashboardEntriesMixin
+from wjx.ui.pages.workbench.dashboard_random_ip import DashboardRandomIPMixin
 from wjx.ui.widgets import ConfigDrawer
 from wjx.ui.widgets.full_width_infobar import FullWidthInfoBar
-from wjx.ui.widgets.no_wheel import NoWheelSlider, NoWheelSpinBox
+from wjx.ui.widgets.no_wheel import NoWheelSpinBox
 from wjx.ui.controller import RunController
-from wjx.ui.dialogs.card_unlock import CardUnlockDialog
-from wjx.ui.dialogs.contact import ContactDialog
-from wjx.ui.pages.workbench.question import QuestionPage, QuestionWizardDialog, TYPE_CHOICES, STRATEGY_CHOICES, _get_entry_type_label
+from wjx.ui.pages.workbench.question import QuestionPage
 from wjx.ui.pages.workbench.runtime import RuntimePage
 from wjx.utils.io.load_save import RuntimeConfig, build_default_config_filename, get_runtime_directory
-from wjx.utils.io.qrcode_utils import decode_qrcode
-from wjx.core.questions.config import QuestionEntry, configure_probabilities
-from wjx.utils.app.config import DEFAULT_FILL_TEXT
-from wjx.utils.system.registry_manager import RegistryManager
+from wjx.core.questions.config import configure_probabilities
 from wjx.network.proxy import (
-    get_status,
-    _format_status_payload,
-    on_random_ip_toggle,
     refresh_ip_counter_display,
-    _validate_card,
-    get_random_ip_counter_snapshot_local,
 )
 
 
@@ -83,50 +72,12 @@ class _PasteOnlyMenu(QObject):
         return super().eventFilter(watched, event)
 
 
-def _question_summary(entry: QuestionEntry) -> str:
-    """生成题目配置摘要"""
-    if entry.question_type in ("text", "multi_text"):
-        texts = entry.texts or []
-        if texts:
-            summary = f"答案: {' | '.join(texts[:2])}"
-            if len(texts) > 2:
-                summary += f" (+{len(texts)-2})"
-            if entry.question_type == "text" and getattr(entry, "ai_enabled", False):
-                summary += " | AI"
-            return summary
-        summary = "答案: 无"
-        if entry.question_type == "text" and getattr(entry, "ai_enabled", False):
-            summary += " | AI"
-        return summary
-    if entry.question_type == "matrix":
-        rows = max(1, int(entry.rows or 1))
-        cols = max(1, int(entry.option_count or 1))
-        if isinstance(entry.custom_weights, list) or isinstance(entry.probabilities, list):
-            return f"{rows} 行 × {cols} 列 - 按行配比"
-        return f"{rows} 行 × {cols} 列 - 完全随机"
-    if entry.question_type == "order":
-        return "排序题 - 自动随机排序"
-    elif entry.custom_weights:
-        weights = entry.custom_weights
-        if entry.question_type == "multiple":
-            summary = f"自定义概率: {','.join(f'{int(w)}%' for w in weights[:4])}"
-        else:
-            summary = f"自定义配比: {','.join(str(int(w)) for w in weights[:4])}"
-        if len(weights) > 4:
-            summary += "..."
-        return summary
-    else:
-        strategy = entry.distribution_mode or "random"
-        if strategy not in ("random", "custom"):
-            strategy = "random"
-        if getattr(entry, "probabilities", None) == -1:
-            strategy = "random"
-        if entry.question_type == "multiple":
-            return "完全随机" if strategy == "random" else "自定义概率"
-        return "完全随机" if strategy == "random" else "自定义配比"
-
-
-class DashboardPage(QWidget):
+class DashboardPage(
+    DashboardClipboardMixin,
+    DashboardRandomIPMixin,
+    DashboardEntriesMixin,
+    QWidget,
+):
     """主页：左侧配置 + 底部状态，不再包含日志。"""
 
     _ipBalanceChecked = Signal(int)  # 发送剩余IP数信号
@@ -277,7 +228,7 @@ class DashboardPage(QWidget):
         spin_row.addStretch(1)
         exec_layout.addLayout(spin_row)
 
-        self.random_ip_cb = CheckBox("启用随机 IP 提交", self)
+        self.random_ip_cb = CheckBox("启用随机 IP 提交（在触发智能验证时开启）", self)
         exec_layout.addWidget(self.random_ip_cb)
         ip_row = QHBoxLayout()
         ip_row.setSpacing(8)
@@ -417,199 +368,6 @@ class DashboardPage(QWidget):
         except Exception as exc:
             log_suppressed_exception("resizeEvent: self.config_drawer.sync_to_parent()", exc, level=logging.WARNING)
 
-    def eventFilter(self, watched, event):
-        """处理拖放和粘贴事件"""
-        if watched in getattr(self, "_link_entry_widgets", ()):
-            # 处理拖入事件
-            if event.type() == QEvent.Type.DragEnter:
-                if isinstance(event, QDragEnterEvent):
-                    mime_data = event.mimeData()
-                    # 接受图片文件或图片数据
-                    if mime_data.hasUrls() or mime_data.hasImage():
-                        event.acceptProposedAction()
-                        return True
-                return False
-
-            # 处理放下事件
-            elif event.type() == QEvent.Type.Drop:
-                if isinstance(event, QDropEvent):
-                    mime_data = event.mimeData()
-
-                    # 优先处理文件路径
-                    if mime_data.hasUrls():
-                        urls = mime_data.urls()
-                        if urls:
-                            file_path = urls[0].toLocalFile()
-                            if file_path and os.path.exists(file_path):
-                                # 检查是否为图片文件
-                                if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
-                                    self._process_qrcode_image(file_path)
-                                    event.acceptProposedAction()
-                                    return True
-
-                    # 处理直接拖入的图片数据（兼容微信 MIME）
-                    pil_image = self._extract_pil_image_from_clipboard(mime_data)
-                    if pil_image is not None:
-                        self._process_qrcode_image(pil_image)
-                        event.acceptProposedAction()
-                        return True
-                return False
-
-            # 处理粘贴事件（Ctrl+V）
-            elif event.type() == QEvent.Type.KeyPress:
-                from PySide6.QtGui import QKeyEvent
-                from PySide6.QtCore import Qt
-                if isinstance(event, QKeyEvent):
-                    if event.key() == Qt.Key.Key_V and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-                        from PySide6.QtWidgets import QApplication
-                        clipboard = QApplication.clipboard()
-                        mime_data = clipboard.mimeData(QClipboard.Mode.Clipboard)
-                        # 剪贴板有图片时拦截粘贴，转为二维码解析（兼容微信剪贴板格式）
-                        pil_image = self._extract_pil_image_from_clipboard(mime_data, clipboard)
-                        if pil_image is not None:
-                            try:
-                                # 递增 ticket，使 _on_clipboard_changed 的延迟任务失效，避免重复触发
-                                self._clipboard_parse_ticket += 1
-                                self._process_qrcode_image(pil_image)
-                            except Exception:
-                                pass
-                            return True  # 拦截默认粘贴行为
-                        # 剪贴板有图片文件路径时也处理（仅当没有图片数据时）
-                        elif mime_data.hasUrls():
-                            urls = mime_data.urls()
-                            if urls:
-                                file_path = urls[0].toLocalFile()
-                                if file_path and os.path.exists(file_path):
-                                    if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
-                                        self._process_qrcode_image(file_path)
-                                        return True
-
-        return super().eventFilter(watched, event)
-
-    def _on_clipboard_changed(self):
-        """监听剪贴板变化，自动处理粘贴的图片"""
-        # 仅当“问卷入口”卡片区域内控件获得焦点时才处理剪贴板
-        if not self._is_focus_in_link_entry():
-            return
-
-        # 延迟读取剪贴板，避免系统尚未准备好时触发 Qt Warning
-        self._schedule_clipboard_parse(delay_ms=30, retries=3)
-
-    def _schedule_clipboard_parse(self, delay_ms: int = 30, retries: int = 3):
-        self._clipboard_parse_ticket += 1
-        ticket = self._clipboard_parse_ticket
-
-        def _run():
-            self._try_process_clipboard_image(ticket, retries)
-
-        QTimer.singleShot(delay_ms, _run)
-
-    def _try_process_clipboard_image(self, ticket: int, retries: int):
-        # 只处理最新一次请求，旧任务直接丢弃
-        if ticket != self._clipboard_parse_ticket:
-            return
-        if not self._is_focus_in_link_entry():
-            return
-
-        from PySide6.QtWidgets import QApplication
-        clipboard = QApplication.clipboard()
-        mime_data = clipboard.mimeData(QClipboard.Mode.Clipboard)
-        if mime_data is None:
-            if retries > 0:
-                self._schedule_clipboard_parse(delay_ms=50, retries=retries - 1)
-            return
-
-        pil_image = self._extract_pil_image_from_clipboard(mime_data, clipboard)
-        if pil_image is not None:
-            try:
-                self._process_qrcode_image(pil_image)
-            except Exception:
-                pass  # 图片处理失败，静默忽略
-
-    def _is_focus_in_link_entry(self) -> bool:
-        from PySide6.QtWidgets import QApplication
-        focus_widget = QApplication.focusWidget()
-        if focus_widget is None:
-            return False
-        current = focus_widget
-        while current is not None:
-            if current is self.link_card:
-                return True
-            current = current.parentWidget()
-        return False
-
-    def _qimage_to_pil(self, image):
-        """将 QImage 安全转换为 PIL Image。"""
-        from PySide6.QtGui import QImage
-        from PySide6.QtCore import QBuffer, QIODevice
-        if not isinstance(image, QImage) or image.isNull():
-            return None
-        buffer = QBuffer()
-        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-        if not image.save(buffer, b"PNG"):
-            buffer.close()
-            return None
-        buffer.close()
-        from io import BytesIO
-        from PIL import Image
-        return Image.open(BytesIO(bytes(buffer.data())))  # type: ignore[arg-type]
-
-    def _extract_pil_image_from_clipboard(self, mime_data: QMimeData, clipboard: Optional[QClipboard] = None):
-        """从剪贴板数据提取 PIL Image，兼容微信常见图片格式。"""
-        # 普通图片剪贴板（截图工具、浏览器等）
-        if mime_data.hasImage():
-            image = mime_data.imageData()
-            pil_image = self._qimage_to_pil(image)
-            if pil_image is not None:
-                return pil_image
-
-        # 微信等应用在 Windows 下可能使用自定义 MIME（PNG / DIB）
-        windows_image_formats = [
-            'application/x-qt-windows-mime;value="PNG"',
-            'application/x-qt-windows-mime;value="DeviceIndependentBitmap"',
-            "image/png",
-            "image/bmp",
-            "image/jpeg",
-        ]
-        for fmt in windows_image_formats:
-            try:
-                raw = mime_data.data(fmt)
-                if raw.isEmpty():
-                    continue
-                from io import BytesIO
-                from PIL import Image
-                return Image.open(BytesIO(bytes(raw)))  # type: ignore[arg-type]
-            except Exception:
-                continue
-
-        # 兜底：有些来源能从 clipboard.image() 取到图，但 hasImage() 为 False
-        if clipboard is not None:
-            try:
-                image = clipboard.image()
-                pil_image = self._qimage_to_pil(image)
-                if pil_image is not None:
-                    return pil_image
-            except Exception as exc:
-                log_suppressed_exception("_extract_pil_image_from_clipboard: clipboard.image()", exc, level=logging.DEBUG)
-
-        return None
-
-    def _process_qrcode_image(self, image_source):
-        """处理二维码图片（文件路径或PIL Image对象）"""
-        try:
-            url = decode_qrcode(image_source)
-            if not url:
-                self._toast("未能识别二维码中的链接", "error")
-                return
-
-            # 设置链接到输入框
-            self.url_edit.setText(url)
-            # 自动触发解析
-            self._on_parse_clicked()
-        except Exception as exc:
-            self._toast(f"处理二维码图片失败：{exc}", "error")
-            log_suppressed_exception("_process_qrcode_image", exc, level=logging.WARNING)
-
     def _has_question_entries(self) -> bool:
         try:
             return bool(self.question_page.table.rowCount())
@@ -628,72 +386,6 @@ class DashboardPage(QWidget):
     def _on_question_entries_changed(self, _count: int):
         self._refresh_entry_table()
         self._sync_start_button_state()
-
-    def _on_url_text_changed(self, text: str):
-        """监听问卷链接输入框文本变化，检测 reset 命令（仅调试模式下可用）"""
-        if text.strip().lower() != "reset":
-            return
-
-        # 检查是否启用了调试模式
-        from PySide6.QtCore import QSettings
-        from wjx.utils.app.config import get_bool_from_qsettings
-
-        settings = QSettings("FuckWjx", "Settings")
-        debug_mode = get_bool_from_qsettings(settings.value("debug_mode"), False)
-        if not debug_mode:
-            return
-
-        if self._debug_reset_in_progress:
-            self.url_edit.clear()
-            return
-
-        self._debug_reset_in_progress = True
-        self.url_edit.clear()
-        self._toast("正在后台重置随机IP额度...", "info", duration=-1, show_progress=True)
-
-        thread = threading.Thread(
-            target=self._run_debug_reset_worker,
-            daemon=True,
-            name="DebugResetWorker",
-        )
-        thread.start()
-
-    def _run_debug_reset_worker(self) -> None:
-        """后台执行 debug reset，避免阻塞 GUI。"""
-        from wjx.network.proxy import _get_default_quota_with_cache
-
-        payload: Dict[str, Any] = {"ok": False, "quota": None, "error": ""}
-        try:
-            default_quota = _get_default_quota_with_cache()
-            if default_quota is None:
-                payload["error"] = "default_quota_unavailable"
-                return
-
-            RegistryManager.write_submit_count(0)
-            RegistryManager.write_quota_limit(default_quota)
-            RegistryManager.set_card_verified(False)
-            payload["ok"] = True
-            payload["quota"] = int(default_quota)
-        except Exception as exc:
-            payload["error"] = str(exc)
-            log_suppressed_exception("dashboard._run_debug_reset_worker", exc, level=logging.WARNING)
-        finally:
-            self._debugResetFinished.emit(payload)
-
-    def _on_debug_reset_finished(self, payload: Any) -> None:
-        self._debug_reset_in_progress = False
-        data = payload if isinstance(payload, dict) else {}
-        success = bool(data.get("ok"))
-        quota = data.get("quota")
-
-        if not success:
-            logging.warning("调试重置：默认额度API不可用，保持 --/-- 状态")
-            refresh_ip_counter_display(self.controller.adapter)
-            self._toast("默认额度API不可用，随机IP额度保持未初始化（--/--）", "warning", duration=3000)
-            return
-
-        refresh_ip_counter_display(self.controller.adapter)
-        self._toast(f"已重置随机IP额度为 0/{quota}", "success", duration=2500)
 
     def _on_parse_clicked(self):
         url = self.url_edit.text().strip()
@@ -786,17 +478,6 @@ class DashboardPage(QWidget):
             self.config_drawer.open_drawer()
         except Exception as exc:
             self._toast(f"无法打开配置列表：{exc}", "error")
-
-    def _on_qr_clicked(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择二维码图片", get_runtime_directory(), "含有二维码的图片 (*.png *.jpg *.jpeg *.bmp)")
-        if not path:
-            return
-        url = decode_qrcode(path)
-        if not url:
-            self._toast("未能识别二维码中的链接", "error")
-            return
-        self.url_edit.setText(url)
-        self._on_parse_clicked()
 
     def _on_load_config(self):
         configs_dir = os.path.join(get_runtime_directory(), "configs")
@@ -988,372 +669,6 @@ class DashboardPage(QWidget):
         cfg.random_ip_enabled = self.random_ip_cb.isChecked()
         return cfg
 
-    def update_random_ip_counter(self, count: int, limit: int, custom_api: bool):
-        # 检查是否已验证过卡密
-        is_verified = RegistryManager.is_card_verified()
-        if is_verified:
-            self.card_btn.setEnabled(False)
-            self.card_btn.setText("已解锁")
-        else:
-            self.card_btn.setEnabled(True)
-            self.card_btn.setText("解锁大额IP")
-
-        if custom_api:
-            self.random_ip_hint.setText("自定义接口")
-            self.random_ip_hint.setStyleSheet("color:#ff8c00;")
-            self._update_ip_low_infobar(count, limit, custom_api)
-            return
-        if limit <= 0:
-            self.random_ip_hint.setText("--/--")
-            self.random_ip_hint.setStyleSheet("color:#6b6b6b;")
-            self._update_ip_low_infobar(count, limit, custom_api)
-            if self.random_ip_cb.isChecked():
-                self.random_ip_cb.blockSignals(True)
-                self.random_ip_cb.setChecked(False)
-                self.random_ip_cb.blockSignals(False)
-            return
-        self.random_ip_hint.setText(f"{count}/{limit}")
-        # 额度耗尽时变红
-        if count >= limit:
-            self.random_ip_hint.setStyleSheet("color:red;")
-        else:
-            self.random_ip_hint.setStyleSheet("color:#6b6b6b;")
-        self._update_ip_low_infobar(count, limit, custom_api)
-        # 达到上限时自动关闭随机IP开关
-        if count >= limit and self.random_ip_cb.isChecked():
-            self.random_ip_cb.blockSignals(True)
-            self.random_ip_cb.setChecked(False)
-            self.random_ip_cb.blockSignals(False)
-            try:
-                self.runtime_page.random_ip_switch.blockSignals(True)
-                self.runtime_page.random_ip_switch.setChecked(False)
-                self.runtime_page.random_ip_switch.blockSignals(False)
-            except Exception as exc:
-                log_suppressed_exception("update_random_ip_counter: self.runtime_page.random_ip_switch.blockSignals(True)", exc, level=logging.WARNING)
-
-    def _on_random_ip_toggled(self, state: int):
-        enabled = state != 0
-        # 先同步检查限制，防止快速点击绕过
-        if enabled:
-            count, limit, custom_api = get_random_ip_counter_snapshot_local()
-            if (not custom_api) and limit <= 0:
-                self._toast("随机IP额度不可用（本地未初始化且默认额度API不可用）", "warning")
-                self.random_ip_cb.blockSignals(True)
-                self.random_ip_cb.setChecked(False)
-                self.random_ip_cb.blockSignals(False)
-                try:
-                    self.runtime_page.random_ip_switch.blockSignals(True)
-                    self.runtime_page.random_ip_switch.setChecked(False)
-                    self.runtime_page.random_ip_switch.blockSignals(False)
-                except Exception as exc:
-                    log_suppressed_exception("_on_random_ip_toggled disable: runtime random_ip_switch sync", exc, level=logging.WARNING)
-                refresh_ip_counter_display(self.controller.adapter)
-                return
-            if (not custom_api) and count >= limit:
-                self._toast(f"随机IP已达{limit}份限制，请验证卡密后再启用。", "warning")
-                self.random_ip_cb.blockSignals(True)
-                self.random_ip_cb.setChecked(False)
-                self.random_ip_cb.blockSignals(False)
-                try:
-                    self.runtime_page.random_ip_switch.blockSignals(True)
-                    self.runtime_page.random_ip_switch.setChecked(False)
-                    self.runtime_page.random_ip_switch.blockSignals(False)
-                except Exception as exc:
-                    log_suppressed_exception("_on_random_ip_toggled: self.runtime_page.random_ip_switch.blockSignals(True)", exc, level=logging.WARNING)
-                return
-        try:
-            self.controller.adapter.random_ip_enabled_var.set(bool(enabled))
-            on_random_ip_toggle(self.controller.adapter)
-            enabled = bool(self.controller.adapter.random_ip_enabled_var.get())
-        except Exception:
-            enabled = bool(enabled)
-        self.random_ip_cb.blockSignals(True)
-        self.random_ip_cb.setChecked(enabled)
-        self.random_ip_cb.blockSignals(False)
-        try:
-            self.runtime_page.random_ip_switch.blockSignals(True)
-            self.runtime_page.random_ip_switch.setChecked(enabled)
-            self.runtime_page.random_ip_switch.blockSignals(False)
-        except Exception as exc:
-            log_suppressed_exception("_on_random_ip_toggled: self.runtime_page.random_ip_switch.blockSignals(True)", exc, level=logging.WARNING)
-        # 刷新计数显示
-        refresh_ip_counter_display(self.controller.adapter)
-
-    def _ask_card_code(self) -> Optional[str]:
-        """向主窗口请求卡密输入，兜底弹出输入框。"""
-        win = self.window()
-        if hasattr(win, "_ask_card_code"):
-            try:
-                return win._ask_card_code()  # type: ignore[union-attr]
-            except Exception as exc:
-                log_suppressed_exception("_ask_card_code: return win._ask_card_code()", exc, level=logging.WARNING)
-        dialog = CardUnlockDialog(
-            self,
-            status_fetcher=get_status,
-            status_formatter=_format_status_payload,
-            contact_handler=lambda: self._open_contact_dialog(default_type="卡密获取"),
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            return dialog.get_card_code()
-        return None
-
-    def _open_contact_dialog(self, default_type: str = "报错反馈"):
-        """打开联系对话框"""
-        win = self.window()
-        if hasattr(win, "_open_contact_dialog"):
-            try:
-                return win._open_contact_dialog(default_type)  # type: ignore[union-attr]
-            except Exception as exc:
-                log_suppressed_exception("_open_contact_dialog: return win._open_contact_dialog(default_type)", exc, level=logging.WARNING)
-        dlg = ContactDialog(self, default_type=default_type, status_fetcher=get_status, status_formatter=_format_status_payload)
-        dlg.exec()
-
-    def _on_card_code_clicked(self):
-        """用户主动输入卡密解锁大额随机IP。"""
-        dialog = CardUnlockDialog(
-            self,
-            status_fetcher=get_status,
-            status_formatter=_format_status_payload,
-            contact_handler=lambda: self._open_contact_dialog(default_type="卡密获取"),
-            card_validator=_validate_card,
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        # 验证成功后处理解锁逻辑：在原有额度基础上增加卡密提供的额度
-        if dialog.get_validation_result():
-            quota = dialog.get_validation_quota()
-            if quota is None:
-                self._toast("卡密验证返回缺少额度信息，拒绝解锁，请联系开发者。", "error")
-                return
-            quota_to_add = max(1, int(quota))
-            # 读取当前额度上限，在此基础上增加
-            current_limit = int(RegistryManager.read_quota_limit(0) or 0)
-            new_limit = current_limit + quota_to_add
-            RegistryManager.write_quota_limit(new_limit)
-            # 标记为已验证过卡密
-            RegistryManager.set_card_verified(True)
-            refresh_ip_counter_display(self.controller.adapter)
-            self.random_ip_cb.setChecked(True)
-            try:
-                self.runtime_page.random_ip_switch.blockSignals(True)
-                self.runtime_page.random_ip_switch.setChecked(True)
-                self.runtime_page.random_ip_switch.blockSignals(False)
-            except Exception as exc:
-                log_suppressed_exception("_on_card_code_clicked: self.runtime_page.random_ip_switch.blockSignals(True)", exc, level=logging.WARNING)
-
-    def _on_ip_low_infobar_closed(self):
-        self._ip_low_infobar_dismissed = True
-        if self._ip_low_infobar:
-            self._ip_low_infobar.hide()
-
-    def _update_ip_low_infobar(self, count: int, limit: int, custom_api: bool):
-        """更新IP余额不足提示条，基于API余额换算的剩余IP数判断"""
-        if not self._ip_low_infobar:
-            return
-        if custom_api:
-            self._ip_low_infobar.hide()
-            self._ip_low_infobar_dismissed = False
-            return
-
-        # 先用缓存快速更新，避免每次刷新都走网络
-        if self._api_balance_cache is not None:
-            cached_remaining = int(max(0.0, float(self._api_balance_cache)) / 0.0035)
-            self._on_ip_balance_checked(cached_remaining)
-
-        now = time.monotonic()
-        with self._ip_balance_fetch_lock:
-            # 正在请求或尚未到刷新间隔，直接跳过
-            if self._ip_balance_fetching or (now - self._last_ip_balance_fetch_ts) < self._ip_balance_fetch_interval_sec:
-                return
-            self._ip_balance_fetching = True
-            self._last_ip_balance_fetch_ts = now
-
-        # 异步获取 API 余额并判断
-        def _fetch_and_check():
-            try:
-                import wjx.network.http_client as http_client
-                response = http_client.get(
-                    "https://service.ipzan.com/userProduct-get",
-                    params={"no": "20260112572376490874", "userId": "72FH7U4E0IG"},
-                    timeout=5,
-                )
-                data = response.json()
-                if data.get("code") in (0, 200) and data.get("status") in (200, "200", None):
-                    balance = data.get("data", {}).get("balance", 0)
-                    # 使用关于页相同的公式：剩余IP数 = balance / 0.0035
-                    remaining_ip = int(float(balance) / 0.0035)
-                    self._api_balance_cache = float(balance)
-                    # 发送信号到主线程更新 UI
-                    self._ipBalanceChecked.emit(remaining_ip)
-            except Exception as exc:
-                timeout_error_names = {"ReadTimeout", "ConnectTimeout", "PoolTimeout", "TimeoutException"}
-                level = logging.DEBUG if exc.__class__.__name__ in timeout_error_names else logging.WARNING
-                log_suppressed_exception("_fetch_and_check: API balance fetch failed", exc, level=level)
-            finally:
-                with self._ip_balance_fetch_lock:
-                    self._ip_balance_fetching = False
-
-        # 启动后台线程获取余额
-        threading.Thread(target=_fetch_and_check, daemon=True, name="IPBalanceCheck").start()
-
-    def _on_ip_balance_checked(self, remaining_ip: int):
-        """处理IP余额检查结果（在主线程中执行）"""
-        if not self._ip_low_infobar:
-            return
-        if remaining_ip < self._ip_low_threshold:
-            if not self._ip_low_infobar_dismissed:
-                self._ip_low_infobar.show()
-        else:
-            self._ip_low_infobar.hide()
-            self._ip_low_infobar_dismissed = False
-
-    def _show_add_question_dialog(self):
-        """新增题目 - 委托给 QuestionPage"""
-        self.question_page._add_entry()
-        self._refresh_entry_table()
-
-    def _open_question_wizard(self):
-        if self._run_question_wizard(self.question_page.entries, self.question_page.questions_info):
-            self._refresh_entry_table()
-
-    def _edit_selected_entries(self):
-        selected_rows = self._checked_rows()
-        if not selected_rows:
-            self._toast("请先勾选要编辑的题目", "warning")
-            return
-        entries = self.question_page.get_entries()
-        info = self.question_page.questions_info or []
-        selected_rows = [row for row in sorted(set(selected_rows)) if 0 <= row < len(entries)]
-        if not selected_rows:
-            self._toast("未找到可编辑的题目", "warning")
-            return
-        selected_entries = [entries[row] for row in selected_rows]
-        selected_info = [info[row] if row < len(info) else {} for row in selected_rows]
-        if self._run_question_wizard(selected_entries, selected_info):
-            self._refresh_entry_table()
-
-    def _apply_wizard_results(self, entries: List[QuestionEntry], dlg: QuestionWizardDialog) -> None:
-        def _normalize_weights(raw: Any) -> Any:
-            if isinstance(raw, list) and any(isinstance(item, (list, tuple)) for item in raw):
-                cleaned: List[List[float]] = []
-                for row in raw:
-                    if not isinstance(row, (list, tuple)):
-                        continue
-                    cleaned.append([float(max(0, v)) for v in row])
-                return cleaned
-            if isinstance(raw, list):
-                return [float(max(0, v)) for v in raw]
-            return raw
-
-        updates = dlg.get_results()
-        for idx, weights in updates.items():
-            if 0 <= idx < len(entries):
-                entry = entries[idx]
-                normalized = _normalize_weights(weights)
-                if entry.question_type == "matrix":
-                    entry.custom_weights = normalized
-                    entry.probabilities = normalized
-                    entry.distribution_mode = "custom"
-                elif isinstance(normalized, list):
-                    entry.custom_weights = normalized
-                    entry.probabilities = normalized
-                    entry.distribution_mode = "custom"
-        text_updates = dlg.get_text_results()
-        for idx, texts in text_updates.items():
-            if 0 <= idx < len(entries):
-                entries[idx].texts = texts
-        ai_updates = dlg.get_ai_flags()
-        for idx, enabled in ai_updates.items():
-            if 0 <= idx < len(entries):
-                entry = entries[idx]
-                entry.ai_enabled = bool(enabled) if entry.question_type == "text" else False
-        dimension_updates = dlg.get_dimension_results()
-        for idx, dimension in dimension_updates.items():
-            if 0 <= idx < len(entries):
-                entries[idx].dimension = dimension
-
-    def _run_question_wizard(self, entries: List[QuestionEntry], info: List[Dict[str, Any]], survey_title: Optional[str] = None) -> bool:
-        if not entries:
-            self._toast("请先解析问卷或手动添加题目", "warning")
-            return False
-        title = survey_title if survey_title is not None else self._survey_title
-        # 从运行参数页面获取信效度模式开关状态
-        reliability_mode_enabled = getattr(self.runtime_page.reliability_mode_switch, 'isChecked', lambda: True)()
-        dlg = QuestionWizardDialog(entries, info, title, self, reliability_mode_enabled=reliability_mode_enabled)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._apply_wizard_results(entries, dlg)
-            return True
-        return False
-
-    def _delete_selected_entries(self):
-        selected_rows = self._checked_rows()
-        if not selected_rows:
-            self._toast("请先勾选要删除的题目", "warning")
-            return
-        
-        # 添加确认对话框
-        count = len(selected_rows)
-        box = MessageBox(
-            "确认删除",
-            f"确定要删除选中的 {count} 个题目吗？\n此操作无法撤销。",
-            self.window() or self
-        )
-        box.yesButton.setText("确定")
-        box.cancelButton.setText("取消")
-        if not box.exec():
-            return
-        
-        entries = self.question_page.get_entries()
-        for row in sorted(selected_rows, reverse=True):
-            if 0 <= row < len(entries):
-                entries.pop(row)
-        self.question_page.set_entries(entries, self.question_page.questions_info)
-        self._refresh_entry_table()
-        # 删除后自动取消“全选”勾选，避免误导
-        self.select_all_action.setChecked(False)
-        self._toast(f"已删除 {count} 个题目", "success")
-
-    def _refresh_entry_table(self):
-        entries = self.question_page.get_entries()
-        self.entry_table.setRowCount(len(entries))
-        # 更新题目数量标签
-        self.count_label.setText(f"{len(entries)} 题")
-        for idx, entry in enumerate(entries):
-            type_label = _get_entry_type_label(entry)
-            summary = _question_summary(entry)
-            check_item = QTableWidgetItem("")
-            check_item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsUserCheckable
-                | Qt.ItemFlag.ItemIsSelectable
-            )
-            check_item.setCheckState(Qt.CheckState.Unchecked)
-            check_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.entry_table.setItem(idx, 0, check_item)
-            type_item = QTableWidgetItem(type_label)
-            type_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.entry_table.setItem(idx, 1, type_item)
-            self.entry_table.setItem(idx, 2, QTableWidgetItem(summary))
-        self._sync_start_button_state()
-
-    def _checked_rows(self) -> List[int]:
-        rows: List[int] = []
-        for r in range(self.entry_table.rowCount()):
-            item = self.entry_table.item(r, 0)
-            if item and item.checkState() == Qt.CheckState.Checked:
-                rows.append(r)
-        if not rows:
-            rows = [idx.row() for idx in self.entry_table.selectionModel().selectedRows()]
-        return rows
-
-    def _toggle_select_all_action(self):
-        """CommandBar 全选 Action 触发时切换所有行的选中状态"""
-        checked = self.select_all_action.isChecked()
-        for r in range(self.entry_table.rowCount()):
-            item = self.entry_table.item(r, 0)
-            if item:
-                item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
-
     def _toast(self, text: str, level: str = "info", duration: int = 2000, show_progress: bool = False):
         """
         显示消息提示
@@ -1377,8 +692,6 @@ class DashboardPage(QWidget):
         
         # 如果需要显示进度条，创建带进度条的InfoBar
         if show_progress:
-            from PySide6.QtCore import Qt
-            
             # 创建InfoBar实例
             if kind == "success":
                 infobar = InfoBar.success("", text, parent=parent, position=InfoBarPosition.TOP, duration=duration)

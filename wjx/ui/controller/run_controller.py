@@ -26,7 +26,6 @@ from wjx.core.engine import (
     run,
 )
 from wjx.utils.io.load_save import RuntimeConfig, load_config, save_config
-from wjx.utils.logging.log_utils import log_popup_confirm, log_popup_error, log_popup_info, log_popup_warning
 from wjx.network.proxy import (
     _fetch_new_proxy_batch,
     get_effective_proxy_api_url,
@@ -310,7 +309,7 @@ class RunController(QObject):
             html = resp.text
             info = parse_survey_questions_from_html(html)
             title = _extract_survey_title_from_html(html) or title
-        except Exception as exc:
+        except Exception:
             logging.exception("使用 httpx 获取问卷失败，url=%r", url)
             info = None
         if info is None:
@@ -322,7 +321,7 @@ class RunController(QObject):
                 page_source = driver.page_source
                 info = parse_survey_questions_from_html(page_source)
                 title = _extract_survey_title_from_html(page_source) or title
-            except Exception as exc:
+            except Exception:
                 logging.exception("使用 Playwright 获取问卷失败，url=%r", url)
                 info = None
             finally:
@@ -686,9 +685,12 @@ class RunController(QObject):
                 stop_signal=self.stop_event,
             )
         except Exception as exc:
+            err_text = str(exc)
+
             def _fail():
                 self._starting = False
-                self.runFailed.emit(str(exc))
+                self.runFailed.emit(err_text)
+
             self._dispatch_to_ui_async(_fail)
             return
 

@@ -7,7 +7,7 @@ import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
-from PySide6.QtCore import Qt, QTimer, Signal, QEvent
+from PySide6.QtCore import QTimer, Signal, QEvent
 from PySide6.QtGui import QDoubleValidator, QIntValidator, QKeySequence, QGuiApplication, QKeyEvent
 from PySide6.QtWidgets import (
     QWidget,
@@ -362,6 +362,8 @@ class ContactForm(StatusPollingMixin, QWidget):
         """重新渲染附件列表。"""
         while self.attach_list_layout.count():
             item = self.attach_list_layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget:
                 widget.deleteLater()

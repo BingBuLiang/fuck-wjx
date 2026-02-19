@@ -31,7 +31,7 @@ from wjx.utils.app.config import DEFAULT_FILL_TEXT, PRESET_DIMENSIONS, DIMENSION
 from wjx.ui.helpers.ai_fill import ensure_ai_ready
 
 from .constants import TYPE_CHOICES, STRATEGY_CHOICES, _get_type_label
-from .utils import _shorten_text, _apply_label_color, _bind_slider_input
+from .utils import _apply_label_color, _bind_slider_input
 
 
 class QuestionAddDialog(QDialog):
@@ -210,6 +210,8 @@ class QuestionAddDialog(QDialog):
     def _clear_layout(self, layout: QLayout) -> None:
         while layout.count():
             item = layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
@@ -662,7 +664,7 @@ class QuestionAddDialog(QDialog):
                 option_count=len(texts),
                 distribution_mode="random",
                 custom_weights=None,
-                question_num=str(self._entry_index),
+                question_num=self._entry_index,
                 ai_enabled=bool(self._ai_enabled) if q_type == "text" else False,
                 dimension=dimension,
             )
@@ -675,7 +677,7 @@ class QuestionAddDialog(QDialog):
                 option_count=option_count,
                 distribution_mode="random",
                 custom_weights=None,
-                question_num=str(self._entry_index),
+                question_num=self._entry_index,
                 dimension=dimension,
             )
         if q_type == "matrix":
@@ -692,7 +694,7 @@ class QuestionAddDialog(QDialog):
                     option_count=option_count,
                     distribution_mode="custom",
                     custom_weights=cast(Any, weights),
-                    question_num=str(self._entry_index),
+                    question_num=self._entry_index,
                     dimension=dimension,
                 )
             return QuestionEntry(
@@ -703,7 +705,7 @@ class QuestionAddDialog(QDialog):
                 option_count=option_count,
                 distribution_mode="random",
                 custom_weights=None,
-                question_num=str(self._entry_index),
+                question_num=self._entry_index,
                 dimension=dimension,
             )
 
@@ -727,7 +729,7 @@ class QuestionAddDialog(QDialog):
             option_count=option_count,
             distribution_mode=strategy,
             custom_weights=custom_weights,
-            question_num=str(self._entry_index),
+            question_num=self._entry_index,
             dimension=dimension,
         )
 

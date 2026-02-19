@@ -1,7 +1,6 @@
 """客服与支持页面"""
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout
-from qfluentwidgets import ScrollArea, SubtitleLabel, BodyLabel, CardWidget
+from qfluentwidgets import ScrollArea, SubtitleLabel, CardWidget
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 

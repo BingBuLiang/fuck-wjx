@@ -9,7 +9,6 @@ from PySide6.QtGui import QIcon, QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
-    CheckBox,
     FluentIcon,
     ModelComboBox,
     PopupTeachingTip,
@@ -28,7 +27,6 @@ from wjx.ui.pages.workbench.runtime_cards import (
     TimedModeSettingCard,
 )
 from wjx.ui.widgets.setting_cards import SpinBoxSettingCard, SwitchSettingCard
-from wjx.ui.pages.workbench.runtime_dialogs import pick_time_value
 from wjx.utils.app.runtime_paths import _get_resource_path
 from wjx.utils.io.load_save import RuntimeConfig
 

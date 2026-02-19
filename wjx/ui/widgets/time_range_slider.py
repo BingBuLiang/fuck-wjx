@@ -2,7 +2,7 @@
 from typing import Tuple, Optional
 from PySide6.QtCore import Qt, Signal, QRect, QPoint
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QMouseEvent
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
+from PySide6.QtWidgets import QWidget, QHBoxLayout
 from qfluentwidgets import BodyLabel
 
 
@@ -90,7 +90,6 @@ class _SliderWidget(QWidget):
         
         # 计算滑块轨道区域
         track_rect = self._get_track_rect()
-        handle_radius = self._parent_slider._handle_radius
         
         # 绘制背景轨道
         painter.setPen(Qt.PenStyle.NoPen)

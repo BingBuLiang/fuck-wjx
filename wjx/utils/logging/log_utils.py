@@ -258,8 +258,21 @@ class LogBufferHandler(logging.Handler):
     def stop(self):
         """停止后台处理线程"""
         self._stop_event.set()
-        if self._worker_thread:
+        if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=1.0)
+
+    def flush_remaining(self):
+        """刷新队列中剩余的日志（在关闭前调用）"""
+        try:
+            # 处理队列中剩余的所有日志
+            while not self._queue.empty():
+                try:
+                    record = self._queue.get_nowait()
+                    self._process_record(record)
+                except queue.Empty:
+                    break
+        except Exception as exc:
+            _safe_internal_log("LogBufferHandler flush_remaining failed", exc)
 
     @staticmethod
     def _strip_ansi_codes(text: str) -> str:
@@ -499,3 +512,28 @@ def log_popup_warning(title: str, message: str, **kwargs: Any):
 def log_popup_confirm(title: str, message: str, **kwargs: Any) -> bool:
     """Confirmation dialog routed to the active UI handler (if any)."""
     return bool(_dispatch_popup("confirm", title, message, default=False))
+
+
+def shutdown_logging():
+    """优雅关闭日志系统（在程序退出前调用）"""
+    try:
+        # 1. 刷新剩余日志
+        LOG_BUFFER_HANDLER.flush_remaining()
+
+        # 2. 停止后台线程
+        LOG_BUFFER_HANDLER.stop()
+
+        # 3. 恢复标准流（避免守护线程在解释器关闭时写入）
+        sys.stdout = ORIGINAL_STDOUT
+        sys.stderr = ORIGINAL_STDERR
+
+        # 4. 移除所有 handler（避免在解释器关闭时触发）
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            try:
+                handler.close()
+                root_logger.removeHandler(handler)
+            except Exception:
+                pass
+    except Exception as exc:
+        _safe_internal_log("shutdown_logging failed", exc)

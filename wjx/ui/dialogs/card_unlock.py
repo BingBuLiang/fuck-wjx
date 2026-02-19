@@ -1,5 +1,4 @@
 """卡密解锁对话框"""
-import os
 import webbrowser
 from typing import Optional, Callable
 import logging
@@ -27,7 +26,6 @@ from qfluentwidgets import (
 
 from wjx.ui.widgets import StatusPollingMixin
 from wjx.network.proxy import get_status, _format_status_payload
-from wjx.utils.io.load_save import get_assets_directory
 from wjx.utils.app.version import ISSUE_FEEDBACK_URL
 from wjx.ui.pages.more.donate import DonatePage
 

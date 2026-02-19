@@ -1,7 +1,6 @@
 """后台更新检查Worker"""
 from PySide6.QtCore import QThread, Signal
 import logging
-from typing import Optional, Dict, Any
 
 
 class UpdateCheckWorker(QThread):

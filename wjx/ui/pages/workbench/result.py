@@ -4,31 +4,25 @@ import os
 import logging
 from typing import Optional, Dict, List
 
-from PySide6.QtCore import Qt, QThread, QObject, Signal, QSettings
-from PySide6.QtGui import QColor, QPainter, QBrush, QPen, QFont
+from PySide6.QtCore import Qt, QThread, QObject, Signal
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
-    QFrame,
-    QSizePolicy,
 )
 from qfluentwidgets import (
     ScrollArea,
     SubtitleLabel,
-    TitleLabel,
     BodyLabel,
     CaptionLabel,
     StrongBodyLabel,
     SimpleCardWidget,
     PushButton,
-    ProgressBar,
     InfoBar,
     InfoBarPosition,
     FluentIcon,
     ComboBox,
-    isDarkTheme,
 )
 
 from wjx.core.stats.collector import stats_collector
@@ -36,6 +30,15 @@ from wjx.core.stats.models import SurveyStats, QuestionStats
 from wjx.core.stats.persistence import save_stats, list_stats_files, load_stats, _ensure_stats_dir
 from wjx.core.stats.raw_storage import raw_data_storage
 from wjx.core.stats.analysis import AnalysisResult, run_analysis
+from wjx.ui.pages.workbench.result_metrics import alpha_level, bartlett_display_text, kmo_level
+from wjx.ui.pages.workbench.result_widgets import (
+    _BarRow,
+    _Divider,
+    _MatrixCell,
+    _MetricWidget,
+    _TextAnswerRow,
+    _VerticalDivider,
+)
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
@@ -66,187 +69,6 @@ class _AnalysisWorker(QObject):
     def run(self) -> None:
         result = run_analysis(self._path, self._dimension_map)
         self.finished.emit(result)
-
-
-# ── 辅助组件 ──────────────────────────────────────────────────
-
-class _Divider(QFrame):
-    """1px 水平分割线"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.Shape.HLine)
-        self.setFixedHeight(1)
-        self.setStyleSheet("background: rgba(128,128,128,0.15); border: none;")
-
-
-class _VerticalDivider(QFrame):
-    """1px 垂直分割线"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.Shape.VLine)
-        self.setFixedWidth(1)
-        self.setStyleSheet("background: rgba(128,128,128,0.15); border: none;")
-
-
-class _StatNumberWidget(QWidget):
-    """概览区的单个统计数字块"""
-
-    def __init__(self, title: str, value: str = "0",
-                 color: Optional[str] = None, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-
-        self._title_label = CaptionLabel(title, self)
-        self._title_label.setStyleSheet("color: rgba(128,128,128,0.9);")
-
-        self._value_label = TitleLabel(value, self)
-        if color:
-            self._value_label.setStyleSheet(
-                f"font-size: 28px; font-weight: 700; color: {color};"
-            )
-        else:
-            self._value_label.setStyleSheet("font-size: 28px; font-weight: 700;")
-
-        layout.addWidget(self._title_label)
-        layout.addWidget(self._value_label)
-
-    def setValue(self, text: str) -> None:
-        self._value_label.setText(text)
-
-    def setColor(self, color: str) -> None:
-        self._value_label.setStyleSheet(
-            f"font-size: 28px; font-weight: 700; color: {color};"
-        )
-
-
-class _BarRow(QWidget):
-    """选项统计的一行：名称 | 进度条 | 次数 / 占比"""
-
-    def __init__(self, name: str, count: int, percentage: float, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(32)
-
-        h = QHBoxLayout(self)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(12)
-
-        # 选项名（固定宽度，右对齐）
-        name_label = BodyLabel(name, self)
-        name_label.setFixedWidth(120)
-        name_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        h.addWidget(name_label)
-
-        # 进度条
-        bar = ProgressBar(self)
-        bar.setValue(min(100, int(percentage)))
-        bar.setFixedHeight(14)
-        bar.setMinimumWidth(80)
-        h.addWidget(bar, 1)
-
-        # 次数 + 占比
-        stat_text = f"{count} 次  ({percentage:.1f}%)"
-        stat_label = CaptionLabel(stat_text, self)
-        stat_label.setFixedWidth(120)
-        stat_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        h.addWidget(stat_label)
-
-
-class _TextAnswerRow(QWidget):
-    """填空题答案行：答案文本 + 次数"""
-
-    def __init__(self, text: str, count: int, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(28)
-
-        h = QHBoxLayout(self)
-        h.setContentsMargins(4, 0, 4, 0)
-        h.setSpacing(12)
-
-        display = text[:80] + "…" if len(text) > 80 else text
-        text_label = BodyLabel(display, self)
-        h.addWidget(text_label, 1)
-
-        count_label = CaptionLabel(f"× {count}", self)
-        count_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        count_label.setFixedWidth(60)
-        h.addWidget(count_label)
-
-
-class _MatrixCell(QWidget):
-    """矩阵题热力格子"""
-
-    def __init__(self, value: int, max_val: int, parent=None):
-        super().__init__(parent)
-        self._value = value
-        self._max_val = max(max_val, 1)
-        self.setFixedSize(48, 32)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        ratio = self._value / self._max_val if self._max_val > 0 else 0
-
-        if isDarkTheme():
-            bg = QColor(0, 120, 212, int(30 + ratio * 180))
-            text_color = QColor(255, 255, 255)
-        else:
-            bg = QColor(0, 120, 212, int(20 + ratio * 180))
-            text_color = QColor(0, 0, 0) if ratio < 0.5 else QColor(255, 255, 255)
-
-        painter.setBrush(QBrush(bg))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 4, 4)
-
-        painter.setPen(QPen(text_color))
-        painter.setFont(QFont("Segoe UI", 9))
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, str(self._value))
-        painter.end()
-
-
-# ── 信效度指标组件 ──────────────────────────────────────────────
-
-class _MetricWidget(QWidget):
-    """信效度分析卡片中的单个指标展示
-
-    显示结构：
-        指标名
-        数值（带颜色）
-        解释文字
-    """
-
-    def __init__(self, title: str, parent=None):
-        super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
-        self._title_label = CaptionLabel(title, self)
-        self._title_label.setStyleSheet("color: rgba(128,128,128,0.9);")
-
-        self._value_label = StrongBodyLabel("--", self)
-        self._value_label.setStyleSheet("font-size: 20px;")
-
-        self._desc_label = CaptionLabel("", self)
-        self._desc_label.setStyleSheet("color: rgba(128,128,128,0.7);")
-        self._desc_label.setWordWrap(True)
-
-        layout.addWidget(self._title_label)
-        layout.addWidget(self._value_label)
-        layout.addWidget(self._desc_label)
-
-    def set_value(self, text: str, color: str, description: str) -> None:
-        self._value_label.setText(text)
-        self._value_label.setStyleSheet(f"font-size: 20px; color: {color};")
-        self._desc_label.setText(description)
-
-    def set_unavailable(self, reason: str = "") -> None:
-        self._value_label.setText("--")
-        self._value_label.setStyleSheet("font-size: 20px; color: rgba(128,128,128,0.5);")
-        self._desc_label.setText(reason)
 
 
 # ── 主页面 ────────────────────────────────────────────────────
@@ -406,6 +228,8 @@ class ResultPage(QWidget):
         # 清空维度容器
         while self._dimensions_layout.count():
             item = self._dimensions_layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget:
                 widget.deleteLater()
@@ -600,6 +424,8 @@ class ResultPage(QWidget):
     def _clear_scroll(self) -> None:
         while self._scroll_layout.count() > 0:
             item = self._scroll_layout.takeAt(0)
+            if item is None:
+                continue
             w = item.widget()
             if w:
                 w.deleteLater()
@@ -780,43 +606,14 @@ class ResultPage(QWidget):
         # ── KMO ──
         if result.kmo_value is not None:
             kmo = result.kmo_value
-            if kmo >= 0.9:
-                color, desc = "#22c55e", "非常适合因子分析"
-            elif kmo >= 0.8:
-                color, desc = "#22c55e", "适合因子分析"
-            elif kmo >= 0.7:
-                color, desc = "#3b82f6", "中等适合"
-            elif kmo >= 0.6:
-                color, desc = "#f59e0b", "勉强适合"
-            else:
-                color, desc = "#ef4444", "不适合因子分析"
-
+            color, desc = kmo_level(kmo)
             self._metric_kmo.set_value(f"{kmo:.3f}", color, desc)
         else:
             self._metric_kmo.set_unavailable("数据不足，无法计算")
 
         # ── Bartlett ──
         if result.bartlett_p is not None:
-            p = result.bartlett_p
-            chi2 = result.bartlett_chi2
-
-            if p < 0.001:
-                color, desc = "#22c55e", "显著（适合因子分析）"
-                p_text = "< 0.001"
-            elif p < 0.01:
-                color, desc = "#22c55e", "显著（适合因子分析）"
-                p_text = f"{p:.4f}"
-            elif p < 0.05:
-                color, desc = "#f59e0b", "边缘显著"
-                p_text = f"{p:.4f}"
-            else:
-                color, desc = "#ef4444", "不显著（不适合因子分析）"
-                p_text = f"{p:.4f}"
-
-            display_text = f"p = {p_text}"
-            if chi2 is not None:
-                display_text = f"χ² = {chi2:.2f}, {display_text}"
-
+            display_text, color, desc = bartlett_display_text(result.bartlett_p, result.bartlett_chi2)
             self._metric_bartlett.set_value(display_text, color, desc)
         else:
             self._metric_bartlett.set_unavailable("数据不足，无法计算")
@@ -825,6 +622,8 @@ class ResultPage(QWidget):
         # 清空旧的维度组件
         while self._dimensions_layout.count():
             item = self._dimensions_layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget:
                 widget.deleteLater()
@@ -841,8 +640,6 @@ class ResultPage(QWidget):
 
     def _build_dimension_widget(self, dim_info) -> QWidget:
         """构建单个维度的信度展示组件"""
-        from wjx.core.stats.analysis import DimensionInfo
-
         widget = QWidget(self._dimensions_container)
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -936,7 +733,6 @@ class ResultPage(QWidget):
         if error:
             self._analysis_status_label.setText(error)
             self._analysis_status_label.setStyleSheet("color: rgba(128,128,128,0.6);")
-            self._metric_alpha.set_unavailable(error)
             self._metric_kmo.set_unavailable(error)
             self._metric_bartlett.set_unavailable(error)
             return
@@ -949,38 +745,10 @@ class ResultPage(QWidget):
             f"{sample_count} 份样本 / {item_count} 道题"
         )
 
-        # ── Cronbach's Alpha ──
-        alpha = reliability_validity.get("cronbach_alpha")
-        if alpha is not None:
-            if alpha >= 0.9:
-                color, desc = "#22c55e", "优秀"
-            elif alpha >= 0.8:
-                color, desc = "#22c55e", "良好"
-            elif alpha >= 0.7:
-                color, desc = "#f59e0b", "可接受"
-            elif alpha >= 0.6:
-                color, desc = "#f59e0b", "勉强可接受"
-            else:
-                color, desc = "#ef4444", "较差"
-
-            self._metric_alpha.set_value(f"{alpha:.3f}", color, desc)
-        else:
-            self._metric_alpha.set_unavailable("数据不足，无法计算")
-
         # ── KMO ──
         kmo = reliability_validity.get("kmo_value")
         if kmo is not None:
-            if kmo >= 0.9:
-                color, desc = "#22c55e", "非常适合因子分析"
-            elif kmo >= 0.8:
-                color, desc = "#22c55e", "适合因子分析"
-            elif kmo >= 0.7:
-                color, desc = "#3b82f6", "中等适合"
-            elif kmo >= 0.6:
-                color, desc = "#f59e0b", "勉强适合"
-            else:
-                color, desc = "#ef4444", "不适合因子分析"
-
+            color, desc = kmo_level(kmo)
             self._metric_kmo.set_value(f"{kmo:.3f}", color, desc)
         else:
             self._metric_kmo.set_unavailable("数据不足，无法计算")
@@ -989,20 +757,7 @@ class ResultPage(QWidget):
         p = reliability_validity.get("bartlett_p")
         chi2 = reliability_validity.get("bartlett_chi2")
         if p is not None:
-            if p < 0.001:
-                color, desc = "#22c55e", "显著（适合因子分析）"
-                p_text = "< 0.001"
-            elif p < 0.01:
-                color, desc = "#22c55e", "显著（适合因子分析）"
-                p_text = f"{p:.4f}"
-            elif p < 0.05:
-                color, desc = "#f59e0b", "边缘显著"
-                p_text = f"{p:.4f}"
-            else:
-                color, desc = "#ef4444", "不显著（不适合因子分析）"
-                p_text = f"{p:.4f}"
-
-            display_text = f"p = {p_text}"
+            display_text, color, desc = bartlett_display_text(p, chi2)
             self._metric_bartlett.set_value(display_text, color, desc)
         else:
             self._metric_bartlett.set_unavailable("数据不足，无法计算")

@@ -23,7 +23,6 @@ from qfluentwidgets import (
     PushButton,
     PrimaryPushButton,
     FluentIcon,
-    HyperlinkButton,
     StrongBodyLabel,
 )
 

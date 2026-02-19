@@ -21,10 +21,6 @@ from qfluentwidgets import (
     TransparentToolButton,
 )
 
-from wjx.ui.widgets.no_wheel import NoWheelSpinBox
-from wjx.ui.widgets.setting_cards import SpinBoxSettingCard, SwitchSettingCard
-
-
 class RandomIPSettingCard(ExpandGroupSettingCard):
     """随机IP设置卡 - 包含代理源选择"""
 

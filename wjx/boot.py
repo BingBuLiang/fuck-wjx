@@ -20,6 +20,7 @@ class BootSplash:
         self.window = window
         self.splash_screen = SplashScreen(window.windowIcon(), window)
         self.splash_screen.setIconSize(QSize(128, 128))
+        self._finish_timer: Optional[QTimer] = None
 
         # 根据主题设置颜色
         is_dark = isDarkTheme()
@@ -80,8 +81,26 @@ class BootSplash:
 
     def finish(self):
         """隐藏启动页面并停止进度条"""
-        self.progress_bar.stop()
-        self.splash_screen.finish()
+        try:
+            self.progress_bar.stop()
+        except Exception:
+            pass
+        try:
+            self.splash_screen.finish()
+        except Exception:
+            pass
+
+    def cleanup(self):
+        """清理资源（在窗口关闭时调用）"""
+        # 停止延迟关闭定时器
+        if self._finish_timer:
+            self._finish_timer.stop()
+            self._finish_timer = None
+        # 停止进度条
+        try:
+            self.progress_bar.stop()
+        except Exception:
+            pass
 
 
 _boot_splash: Optional[BootSplash] = None
@@ -102,4 +121,8 @@ def get_boot_splash() -> Optional[BootSplash]:
 def finish_boot_splash(delay_ms: int = 1500):
     """延迟关闭启动画面"""
     if _boot_splash:
-        QTimer.singleShot(delay_ms, _boot_splash.finish)
+        # 使用 QTimer 对象而不是 singleShot，以便在窗口关闭时可以停止
+        _boot_splash._finish_timer = QTimer()
+        _boot_splash._finish_timer.setSingleShot(True)
+        _boot_splash._finish_timer.timeout.connect(_boot_splash.finish)
+        _boot_splash._finish_timer.start(delay_ms)

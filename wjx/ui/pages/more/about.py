@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     ScrollArea,
-    SubtitleLabel,
     BodyLabel,
     CaptionLabel,
     TitleLabel,

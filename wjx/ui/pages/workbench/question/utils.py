@@ -1,7 +1,8 @@
 """UI 辅助函数"""
 import logging
 from PySide6.QtGui import QColor, QIntValidator
-from qfluentwidgets import BodyLabel, LineEdit
+from PySide6.QtWidgets import QLabel
+from qfluentwidgets import LineEdit
 
 from wjx.ui.widgets.no_wheel import NoWheelSlider
 
@@ -17,7 +18,7 @@ def _shorten_text(text: str, limit: int = 80) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
-def _apply_label_color(label: BodyLabel, light: str, dark: str) -> None:
+def _apply_label_color(label: QLabel, light: str, dark: str) -> None:
     """为标签设置浅色/深色主题颜色。"""
     try:
         label.setTextColor(QColor(light), QColor(dark))

@@ -253,5 +253,5 @@ class QuestionPage(ScrollArea):
             option_count=4,
             distribution_mode="random",
             custom_weights=None,
-            question_num=str(row + 1),
+            question_num=row + 1,
         )

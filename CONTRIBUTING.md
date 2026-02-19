@@ -13,33 +13,51 @@
 - 从源码运行：`python fuck-wjx.py`。
 
 ## 当前目录结构（`wjx/`）
-- `main.py`：GUI 程序入口。
-- `boot.py`：启动流程相关。
-- `assets/`：针对指定地区随机ip的地区行政编码。
-- `core/`：核心业务逻辑。
-  - `engine/`：执行引擎（driver/runtime_control/navigation/submission/runner 等）。
-  - `survey/`：问卷解析与检测。
-  - `questions/`：题目配置与题型实现（`types/`），以及一致性校验（`consistency.py`）。
-  - `captcha/`：验证码处理。
-  - `ai/`：AI 运行时。
-  - `persona/`：画像与上下文约束。
-  - `stats/`：统计收集、持久化、分析。
-  - `services/`：核心服务层（如地区数据加载）。
-  - `state.py`：运行状态与全局控制变量。
-- `ui/`：界面层。
-  - `main_window.py`：主窗口编排。
-  - `controller/`：运行控制器（`run_controller.py`）。
-  - `pages/`：各页面（workbench/account/settings/more）。
-  - `widgets/`：通用 UI 组件。
-  - `dialogs/`：对话框。
-  - `helpers/`、`workers/`：界面辅助逻辑与后台任务。
-- `network/`：网络相关。
-  - `browser/driver.py`：浏览器驱动封装。
-  - `proxy/provider.py`：随机 IP/代理逻辑。
-  - `http_client.py`、`session_policy.py`：请求与会话策略。
-- `modes/`：运行模式控制（如定时模式）。
-- `utils/`：通用工具（`app/io/integrations/system/logging/update`）。
-- `__pycache__/`、`*.pyc`：运行时缓存文件，不应提交到仓库。
+
+```markdown
+wjx/
+├── main.py                # GUI 程序入口
+├── boot.py                # 启动流程相关
+├── assets/                # 针对指定地区随机ip的地区行政编码
+├── core/                  # 核心业务逻辑
+│   ├── engine/            # 执行引擎（driver/runtime_control/navigation/submission/runner 等）
+│   ├── survey/            # 问卷解析与检测
+│   ├── questions/         # 题目配置与题型实现（types/），以及一致性校验（consistency.py）
+│   │   └── types/         # 各题型实现
+│   ├── captcha/           # 验证码处理
+│   ├── ai/                # AI 运行时
+│   ├── persona/           # 画像与上下文约束
+│   ├── stats/             # 统计收集、持久化、分析
+│   ├── services/          # 核心服务层（如地区数据加载）
+│   └── state.py           # 运行状态与全局控制变量
+├── ui/                    # 界面层
+│   ├── main_window.py     # 主窗口编排
+│   ├── main_window_lazy_pages.py
+│   ├── main_window_popup_compat.py
+│   ├── main_window_update.py
+│   ├── controller/        # 运行控制器（run_controller.py）
+│   ├── pages/             # 各页面（workbench/account/settings/more）
+│   │   └── workbench/
+│   │       ├── dashboard.py
+│   │       ├── dashboard_clipboard.py
+│   │       ├── dashboard_entries.py
+│   │       ├── dashboard_random_ip.py
+│   │       ├── result.py
+│   │       ├── result_widgets.py
+│   │       └── result_metrics.py
+│   ├── widgets/           # 通用 UI 组件
+│   ├── dialogs/           # 对话框
+│   ├── helpers/           # 界面辅助逻辑
+│   └── workers/           # 后台任务
+├── network/               # 网络相关
+│   ├── browser/driver.py  # 浏览器驱动封装
+│   ├── proxy/provider.py  # 随机 IP/代理逻辑
+│   ├── http_client.py     # 请求策略
+│   └── session_policy.py  # 会话策略
+├── modes/                 # 运行模式控制（如定时模式）
+├── utils/                 # 通用工具（app/io/integrations/system/logging/update）
+└── __pycache__/           # 运行时缓存文件，不应提交到仓库
+```
 
 ## PR 流程（推荐）
 1. Fork 仓库并创建功能分支（例：`feature/xxx`）。

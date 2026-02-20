@@ -36,6 +36,8 @@ class MainWindowLazyPagesMixin:
         self.addSubInterface(self.dashboard, FluentIcon.HOME, "概览", NavigationItemPosition.TOP)
         self.addSubInterface(self.runtime_page, FluentIcon.DEVELOPER_TOOLS, "运行参数", NavigationItemPosition.TOP)
         self.addSubInterface(self._get_log_page(), FluentIcon.INFO, "日志", NavigationItemPosition.TOP)
+        # 社区页面
+        self.addSubInterface(self._get_community_page(), FluentIcon.CHAT, "社区", NavigationItemPosition.BOTTOM)
         # 设置页面
         self.addSubInterface(self._get_settings_page(), FluentIcon.SETTING, "设置", NavigationItemPosition.BOTTOM)
         # "更多"弹出式子菜单
@@ -85,8 +87,6 @@ class MainWindowLazyPagesMixin:
 
             self._community_page = CommunityPage(self)
             self._community_page.setObjectName("community")
-            if self.stackedWidget.indexOf(self._community_page) == -1:
-                self.stackedWidget.addWidget(self._community_page)
         return self._community_page
 
     def _get_about_page(self):
@@ -166,11 +166,6 @@ class MainWindowLazyPagesMixin:
         changelog_action = Action(FluentIcon.HISTORY, "更新日志")
         changelog_action.triggered.connect(lambda: self._switch_to_more_page(self._get_changelog_page()))
         menu.addAction(changelog_action)
-
-        # 社区
-        community_action = Action(FluentIcon.CHAT, "社区")
-        community_action.triggered.connect(lambda: self._switch_to_more_page(self._get_community_page()))
-        menu.addAction(community_action)
 
         # 客服与支持
         support_action = Action(FluentIcon.HELP, "客服与支持")

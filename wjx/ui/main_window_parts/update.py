@@ -37,6 +37,7 @@ class MainWindowUpdateMixin:
         _log_popup_error: Any
         close: Any
         _settings_page: Any
+        versionStatus: Any
 
     def _check_update_on_startup(self):
         """根据设置在启动时检查更新（后台异步执行）"""
@@ -57,25 +58,46 @@ class MainWindowUpdateMixin:
     def _on_update_checked(self, has_update: bool, update_info: dict):
         """更新检查完成的回调"""
         self._clear_update_checking_placeholder()
-        self._check_preview_version()
+        status = update_info.get("status", "unknown") if update_info else "unknown"
         if has_update:
             self.update_info = update_info
             self._show_update_notification()
         else:
+            self._apply_version_status_badge(status)
+
+    def _apply_version_status_badge(self, status: str):
+        """根据版本状态显示对应徽章（latest/preview/unknown）"""
+        if status == "latest":
+            self._check_preview_version()
             self._show_latest_version_badge()
+        elif status == "preview":
+            self._show_preview_badge()
+        else:
+            # unknown：网络失败或无法判断
+            self._check_preview_version()
+            self._show_unknown_badge()
+
+    def _notify_version_status(self, status: str):
+        """从后台线程安全地通知版本状态（通过信号转到主线程）"""
+        if hasattr(self, "versionStatus"):
+            self.versionStatus.emit(status)
+        else:
+            # 兼容旧接口
+            if status == "latest":
+                self.isLatestVersion.emit()
 
     def _on_update_check_failed(self, error_message: str):
-        """更新检查失败的回调"""
+        """更新检查失败的回调（Worker 异常时触发，正常情况下不再使用）"""
         self._clear_update_checking_placeholder()
         self._check_preview_version()
         logging.debug(f"更新检查失败: {error_message}")
-        # 失败时不显示任何通知，静默处理
+        self._show_unknown_badge()
 
     def _show_update_checking_placeholder(self):
         """更新检查期间在标题栏徽章位置显示转圈占位。"""
         if self._update_checking_spinner:
             return
-        for attr in ("_latest_badge", "_outdated_badge", "_preview_badge"):
+        for attr in ("_latest_badge", "_outdated_badge", "_preview_badge", "_unknown_badge"):
             badge = getattr(self, attr, None)
             if badge is None:
                 continue
@@ -136,6 +158,24 @@ class MainWindowUpdateMixin:
             self.titleBar.hBoxLayout.insertWidget(2, self._latest_badge, 0, Qt.AlignmentFlag.AlignVCenter)
         except Exception:
             logging.debug("显示最新版徽章失败", exc_info=True)
+
+    def _show_unknown_badge(self):
+        """在标题栏显示未知状态徽章（灰色，网络失败时使用）"""
+        # 预览版优先，不覆盖
+        if self._preview_badge:
+            return
+        if getattr(self, "_unknown_badge", None):
+            return
+        try:
+            self._unknown_badge = InfoBadge.custom(
+                "未知",
+                QColor("#6b7280"),  # 浅色主题背景（灰色）
+                QColor("#9ca3af"),  # 深色主题背景（更亮的灰色）
+                parent=self.titleBar,
+            )
+            self.titleBar.hBoxLayout.insertWidget(2, self._unknown_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        except Exception:
+            logging.debug("显示未知状态徽章失败", exc_info=True)
 
     def _show_outdated_badge(self):
         """在标题栏显示过时版本徽章（红色）"""

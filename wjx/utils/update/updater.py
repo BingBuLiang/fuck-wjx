@@ -101,10 +101,17 @@ class UpdateManager:
 
     @staticmethod
     def check_updates() -> Optional[Dict[str, Any]]:
-        """检查 GitHub 上是否有新版本。"""
+        """检查 GitHub 上是否有新版本。
+
+        返回值说明：
+        - 有新版本：返回包含 has_update=True 的 dict
+        - 当前已是最新：返回 {"has_update": False, "status": "latest", ...}
+        - 当前版本高于远程（预览版）：返回 {"has_update": False, "status": "preview", ...}
+        - 网络/解析失败：返回 {"has_update": False, "status": "unknown"}
+        """
         if not version:
             logging.warning("更新功能依赖 packaging 模块")
-            return None
+            return {"has_update": False, "status": "unknown"}
 
         try:
             headers = {"Accept": "application/vnd.github.v3+json"}
@@ -119,11 +126,17 @@ class UpdateManager:
 
             # 比较版本号
             try:
-                if version.parse(latest_version) <= version.parse(current_version):
-                    return None
+                parsed_latest = version.parse(latest_version)
+                parsed_current = version.parse(current_version)
+                if parsed_current > parsed_latest:
+                    # 本地版本高于远程，属于预览/开发版
+                    logging.debug(f"当前版本 {current_version} 高于远程最新版 {latest_version}，视为预览版")
+                    return {"has_update": False, "status": "preview", "current_version": current_version, "latest_version": latest_version}
+                if parsed_current == parsed_latest:
+                    return {"has_update": False, "status": "latest", "current_version": current_version}
             except Exception:
                 logging.warning(f"版本比较失败: {latest_version} vs {current_version}")
-                return None
+                return {"has_update": False, "status": "unknown"}
 
             # 查找 .exe 文件资源（Release中的最新exe文件）
             download_url = None
@@ -136,10 +149,11 @@ class UpdateManager:
 
             if not download_url:
                 logging.warning("Release 中没有找到 .exe 文件")
-                return None
+                return {"has_update": False, "status": "unknown"}
 
             return {
                 "has_update": True,
+                "status": "outdated",
                 "version": latest_version,
                 "download_url": download_url,
                 "release_notes": latest_release.get("body", ""),
@@ -149,13 +163,13 @@ class UpdateManager:
 
         except http_client.exceptions.Timeout:
             logging.warning("检查更新超时")
-            return None
+            return {"has_update": False, "status": "unknown"}
         except http_client.exceptions.RequestException as exc:
             logging.warning(f"检查更新失败: {exc}")
-            return None
+            return {"has_update": False, "status": "unknown"}
         except Exception as exc:
             logging.error(f"检查更新时发生错误: {exc}")
-            return None
+            return {"has_update": False, "status": "unknown"}
 
     @staticmethod
     def get_all_releases() -> list:
@@ -402,7 +416,8 @@ def check_updates_on_startup(gui=None, *, on_result=None) -> None:
             logging.debug("开始检查更新...")
             update_info = UpdateManager.check_updates()
             logging.debug(f"检查更新结果: {update_info}")
-            if update_info:
+            status = update_info.get("status", "unknown") if update_info else "unknown"
+            if status == "outdated":
                 if gui is not None:
                     setattr(gui, "update_info", update_info)
                     callback = getattr(gui, "show_update_notification", None) or getattr(
@@ -414,12 +429,18 @@ def check_updates_on_startup(gui=None, *, on_result=None) -> None:
                 if callable(on_result):
                     on_result(update_info)
             else:
-                logging.debug("当前已是最新版本")
-                # 通知 GUI 显示最新版本徽章
+                logging.debug(f"更新检查状态: {status}")
+                # 通知 GUI 根据状态显示对应徽章
                 if gui is not None:
-                    notify_latest = getattr(gui, "_notify_latest_version", None)
-                    if callable(notify_latest):
-                        notify_latest()
+                    notify = getattr(gui, "_notify_version_status", None)
+                    if callable(notify):
+                        notify(status)
+                    else:
+                        # 兼容旧接口
+                        if status == "latest":
+                            notify_latest = getattr(gui, "_notify_latest_version", None)
+                            if callable(notify_latest):
+                                notify_latest()
         except Exception as exc:
             logging.warning(f"启动时检查更新失败: {exc}")
 
@@ -454,12 +475,18 @@ def check_for_updates(gui=None) -> Optional[Dict[str, Any]]:
         update_info = UpdateManager.check_updates()
         if not gui:
             return update_info
-        if update_info:
+        status = update_info.get("status", "unknown") if update_info else "unknown"
+        if status == "outdated":
             gui.update_info = update_info
             # 使用与启动时检查更新相同的弹窗样式
             show_update_notification(gui)
-        else:
+        elif status == "latest":
             gui._log_popup_info("检查更新", f"当前已是最新版本 v{__VERSION__}")
+        elif status == "preview":
+            latest = update_info.get("latest_version", "?")
+            gui._log_popup_info("检查更新", f"当前版本 v{__VERSION__} 高于远程最新版 v{latest}，属于预览/开发版本")
+        else:
+            gui._log_popup_error("检查更新失败", "无法连接到更新服务器，请检查网络连接后重试")
         return update_info
     except Exception as exc:
         if gui:

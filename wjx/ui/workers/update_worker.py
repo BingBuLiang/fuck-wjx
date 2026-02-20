@@ -8,7 +8,7 @@ class UpdateCheckWorker(QThread):
 
     # 信号：更新检查完成 (has_update: bool, update_info: dict)
     update_checked = Signal(bool, dict)
-    # 信号：检查失败 (error_message: str)
+    # 信号：检查失败 (error_message: str)  —— 保留兼容，但正常情况下不再使用
     check_failed = Signal(str)
 
     def __init__(self, parent=None):
@@ -23,13 +23,17 @@ class UpdateCheckWorker(QThread):
             logging.debug("后台检查更新开始...")
             update_info = UpdateManager.check_updates()
 
-            if update_info:
-                has_update = True
+            # check_updates() 现在始终返回 dict，通过 status 字段区分结果
+            if update_info is None:
+                update_info = {"has_update": False, "status": "unknown"}
+
+            has_update = update_info.get("has_update", False)
+            status = update_info.get("status", "unknown")
+
+            if has_update:
                 logging.info(f"发现新版本: {update_info.get('version', 'unknown')}")
             else:
-                has_update = False
-                update_info = {}
-                logging.debug("当前已是最新版本")
+                logging.debug(f"更新检查状态: {status}")
 
             # 发送结果信号
             self.update_checked.emit(has_update, update_info)
@@ -37,4 +41,6 @@ class UpdateCheckWorker(QThread):
         except Exception as exc:
             error_msg = f"检查更新失败: {exc}"
             logging.warning(error_msg)
+            # 异常情况也通过 update_checked 发送，status=unknown
+            self.update_checked.emit(False, {"has_update": False, "status": "unknown"})
             self.check_failed.emit(error_msg)

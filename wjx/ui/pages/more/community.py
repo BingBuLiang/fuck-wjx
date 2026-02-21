@@ -57,38 +57,6 @@ class CommunityPage(ScrollArea):
         root_layout.setSpacing(0)
         root_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-
-from wjx.utils.app.version import GITHUB_OWNER, GITHUB_REPO
-from wjx.utils.io.load_save import get_assets_directory
-from wjx.utils.logging.log_utils import log_suppressed_exception
-
-_GITHUB_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}"
-
-
-class CommunityPage(ScrollArea):
-    """社区页面，展示QQ群、开源声明和开发者招募"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.view = QWidget(self)
-        self.content_widget = QWidget(self.view)
-        self._compact = False
-        self._qq_pixmap = None
-
-        self.setWidget(self.view)
-        self.setWidgetResizable(True)
-        self.enableTransparentBackground()
-
-        self._build_ui()
-
-    # ── 构建 UI ──────────────────────────────────────────────
-
-    def _build_ui(self):
-        root_layout = QVBoxLayout(self.view)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
-        root_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-
         self.content_widget.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )

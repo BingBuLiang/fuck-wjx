@@ -167,5 +167,5 @@ def slider(driver: BrowserDriver, current: int, score: Optional[float] = None) -
     _set_slider_input_value(driver, current, target_value)
     # 记录统计数据（将目标值映射为索引，按step计算）
     if step_value > 0 and max_value > min_value:
-        step_index = int(round((target_value - min_value) / step_value))
+        _ = int(round((target_value - min_value) / step_value))
 

@@ -1,5 +1,5 @@
 """量表题处理"""
-from typing import List, Union
+from typing import List
 
 from wjx.network.browser import By, BrowserDriver
 from wjx.core.persona.context import record_answer

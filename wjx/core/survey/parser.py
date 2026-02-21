@@ -1,5 +1,4 @@
 """问卷解析模块 - 从 HTML 解析问卷结构"""
-import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 import logging
@@ -339,7 +338,6 @@ def _collect_matrix_option_texts(soup, question_div, question_number: int) -> Tu
     option_texts: List[str] = []
     matrix_rows = 0
     row_texts: List[str] = []
-    row_text_map: Dict[int, str] = {}
     def _extract_attr_text(node) -> str:
         if node is None:
             return ""

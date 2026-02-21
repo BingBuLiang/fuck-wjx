@@ -6,7 +6,6 @@
 
 import logging
 import sys
-from typing import Optional
 
 # 只在 Windows 平台导入 winreg
 if sys.platform == "win32":

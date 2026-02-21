@@ -2,7 +2,7 @@
 import re
 from typing import List, Tuple
 
-from wjx.network.browser import By, BrowserDriver
+from wjx.network.browser import By
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 

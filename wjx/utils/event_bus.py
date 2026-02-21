@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable, DefaultDict, Dict, List, Optional
+from typing import Any, Callable, DefaultDict, List, Optional
 from collections import defaultdict
 
 

@@ -1,5 +1,4 @@
 """填空题/多项填空题处理"""
-import time
 from typing import Any, List, Optional, Set
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception

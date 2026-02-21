@@ -4,7 +4,7 @@ import logging
 import math
 import random
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from wjx.network.browser import By, BrowserDriver, NoSuchElementException
 from wjx.utils.app.config import (

@@ -3,9 +3,9 @@ import logging
 import random
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-import wjx.core.state as state
+from wjx.core.task_context import TaskContext
 from wjx.core.engine.dom_helpers import (
     _count_choice_inputs_driver,
     _driver_question_looks_like_description,
@@ -51,7 +51,7 @@ class _QuestionDispatcher:
     """题型分发器 - 策略模式实现。
 
     每种题型对应一个 callable，签名为:
-        handler(driver, question_num, type_index, state) -> Optional[int]
+        handler(driver, question_num, type_index, ctx) -> Optional[int]
     返回值：
         - None   : 按验，计数器 += 1
         - int    : 直接用返回值覆盖计数器（矩阵题）
@@ -69,7 +69,7 @@ class _QuestionDispatcher:
         """(re)build 注册表。"""
         self._REGISTRY = {
             # type_code -> (index_key, handler_fn)
-            # handler_fn signature: (driver, q_num, index, state) -> int | None
+            # handler_fn signature: (driver, q_num, index, ctx) -> int | None
             "3":  ("single",   self._handle_single),
             "4":  ("multiple", self._handle_multiple),
             "5":  ("scale",    self._handle_scale),
@@ -80,26 +80,26 @@ class _QuestionDispatcher:
 
     # -- 各题型处理器 --------------------------------------------------
 
-    def _handle_single(self, driver, q_num, idx, s):
-        _single_impl(driver, q_num, idx, s.single_prob, s.single_option_fill_texts)
+    def _handle_single(self, driver, q_num, idx, ctx: TaskContext):
+        _single_impl(driver, q_num, idx, ctx.single_prob, ctx.single_option_fill_texts)
 
-    def _handle_multiple(self, driver, q_num, idx, s):
-        _multiple_impl(driver, q_num, idx, s.multiple_prob, s.multiple_option_fill_texts)
+    def _handle_multiple(self, driver, q_num, idx, ctx: TaskContext):
+        _multiple_impl(driver, q_num, idx, ctx.multiple_prob, ctx.multiple_option_fill_texts)
 
-    def _handle_scale(self, driver, q_num, idx, s, question_div=None):
+    def _handle_scale(self, driver, q_num, idx, ctx: TaskContext, question_div=None):
         if question_div is not None and _driver_question_looks_like_rating(question_div):
-            _score_impl(driver, q_num, idx, s.scale_prob)
+            _score_impl(driver, q_num, idx, ctx.scale_prob)
         else:
-            _scale_impl(driver, q_num, idx, s.scale_prob)
+            _scale_impl(driver, q_num, idx, ctx.scale_prob)
 
-    def _handle_matrix(self, driver, q_num, idx, s):
-        return _matrix_impl(driver, q_num, idx, s.matrix_prob)
+    def _handle_matrix(self, driver, q_num, idx, ctx: TaskContext):
+        return _matrix_impl(driver, q_num, idx, ctx.matrix_prob)
 
-    def _handle_dropdown(self, driver, q_num, idx, s):
-        _dropdown_impl(driver, q_num, idx, s.droplist_prob, s.droplist_option_fill_texts)
+    def _handle_dropdown(self, driver, q_num, idx, ctx: TaskContext):
+        _dropdown_impl(driver, q_num, idx, ctx.droplist_prob, ctx.droplist_option_fill_texts)
 
-    def _handle_slider(self, driver, q_num, idx, s):
-        slider_score = _resolve_slider_score(idx, s.slider_targets)
+    def _handle_slider(self, driver, q_num, idx, ctx: TaskContext):
+        slider_score = _resolve_slider_score(idx, ctx.slider_targets)
         _slider_impl(driver, q_num, slider_score)
 
     def fill(
@@ -110,7 +110,7 @@ class _QuestionDispatcher:
         question_div,
         config_entry: Optional[Tuple[str, int]],
         indices: Dict[str, int],
-        s,
+        ctx: TaskContext,
     ) -> Optional[bool]:
         """分发题型并填写。
 
@@ -121,7 +121,7 @@ class _QuestionDispatcher:
             question_div: 题目 DOM 元素
             config_entry: (type_key, idx) | None
             indices: 各题型当前计数器字典
-            s: state 模块或 TaskContext
+            ctx: 任务上下文（替代全局 state）
 
         Returns:
             None  -> 分发就序型题型，计数器 +=1
@@ -142,7 +142,7 @@ class _QuestionDispatcher:
                 print(f"第{question_num}题为位置题，暂不支持，已跳过")
                 return False
             _idx = config_entry[1] if config_entry and config_entry[0] == "text" else indices.get("text", 0)
-            _text_impl(driver, question_num, _idx, s.texts, s.texts_prob, s.text_entry_types, s.text_ai_flags, s.text_titles)
+            _text_impl(driver, question_num, _idx, ctx.texts, ctx.texts_prob, ctx.text_entry_types, ctx.text_ai_flags, ctx.text_titles)
             indices["text"] = _idx + 1
             return None  # 文本题内部已处理计数，返回 None
 
@@ -159,9 +159,9 @@ class _QuestionDispatcher:
         )
 
         if question_type == "5":  # scale / score 需要传 question_div
-            result = handler(driver, question_num, _idx, s, question_div=question_div)
+            result = handler(driver, question_num, _idx, ctx, question_div=question_div)
         else:
-            result = handler(driver, question_num, _idx, s)
+            result = handler(driver, question_num, _idx, ctx)
 
         if isinstance(result, int):
             indices[index_key] = result
@@ -173,7 +173,11 @@ class _QuestionDispatcher:
 _dispatcher = _QuestionDispatcher()
 
 
-def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) -> bool:
+def brush(
+    driver: BrowserDriver,
+    ctx: TaskContext,
+    stop_signal: Optional[threading.Event] = None,
+) -> bool:
     """批量填写一份问卷；返回 True 代表完整提交，False 代表过程中被用户打断。"""
     # 每份问卷开始前：生成画像 → 重置上下文 → 重置倾向
     # 画像必须在 reset_tendency() 之前设置，因为倾向模块会参考画像的满意度
@@ -185,7 +189,7 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
     logging.debug("本轮画像：%s", persona.to_description())
     questions_per_page = detect(driver, stop_signal=stop_signal)
     total_question_count = sum(questions_per_page)
-    fast_mode = _is_fast_mode()
+    fast_mode = _is_fast_mode(ctx)
 
     # 各题型计数器统一放入字典，方便 dispatcher 内部修改
     _indices: Dict[str, int] = {
@@ -199,9 +203,9 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
     }
 
     current_question_number = 0
-    active_stop = stop_signal or state.stop_event
+    active_stop = stop_signal or ctx.stop_event
     question_delay_plan: Optional[List[float]] = None
-    if _full_simulation_active() and total_question_count > 0:
+    if _full_simulation_active(ctx) and total_question_count > 0:
         target_seconds = _calculate_full_simulation_run_target(total_question_count)
         question_delay_plan = _build_per_question_delay_plan(total_question_count, target_seconds)
         planned_total = sum(question_delay_plan)
@@ -223,7 +227,7 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
             if _abort_requested():
                 return False
             current_question_number += 1
-            if _full_simulation_active():
+            if _full_simulation_active(ctx):
                 if _sleep_with_stop(active_stop, random.uniform(0.8, 1.5)):
                     return False
             question_selector = f"#div{current_question_number}"
@@ -257,7 +261,7 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                 continue
 
             # 通过配置映射表查找当前题号在对应题型概率列表中的正确索引
-            _config_entry = state.question_config_index_map.get(current_question_number)
+            _config_entry = ctx.question_config_index_map.get(current_question_number)
 
             # ── 策略模式分发 ─────────────────────────────────────────
             dispatch_result = _dispatcher.fill(
@@ -267,20 +271,20 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                 question_div=question_div,
                 config_entry=_config_entry,
                 indices=_indices,
-                s=state,
+                ctx=ctx,
             )
 
             if dispatch_result is False:
-                # 未知题型尺对处理：尝试公山式题 / 填空题
+                # 未知题型处理：尝试选择题 / 填空题
                 handled = False
                 if question_div is not None:
                     checkbox_count, radio_count = _count_choice_inputs_driver(question_div)
                     if checkbox_count or radio_count:
                         if checkbox_count >= radio_count:
-                            _multiple_impl(driver, current_question_number, _indices["multiple"], state.multiple_prob, state.multiple_option_fill_texts)
+                            _multiple_impl(driver, current_question_number, _indices["multiple"], ctx.multiple_prob, ctx.multiple_option_fill_texts)
                             _indices["multiple"] += 1
                         else:
-                            _single_impl(driver, current_question_number, _indices["single"], state.single_prob, state.single_option_fill_texts)
+                            _single_impl(driver, current_question_number, _indices["single"], ctx.single_prob, ctx.single_option_fill_texts)
                             _indices["single"] += 1
                         handled = True
 
@@ -306,11 +310,11 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                             driver,
                             current_question_number,
                             _indices["text"],
-                            state.texts,
-                            state.texts_prob,
-                            state.text_entry_types,
-                            state.text_ai_flags,
-                            state.text_titles,
+                            ctx.texts,
+                            ctx.texts_prob,
+                            ctx.text_entry_types,
+                            ctx.text_ai_flags,
+                            ctx.text_titles,
                         )
                         _indices["text"] += 1
                         print(
@@ -320,7 +324,7 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                     else:
                         print(f"第{current_question_number}题为不支持类型(type={question_type})")
 
-        if _full_simulation_active():
+        if _full_simulation_active(ctx):
             _human_scroll_after_question(driver)
         if (
             question_delay_plan
@@ -345,7 +349,7 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
                 time.sleep(buffer_delay)
         is_last_page = (page_index == total_pages - 1)
         if is_last_page:
-            if _simulate_answer_duration_delay(active_stop):
+            if _simulate_answer_duration_delay(ctx, active_stop):
                 return False
             if _abort_requested():
                 return False
@@ -364,6 +368,6 @@ def brush(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None) 
     if _abort_requested():
         reset_persona()
         return False
-    submit(driver, stop_signal=active_stop)
+    submit(driver, ctx=ctx, stop_signal=active_stop)
     reset_persona()
     return True

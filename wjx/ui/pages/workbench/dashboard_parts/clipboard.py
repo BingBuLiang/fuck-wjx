@@ -153,7 +153,6 @@ class DashboardClipboardMixin:
     def _qimage_to_ndarray(self, image):
         """将 QImage 安全转换为 OpenCV 兼容的 numpy ndarray (BGR)。"""
         import numpy as np
-        from PySide6.QtCore import QBuffer, QIODevice
         from PySide6.QtGui import QImage
 
         if not isinstance(image, QImage) or image.isNull():

@@ -365,11 +365,9 @@ def validate_question_config(entries: List[QuestionEntry], questions_info: Optio
         if question_type == "multiple":
             # 获取多选题的限制信息
             multi_min_limit: Optional[int] = None
-            multi_max_limit: Optional[int] = None
 
             if questions_info and idx < len(questions_info):
                 multi_min_limit = questions_info[idx].get("multi_min_limit")
-                multi_max_limit = questions_info[idx].get("multi_max_limit")
 
             # 获取概率配置
             probs = getattr(entry, "custom_weights", None) or getattr(entry, "probabilities", None)

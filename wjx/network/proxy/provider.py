@@ -1,9 +1,7 @@
 """随机 IP / 代理管理 - 获取和切换代理 IP"""
 import json
 import logging
-import os
 import random
-import re
 import threading
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -12,7 +10,6 @@ from typing import Any, Callable, List, Optional, Set
 import wjx.network.http_client as http_client
 from wjx.utils.app.config import (
     CARD_VALIDATION_ENDPOINT,
-    CONTACT_API_URL,
     DEFAULT_HTTP_HEADERS,
     PIKACHU_PROXY_API,
     PROXY_HEALTH_CHECK_TIMEOUT,

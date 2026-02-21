@@ -2,13 +2,12 @@
 import logging
 import threading
 import time
-from typing import Literal, Optional, Tuple
+from typing import Optional
 from urllib.parse import urlparse
 
-import wjx.core.state as state
-import wjx.modes.duration_control as duration_control
 from wjx.core.engine.runtime_control import _is_fast_mode, _sleep_with_stop
 from wjx.core.questions.utils import extract_text_from_element as _extract_text_from_element
+from wjx.core.task_context import TaskContext
 from wjx.network.browser import By, BrowserDriver, NoSuchElementException
 from wjx.utils.app.config import SUBMIT_CLICK_SETTLE_DELAY, SUBMIT_INITIAL_DELAY
 from wjx.utils.logging.log_utils import log_suppressed_exception
@@ -77,13 +76,27 @@ def _click_submit_button(driver: BrowserDriver, max_wait: float = 10.0) -> bool:
     return False
 
 
-def submit(driver: BrowserDriver, stop_signal: Optional[threading.Event] = None):
+def submit(
+    driver: BrowserDriver,
+    ctx: Optional[TaskContext] = None,
+    stop_signal: Optional[threading.Event] = None,
+):
     """点击提交按钮并结束。
 
     仅保留最基础的行为：可选等待 -> 点击提交 -> 可选稳定等待。
     不再做弹窗确认/验证码检测/JS 强行触发等兜底逻辑。
     """
-    fast_mode = _is_fast_mode()
+    if ctx is not None:
+        fast_mode = _is_fast_mode(ctx)
+    else:
+        # 向后兼容：无 ctx 时从全局 state 读取（已弃用）
+        import wjx.core.state as _state
+        fast_mode = (
+            not _state.duration_control_enabled
+            and not _state.random_proxy_ip_enabled
+            and _state.submit_interval_range_seconds == (0, 0)
+            and _state.answer_duration_range_seconds == (0, 0)
+        )
     settle_delay = 0 if fast_mode else SUBMIT_CLICK_SETTLE_DELAY
     pre_submit_delay = 0 if fast_mode else SUBMIT_INITIAL_DELAY
 

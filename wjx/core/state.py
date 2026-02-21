@@ -1,4 +1,9 @@
-"""全局运行状态与控制变量"""
+"""全局运行状态与控制变量
+
+.. deprecated::
+    此模块已弃用。新代码应通过 ``TaskContext`` 实例获取/修改运行时状态。
+    现有引用将在后续版本中逐步清除。
+"""
 import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
 

@@ -4,40 +4,35 @@ import threading
 import time
 from typing import Any, Optional
 
-import wjx.core.state as state
+from wjx.core.task_context import TaskContext
+from wjx.utils.event_bus import bus as _event_bus, EVENT_TARGET_REACHED
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
-def _is_fast_mode() -> bool:
-    # 极速模式：时长控制/随机IP关闭且时间间隔为0时自动启用
-    return (
-        not state.duration_control_enabled
-        and not state.random_proxy_ip_enabled
-        and state.submit_interval_range_seconds == (0, 0)
-        and state.answer_duration_range_seconds == (0, 0)
-    )
+def _is_fast_mode(ctx: TaskContext) -> bool:
+    """极速模式：时长控制/随机IP关闭且时间间隔为0时自动启用。"""
+    return ctx.is_fast_mode()
 
 
-def _timed_mode_active() -> bool:
-    return bool(state.timed_mode_enabled)
+def _timed_mode_active(ctx: TaskContext) -> bool:
+    return bool(ctx.timed_mode_enabled)
 
 
-def _handle_submission_failure(stop_signal: Optional[threading.Event], gui_instance: Optional[Any] = None) -> bool:
+def _handle_submission_failure(
+    ctx: TaskContext,
+    stop_signal: Optional[threading.Event],
+) -> bool:
     """
     递增失败计数；当开启失败止损时超过阈值会触发停止。
     返回 True 表示已触发强制停止。
     """
-    with state.lock:
-        state.cur_fail += 1
-        # 同步更新 TaskContext（如果可用）
-        if gui_instance and hasattr(gui_instance, 'task_ctx') and gui_instance.task_ctx:
-            with gui_instance.task_ctx.lock:
-                gui_instance.task_ctx.cur_fail += 1
-        if state.stop_on_fail_enabled:
-            print(f"已失败{state.cur_fail}次, 失败次数达到{int(state.fail_threshold)}次将强制停止")
+    with ctx.lock:
+        ctx.cur_fail += 1
+        if ctx.stop_on_fail_enabled:
+            print(f"已失败{ctx.cur_fail}次, 失败次数达到{int(ctx.fail_threshold)}次将强制停止")
         else:
-            print(f"已失败{state.cur_fail}次（失败止损已关闭）")
-    if state.stop_on_fail_enabled and state.cur_fail >= state.fail_threshold:
+            print(f"已失败{ctx.cur_fail}次（失败止损已关闭）")
+    if ctx.stop_on_fail_enabled and ctx.cur_fail >= ctx.fail_threshold:
         logging.critical("失败次数过多，强制停止，请检查配置是否正确")
         if stop_signal:
             stop_signal.set()
@@ -54,20 +49,25 @@ def _wait_if_paused(gui_instance: Optional[Any], stop_signal: Optional[threading
 
 
 def _trigger_target_reached_stop(
-    gui_instance: Optional[Any],
+    ctx: TaskContext,
     stop_signal: Optional[threading.Event],
+    gui_instance: Optional[Any] = None,
 ) -> None:
     """达到目标份数时触发全局立即停止。"""
-    with state._target_reached_stop_lock:
-        if state._target_reached_stop_triggered:
+    with ctx._target_reached_stop_lock:
+        if ctx._target_reached_stop_triggered:
             if stop_signal:
                 stop_signal.set()
             return
-        state._target_reached_stop_triggered = True
+        ctx._target_reached_stop_triggered = True
 
     if stop_signal:
         stop_signal.set()
 
+    # 通过 EventBus 通知上层
+    _event_bus.emit(EVENT_TARGET_REACHED, ctx=ctx)
+
+    # 兼容旧式 gui_instance 回调（过渡期保留）
     def _notify():
         try:
             if gui_instance and hasattr(gui_instance, "force_stop_immediately"):
@@ -89,13 +89,6 @@ def _trigger_target_reached_stop(
             return
         except Exception:
             logging.debug("派发任务完成事件到主线程失败", exc_info=True)
-    root = getattr(gui_instance, "root", None) if gui_instance else None
-    if root is not None and threading.current_thread() is threading.main_thread():
-        try:
-            root.after(0, _notify)
-            return
-        except Exception as exc:
-            log_suppressed_exception("runtime_control._trigger_target_reached_stop root.after", exc)
     _notify()
 
 

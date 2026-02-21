@@ -1,5 +1,5 @@
 """单选题处理"""
-from typing import Any, List, Optional, Set, Union
+from typing import Any, List, Set
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 

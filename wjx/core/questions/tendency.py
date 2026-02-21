@@ -11,7 +11,7 @@
 """
 import random
 import threading
-from typing import List, Optional, Union
+from typing import List, Union
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 

@@ -6,29 +6,21 @@ import logging
 import copy
 from urllib.parse import urlparse
 import threading
-import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
-
-import wjx.network.http_client as http_client
 
 from PySide6.QtCore import QObject, Signal, QTimer, QCoreApplication
 
 import wjx.core.state as state
 from wjx.core.task_context import TaskContext
-from wjx.utils.app.config import DEFAULT_HTTP_HEADERS, DEFAULT_FILL_TEXT, STOP_FORCE_WAIT_SECONDS
+from wjx.utils.app.config import DEFAULT_FILL_TEXT, STOP_FORCE_WAIT_SECONDS
 from wjx.utils.system.cleanup_runner import CleanupRunner
 from wjx.core.questions.config import QuestionEntry, configure_probabilities, validate_question_config
 from wjx.core.engine import (
-    create_playwright_driver,
-    parse_survey_questions_from_html,
     _normalize_question_type_code,
-    _extract_survey_title_from_html,
-    _normalize_html_text,
     run,
 )
 from wjx.utils.io.load_save import RuntimeConfig, load_config, save_config
 from wjx.network.proxy import (
-    _fetch_new_proxy_batch,
     get_effective_proxy_api_url,
     is_custom_proxy_api_active,
 )
@@ -307,39 +299,8 @@ class RunController(QObject):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _parse_questions(self, url: str) -> Tuple[List[Dict[str, Any]], str]:
-        info: Optional[List[Dict[str, Any]]] = None
-        title = ""
-        try:
-            resp = http_client.get(url, timeout=12, headers=DEFAULT_HTTP_HEADERS, proxies={})
-            resp.raise_for_status()
-            html = resp.text
-            info = parse_survey_questions_from_html(html)
-            title = _extract_survey_title_from_html(html) or title
-        except Exception:
-            logging.exception("使用 httpx 获取问卷失败，url=%r", url)
-            info = None
-        if info is None:
-            driver = None
-            try:
-                driver, _ = create_playwright_driver(headless=True, user_agent=None)
-                driver.get(url)
-                time.sleep(2.5)
-                page_source = driver.page_source
-                info = parse_survey_questions_from_html(page_source)
-                title = _extract_survey_title_from_html(page_source) or title
-            except Exception:
-                logging.exception("使用 Playwright 获取问卷失败，url=%r", url)
-                info = None
-            finally:
-                try:
-                    if driver:
-                        driver.quit()
-                except Exception:
-                    logging.debug("关闭解析用浏览器实例失败", exc_info=True)
-        if not info:
-            raise RuntimeError("无法打开问卷链接，请确认链接有效且网络正常")
-        normalized_title = _normalize_html_text(title) if title else ""
-        return info, normalized_title
+        from wjx.core.services.survey_service import parse_survey
+        return parse_survey(url)
 
     @staticmethod
     def _as_float(val, default):
@@ -718,10 +679,10 @@ class RunController(QObject):
 
     def _prefetch_proxies_and_start(self, config: RuntimeConfig) -> None:
         try:
-            proxy_pool = _fetch_new_proxy_batch(
+            from wjx.core.services.proxy_service import prefetch_proxy_pool
+            proxy_pool = prefetch_proxy_pool(
                 expected_count=max(1, config.threads),
-                proxy_url=config.random_proxy_api or get_effective_proxy_api_url(),
-                notify_on_area_error=False,
+                proxy_api_url=config.random_proxy_api or get_effective_proxy_api_url(),
                 stop_signal=self.stop_event,
             )
         except Exception as exc:
@@ -785,6 +746,7 @@ class RunController(QObject):
             t = threading.Thread(
                 target=run,
                 args=(x, y, self.stop_event, self.adapter),
+                kwargs={"ctx": ctx},
                 daemon=True,
                 name=f"Worker-{idx+1}"
             )

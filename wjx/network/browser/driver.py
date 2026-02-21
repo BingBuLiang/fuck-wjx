@@ -8,7 +8,6 @@ import os
 import random
 import shutil
 import subprocess
-import sys
 import time
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 from urllib.parse import urlparse

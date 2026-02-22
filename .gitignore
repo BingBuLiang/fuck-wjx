@@ -9,6 +9,7 @@ desktop.ini
 push.bat
 .venv/
 control/
+ipzanAPI_doc.md
 AGENTS.md
 CLAUDE.md
 

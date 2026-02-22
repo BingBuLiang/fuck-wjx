@@ -82,16 +82,6 @@ class SettingsPage(ScrollArea):
         self.ask_save_card.setChecked(get_bool_from_qsettings(settings.value("ask_save_on_close"), True))
         self.behavior_group.addSettingCard(self.ask_save_card)
 
-        # 自动保存统计结果设置卡片
-        self.auto_save_stats_card = SwitchSettingCard(
-            FluentIcon.FLAG,
-            "自动保存统计结果",
-            "执行完成后自动保存本次作答的统计数据",
-            self.behavior_group
-        )
-        self.auto_save_stats_card.setChecked(get_bool_from_qsettings(settings.value("auto_save_stats"), True))
-        self.behavior_group.addSettingCard(self.auto_save_stats_card)
-
         layout.addWidget(self.behavior_group)
 
         # 软件更新组
@@ -173,7 +163,6 @@ class SettingsPage(ScrollArea):
         self.sidebar_card.switchButton.checkedChanged.connect(self._on_sidebar_toggled)
         self.topmost_card.switchButton.checkedChanged.connect(self._on_topmost_toggled)
         self.ask_save_card.switchButton.checkedChanged.connect(self._on_ask_save_on_close_toggled)
-        self.auto_save_stats_card.switchButton.checkedChanged.connect(self._on_auto_save_stats_toggled)
         self.debug_mode_card.switchButton.checkedChanged.connect(self._on_debug_mode_toggled)
         self.restart_card.clicked.connect(self._restart_program)
         self.reset_ui_card.clicked.connect(self._on_reset_ui_settings)
@@ -257,20 +246,6 @@ class SettingsPage(ScrollArea):
                 duration=2000
             )
 
-    def _apply_auto_save_stats_state(self, checked: bool, persist: bool = True, show_tip: bool = True):
-        """应用自动保存统计结果设置"""
-        settings = QSettings("FuckWjx", "Settings")
-        if persist:
-            settings.setValue("auto_save_stats", checked)
-        if show_tip:
-            InfoBar.success(
-                "",
-                f"自动保存统计结果已{'开启' if checked else '关闭'}",
-                parent=self.window(),
-                position=InfoBarPosition.TOP,
-                duration=2000
-            )
-
     def _apply_debug_mode_state(self, checked: bool, persist: bool = True, show_tip: bool = True):
         """应用调试模式设置"""
         from wjx.utils.logging.log_utils import set_debug_mode
@@ -332,10 +307,6 @@ class SettingsPage(ScrollArea):
         """关闭前询问保存切换"""
         self._apply_ask_save_state(checked)
 
-    def _on_auto_save_stats_toggled(self, checked: bool):
-        """自动保存统计结果切换"""
-        self._apply_auto_save_stats_state(checked)
-
     def _on_debug_mode_toggled(self, checked: bool):
         """调试模式切换"""
         self._apply_debug_mode_state(checked)
@@ -353,21 +324,19 @@ class SettingsPage(ScrollArea):
             return
 
         settings = QSettings("FuckWjx", "Settings")
-        for key in ("sidebar_always_expand", "window_topmost", "ask_save_on_close", "auto_save_stats", "auto_check_update", "debug_mode"):
+        for key in ("sidebar_always_expand", "window_topmost", "ask_save_on_close", "auto_check_update", "debug_mode"):
             settings.remove(key)
 
         defaults = {
             "sidebar_always_expand": True,
             "window_topmost": False,
             "ask_save_on_close": True,
-            "auto_save_stats": True,
             "auto_check_update": True,
             "debug_mode": False,
         }
         self._set_switch_state(self.sidebar_card, defaults["sidebar_always_expand"])
         self._set_switch_state(self.topmost_card, defaults["window_topmost"])
         self._set_switch_state(self.ask_save_card, defaults["ask_save_on_close"])
-        self._set_switch_state(self.auto_save_stats_card, defaults["auto_save_stats"])
         self._set_switch_state(self.auto_update_card, defaults["auto_check_update"])
         self._set_switch_state(self.debug_mode_card, defaults["debug_mode"])
         self._apply_sidebar_state(defaults["sidebar_always_expand"], persist=False, show_tip=False)

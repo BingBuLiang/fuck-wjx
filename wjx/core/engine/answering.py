@@ -87,13 +87,15 @@ class _QuestionDispatcher:
         _multiple_impl(driver, q_num, idx, ctx.multiple_prob, ctx.multiple_option_fill_texts)
 
     def _handle_scale(self, driver, q_num, idx, ctx: TaskContext, question_div=None):
+        dim = ctx.question_dimension_map.get(q_num)
         if question_div is not None and _driver_question_looks_like_rating(question_div):
-            _score_impl(driver, q_num, idx, ctx.scale_prob)
+            _score_impl(driver, q_num, idx, ctx.scale_prob, dimension=dim)
         else:
-            _scale_impl(driver, q_num, idx, ctx.scale_prob)
+            _scale_impl(driver, q_num, idx, ctx.scale_prob, dimension=dim)
 
     def _handle_matrix(self, driver, q_num, idx, ctx: TaskContext):
-        return _matrix_impl(driver, q_num, idx, ctx.matrix_prob)
+        dim = ctx.question_dimension_map.get(q_num)
+        return _matrix_impl(driver, q_num, idx, ctx.matrix_prob, dimension=dim)
 
     def _handle_dropdown(self, driver, q_num, idx, ctx: TaskContext):
         _dropdown_impl(driver, q_num, idx, ctx.droplist_prob, ctx.droplist_option_fill_texts)

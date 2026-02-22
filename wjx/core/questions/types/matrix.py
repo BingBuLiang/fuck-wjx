@@ -1,11 +1,11 @@
 """矩阵题处理"""
-from typing import List
+from typing import List, Optional
 
 from wjx.network.browser import By, BrowserDriver
 from wjx.core.questions.tendency import get_tendency_index
 
 
-def matrix(driver: BrowserDriver, current: int, index: int, matrix_prob_config: List) -> int:
+def matrix(driver: BrowserDriver, current: int, index: int, matrix_prob_config: List, dimension: Optional[str] = None) -> int:
     """矩阵题处理主函数，返回更新后的索引"""
     rows_xpath = f'//*[@id="divRefTab{current}"]/tbody/tr'
     row_elements = driver.find_elements(By.XPATH, rows_xpath)
@@ -29,9 +29,9 @@ def matrix(driver: BrowserDriver, current: int, index: int, matrix_prob_config: 
                 probs = []
             if len(probs) != len(candidate_columns):
                 probs = [1.0] * len(candidate_columns)
-            selected_column = candidate_columns[get_tendency_index(len(candidate_columns), probs)]
+            selected_column = candidate_columns[get_tendency_index(len(candidate_columns), probs, dimension=dimension)]
         else:
-            selected_column = candidate_columns[get_tendency_index(len(candidate_columns), -1)]
+            selected_column = candidate_columns[get_tendency_index(len(candidate_columns), -1, dimension=dimension)]
         driver.find_element(
             By.CSS_SELECTOR, f"#drv{current}_{row_index} > td:nth-child({selected_column})"
         ).click()

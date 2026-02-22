@@ -48,6 +48,9 @@ class TaskContext:
     # 题号 → (配置题型, 在对应类型概率列表中的起始索引)
     question_config_index_map: Dict[int, Tuple[str, int]] = field(default_factory=dict)
 
+    # 题号 → 维度名称（None 表示未分组，走纯随机）
+    question_dimension_map: Dict[int, Optional[str]] = field(default_factory=dict)
+
     # 题目元数据（从 HTML 解析得到）：题号 → 题目信息字典
     questions_metadata: Dict[int, Dict[str, Any]] = field(default_factory=dict)
 

@@ -3,22 +3,21 @@
 问题：原来每道量表题完全独立随机，可能出现前面给5分后面给1分的情况，
 导致 Cronbach's Alpha 信效度极低，一看就是假数据。
 
-方案：每次填写问卷时，先生成一个"基准偏好"（倾向于选高分/中分/低分），
-之后所有量表类题目都围绕这个基准 ±1 波动，模拟真人的答题一致性。
+方案：每次填写问卷时，按维度（dimension）独立生成"基准偏好"，
+同维度内的量表题围绕该基准 ±1 波动，不同维度之间互不干扰。
+未分组的题目走纯随机，不受一致性约束。
 
 增强（画像融合）：当存在虚拟画像时，基准偏好由画像的 satisfaction_tendency
 决定，而非完全随机。这样画像越"满意"的人物，量表题越倾向选高分。
 """
 import random
 import threading
-from typing import List, Union
+from typing import Dict, List, Optional, Union
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
-
-
-
 from wjx.core.questions.utils import weighted_index
+from wjx.utils.app.config import DIMENSION_UNGROUPED
 
 # 线程局部存储：每个浏览器线程有自己独立的答题倾向
 _thread_local = threading.local()
@@ -32,7 +31,7 @@ def reset_tendency() -> None:
 
     这样每份问卷会重新生成倾向，不同问卷之间仍然是随机的。
     """
-    _thread_local.base_index = None
+    _thread_local.dimension_bases: Dict[str, int] = {}
 
 
 def _generate_base_index(option_count: int, probabilities: Union[List[float], int, None]) -> int:
@@ -61,19 +60,32 @@ def _generate_base_index(option_count: int, probabilities: Union[List[float], in
     return random.randrange(option_count)
 
 
-def get_tendency_index(option_count: int, probabilities: Union[List[float], int, None]) -> int:
+def _is_ungrouped(dimension: Optional[str]) -> bool:
+    """判断维度是否为"未分组"（不应用一致性约束）。"""
+    return dimension is None or dimension == DIMENSION_UNGROUPED
+
+
+def _random_by_probabilities(option_count: int, probabilities: Union[List[float], int, None]) -> int:
+    """纯随机选择（不带一致性约束），用于未分组的题目。"""
+    if isinstance(probabilities, list) and len(probabilities) == option_count:
+        return weighted_index(probabilities)
+    return random.randrange(option_count)
+
+
+def get_tendency_index(
+    option_count: int,
+    probabilities: Union[List[float], int, None],
+    dimension: Optional[str] = None,
+) -> int:
     """获取带有一致性倾向的选项索引。
 
-    核心改进：无论是随机模式还是手动配置概率，都会应用一致性约束，确保信效度。
-
-    一致性机制：
-        - 第一次调用：根据概率配置（或随机）选择一个基准偏好
-        - 后续调用：在基准 ±1 范围内，结合原概率和距离衰减，重新加权选择
-          这样既保持了用户配置的宏观概率分布，又确保了单份问卷内的答题一致性。
+    按维度隔离基准偏好：同维度内的题目共享基准 ±1 波动，
+    不同维度之间独立生成基准。未分组的题目走纯随机。
 
     Args:
         option_count: 该题的选项数量（比如5分量表就是5）
         probabilities: 概率配置列表，或 -1 表示随机
+        dimension: 题目所属维度，None 或 DIMENSION_UNGROUPED 表示未分组
 
     Returns:
         选中的选项索引（0-based）
@@ -81,16 +93,34 @@ def get_tendency_index(option_count: int, probabilities: Union[List[float], int,
     if option_count <= 0:
         return 0
 
-    # 获取或生成基准偏好
-    base = getattr(_thread_local, 'base_index', None)
+    # 未分组 → 纯随机/纯概率，不做一致性约束
+    if _is_ungrouped(dimension):
+        return _random_by_probabilities(option_count, probabilities)
+
+    # 获取该维度的基准偏好
+    bases: Dict[str, int] = getattr(_thread_local, 'dimension_bases', {})
+    if not isinstance(bases, dict):
+        bases = {}
+        _thread_local.dimension_bases = bases
+
+    base = bases.get(dimension)
 
     if base is None:
-        # 首次调用：根据概率配置生成基准偏好
+        # 该维度首次遇到：生成基准偏好并存入
         base = _generate_base_index(option_count, probabilities)
-        _thread_local.base_index = base
+        bases[dimension] = base
         return base
 
     # 后续调用：应用一致性约束
+    return _apply_consistency(base, option_count, probabilities)
+
+
+def _apply_consistency(
+    base: int,
+    option_count: int,
+    probabilities: Union[List[float], int, None],
+) -> int:
+    """在基准 ±1 范围内应用一致性约束选择选项。"""
     # 当前题目选项数可能与生成 base 时不同，需要夹到合法范围
     effective_base = min(base, option_count - 1)
 
@@ -100,19 +130,15 @@ def get_tendency_index(option_count: int, probabilities: Union[List[float], int,
 
     # 如果有显式概率配置，需要结合原概率和距离衰减
     if isinstance(probabilities, list) and len(probabilities) == option_count:
-        # 计算修正后的概率：原概率 * 距离衰减
         adjusted_probs = []
         for i in range(option_count):
             if low <= i <= high:
-                # 在约束范围内：保留原概率，距离基准越近权重越高
                 distance = abs(i - effective_base)
                 decay = 2.0 if distance == 0 else (1.0 if distance == 1 else 0.1)
                 adjusted_probs.append(probabilities[i] * decay)
             else:
-                # 在约束范围外：大幅降低概率（保留小概率避免完全违背用户意图）
                 adjusted_probs.append(probabilities[i] * 0.05)
-        
-        # 归一化
+
         total = sum(adjusted_probs)
         if total > 0:
             adjusted_probs = [p / total for p in adjusted_probs]
@@ -127,7 +153,6 @@ def get_tendency_index(option_count: int, probabilities: Union[List[float], int,
         else:
             weights.append(1.0)
 
-    # 加权随机选择
     total = sum(weights)
     pivot = random.random() * total
     running = 0.0

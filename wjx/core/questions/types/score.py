@@ -1,5 +1,5 @@
 """评价题处理（星级评价）"""
-from typing import List
+from typing import List, Optional
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
@@ -61,7 +61,7 @@ def _collect_score_options(question_div) -> List:
     return options
 
 
-def score(driver: BrowserDriver, current: int, index: int, score_prob_config: List) -> None:
+def score(driver: BrowserDriver, current: int, index: int, score_prob_config: List, dimension: Optional[str] = None) -> None:
     """评价题处理主函数"""
 
 
@@ -75,7 +75,7 @@ def score(driver: BrowserDriver, current: int, index: int, score_prob_config: Li
     if not options:
         return
     probabilities = score_prob_config[index] if index < len(score_prob_config) else -1
-    selected_index = get_tendency_index(len(options), probabilities)
+    selected_index = get_tendency_index(len(options), probabilities, dimension=dimension)
     if selected_index >= len(options):
         selected_index = max(0, len(options) - 1)
     target = options[selected_index]

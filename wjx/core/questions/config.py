@@ -190,6 +190,7 @@ def configure_probabilities(
     _target.droplist_option_fill_texts = []
     _target.multiple_option_fill_texts = []
     _target.question_config_index_map = {}
+    _target.question_dimension_map = {}
 
     # 各题型的当前索引,用于构建 question_config_index_map
     _idx_single = 0
@@ -233,6 +234,7 @@ def configure_probabilities(
         elif entry.question_type == "matrix":
             rows = max(1, entry.rows)
             _target.question_config_index_map[question_num] = ("matrix", _idx_matrix)
+            _target.question_dimension_map[question_num] = entry.dimension
             _idx_matrix += rows
             option_count = max(1, _infer_option_count(entry))
 
@@ -283,6 +285,7 @@ def configure_probabilities(
                     _target.matrix_prob.append(-1)
         elif entry.question_type in ("scale", "score"):
             _target.question_config_index_map[question_num] = (entry.question_type, _idx_scale)
+            _target.question_dimension_map[question_num] = entry.dimension
             _idx_scale += 1
             _target.scale_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
         elif entry.question_type == "slider":

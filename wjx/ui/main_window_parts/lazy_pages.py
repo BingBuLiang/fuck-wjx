@@ -83,7 +83,7 @@ class MainWindowLazyPagesMixin:
     def _get_community_page(self):
         """懒加载社区页面"""
         if self._community_page is None:
-            from wjx.ui.pages.more.community import CommunityPage
+            from wjx.ui.pages.community import CommunityPage
 
             self._community_page = CommunityPage(self)
             self._community_page.setObjectName("community")

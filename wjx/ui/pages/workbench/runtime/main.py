@@ -178,12 +178,12 @@ class RuntimePage(ScrollArea):
         time_group.vBoxLayout.insertWidget(0, title_container)
 
         self.interval_card = TimeRangeSettingCard(
-            FluentIcon.HISTORY, "提交间隔", "两次提交之间的等待时间范围",
+            FluentIcon.HISTORY, "提交间隔", "两次提交之间的等待时间",
             max_seconds=300,
             parent=time_group
         )
         self.answer_card = TimeRangeSettingCard(
-            FluentIcon.STOP_WATCH, "作答时长", "模拟作答所需的时间范围",
+            FluentIcon.STOP_WATCH, "作答时长", "设置单份作答消耗的时间",
             max_seconds=120,
             parent=time_group
         )

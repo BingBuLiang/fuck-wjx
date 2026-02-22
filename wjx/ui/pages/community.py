@@ -237,7 +237,7 @@ class CommunityPage(ScrollArea):
         left.addWidget(desc)
 
         skills = CaptionLabel(
-            "Python ·  UI 设计 · 题型支持 · 文档编写",
+            "Python ·  UI 设计 · 预览版测试 · 文档编写",
             card,
         )
         skills.setWordWrap(True)

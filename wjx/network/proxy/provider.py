@@ -33,7 +33,7 @@ STATUS_TIMEOUT_SECONDS = 5
 _quota_limit_dialog_shown = False
 _cached_default_quota: Optional[int] = None  # 缓存从API获取的默认额度
 _cached_default_quota_timestamp: float = 0.0  # 缓存时间戳
-_DEFAULT_QUOTA_CACHE_TTL = 1800  # 缓存有效期：30分钟（秒），从1小时改为30分钟
+_DEFAULT_QUOTA_CACHE_TTL = 1800  # 缓存有效期
 _DEFAULT_QUOTA_API_ENDPOINT = "https://api-wjx.hungrym0.top/api/default"  # 默认额度API端点
 _proxy_api_url_override: Optional[str] = None
 _proxy_area_code_override: Optional[str] = None
@@ -48,6 +48,35 @@ PROXY_SOURCE_CUSTOM = "custom"  # 自定义代理源
 _current_proxy_source: str = PROXY_SOURCE_DEFAULT
 _IPZAN_MINUTE_OPTIONS: Tuple[int, ...] = (1, 3, 5, 10, 15, 30)
 _proxy_occupy_minute: int = 1
+_IPZAN_POOL_ORDINARY = "ordinary"
+_IPZAN_POOL_QUALITY = "quality"
+# 历史已支持的“省级随机”编码，继续走 ordinary
+_IPZAN_ORDINARY_PROVINCE_CODES: Set[str] = {
+    "110000",
+    "120000",
+    "130000",
+    "140000",
+    "150000",
+    "210000",
+    "220000",
+    "230000",
+    "320000",
+    "330000",
+    "340000",
+    "350000",
+    "360000",
+    "370000",
+    "410000",
+    "420000",
+    "430000",
+    "440000",
+    "460000",
+    "500000",
+    "510000",
+    "610000",
+    "620000",
+    "640000",
+}
 
 
 class AreaProxyQualityError(RuntimeError):
@@ -377,6 +406,20 @@ def _apply_area_to_proxy_url(url: str, area_code: Optional[str]) -> str:
     return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
 
 
+def _is_province_level_area_code(area_code: str) -> bool:
+    return bool(area_code) and len(area_code) == 6 and area_code.isdigit() and area_code.endswith("0000")
+
+
+def _resolve_ipzan_pool_by_area(area_code: Optional[str]) -> Optional[str]:
+    normalized_area = _normalize_area_code(area_code)
+    if not normalized_area:
+        # 不限地区时保持默认 URL 的 pool，不做覆盖
+        return None
+    if _is_province_level_area_code(normalized_area) and normalized_area in _IPZAN_ORDINARY_PROVINCE_CODES:
+        return _IPZAN_POOL_ORDINARY
+    return _IPZAN_POOL_QUALITY
+
+
 def _is_ipzan_core_extract_url(url: str) -> bool:
     try:
         split = urlsplit(url)
@@ -405,6 +448,20 @@ def _apply_minute_to_proxy_url(url: str, minute: int) -> str:
     return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
 
 
+def _apply_pool_to_proxy_url(url: str, pool: Optional[str]) -> str:
+    if not pool or not _is_ipzan_core_extract_url(url):
+        return url
+    try:
+        split = urlsplit(url)
+    except Exception:
+        return url
+
+    query_items = [(k, v) for k, v in parse_qsl(split.query, keep_blank_values=True) if k.lower() != "pool"]
+    query_items.append(("pool", pool))
+    query = urlencode(query_items, doseq=True)
+    return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
+
+
 def get_default_proxy_area_code() -> str:
     url = (PROXY_REMOTE_URL or "").strip()
     if not url:
@@ -425,6 +482,8 @@ def get_effective_proxy_api_url() -> str:
     if get_proxy_source() != PROXY_SOURCE_DEFAULT:
         return url
     url = _apply_area_to_proxy_url(url, _proxy_area_code_override)
+    pool = _resolve_ipzan_pool_by_area(_proxy_area_code_override)
+    url = _apply_pool_to_proxy_url(url, pool)
     return _apply_minute_to_proxy_url(url, _proxy_occupy_minute)
 
 

@@ -219,6 +219,16 @@ class QuestionWizardDialog(QDialog):
         type_label.setStyleSheet("color: #0078d4; font-size: 12px;")
         header.addWidget(type_label)
 
+        # 跳题逻辑警告徽标
+        has_jump = False
+        if idx < len(self.info):
+            has_jump = bool(self.info[idx].get("has_jump"))
+        if has_jump:
+            jump_badge = BodyLabel("[含跳题逻辑]", card)
+            jump_badge.setStyleSheet("font-size: 12px; font-weight: 500;")
+            _apply_label_color(jump_badge, "#d97706", "#e5a00d")
+            header.addWidget(jump_badge)
+
         header.addStretch(1)
         if entry.question_type == "slider":
             slider_note = BodyLabel("目标值会自动做小幅随机抖动，避免每份都填同一个数", card)
@@ -258,6 +268,18 @@ class QuestionWizardDialog(QDialog):
             desc.setStyleSheet("font-size: 12px; margin-bottom: 4px;")
             _apply_label_color(desc, "#555555", "#c8c8c8")
             card_layout.addWidget(desc)
+
+        # 跳题逻辑风险提示
+        if has_jump:
+            jump_warn = BodyLabel(
+                "⚠️ 此题包含跳题逻辑。若给跳题选项分配较高概率，"
+                "可能导致大量样本提前结束或跳过后续题目，请谨慎设定配比。",
+                card,
+            )
+            jump_warn.setWordWrap(True)
+            jump_warn.setStyleSheet("font-size: 12px; padding: 4px 0;")
+            _apply_label_color(jump_warn, "#b45309", "#e5a00d")
+            card_layout.addWidget(jump_warn)
 
         # 根据题型构建不同的配置区域
         if entry.question_type in ("text", "multi_text"):
@@ -439,7 +461,7 @@ class QuestionWizardDialog(QDialog):
             if self.reliability_mode_enabled:
                 rev_row_layout = QHBoxLayout()
                 rev_row_layout.setContentsMargins(0, 0, 0, 2)
-                rev_cb = CheckBox("反向题", row_card)
+                rev_cb = CheckBox("反向题请勾选此处", row_card)
                 rev_cb.setToolTip("勾选后，该行的答题倾向会翻转（正向高分 → 反向低分）")
                 row_is_rev = saved_row_flags[row_idx] if row_idx < len(saved_row_flags) else False
                 rev_cb.setChecked(bool(row_is_rev))
@@ -524,6 +546,16 @@ class QuestionWizardDialog(QDialog):
 
         sliders: List[NoWheelSlider] = []
         is_multiple = entry.question_type == "multiple"
+
+        # 构建跳题映射 {option_index: jumpto_number}
+        jump_map: Dict[int, int] = {}
+        if idx < len(self.info):
+            for rule in (self.info[idx].get("jump_rules") or []):
+                oi = rule.get("option_index")
+                jt = rule.get("jumpto")
+                if oi is not None and jt is not None:
+                    jump_map[oi] = jt
+
         for opt_idx in range(options):
             opt_widget = QWidget(card)
             opt_layout = QHBoxLayout(opt_widget)
@@ -541,6 +573,29 @@ class QuestionWizardDialog(QDialog):
             text_label.setFixedWidth(160)
             text_label.setStyleSheet("font-size: 13px;")
             opt_layout.addWidget(text_label)
+
+            # 跳题去向标签（独立区块占位，保证同一题内带有跳题的选项与普通选项的滑块对齐）
+            has_jump = bool(self.info[idx].get("has_jump")) if idx < len(self.info) else False
+            if has_jump:
+                jump_container = QWidget(card)
+                jump_container.setFixedWidth(90)
+                jump_layout = QHBoxLayout(jump_container)
+                jump_layout.setContentsMargins(0, 0, 0, 0)
+                if opt_idx in jump_map:
+                    jumpto = jump_map[opt_idx]
+                    # jumpto 大于总题数通常表示"提前结束"
+                    total_questions = len(self.entries)
+                    if jumpto > total_questions:
+                        jump_text = "➔ 提前结束"
+                    else:
+                        jump_text = f"➔ 跳至第{jumpto}题"
+                    jump_label = BodyLabel(jump_text, jump_container)
+                    jump_label.setStyleSheet("font-size: 11px; font-weight: 500;")
+                    _apply_label_color(jump_label, "#d93025", "#ff6b6b")
+                    jump_layout.addWidget(jump_label)
+                
+                jump_layout.addStretch(1)
+                opt_layout.addWidget(jump_container)
 
             slider = NoWheelSlider(Qt.Orientation.Horizontal, card)
             if entry.question_type == "slider":

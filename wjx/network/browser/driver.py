@@ -21,6 +21,9 @@ from playwright.sync_api import (
 )
 
 import base64
+import threading
+
+_PW_START_LOCK = threading.Lock()
 
 from wjx.utils.app.config import BROWSER_PREFERENCE, HEADLESS_WINDOW_SIZE
 from wjx.network.proxy import (
@@ -400,7 +403,8 @@ def create_playwright_driver(
     for browser in candidates:
         pre_launch_pids = list_browser_pids()
         try:
-            pw = sync_playwright().start()
+            with _PW_START_LOCK:
+                pw = sync_playwright().start()
         except Exception as exc:
             last_exc = exc
             logging.warning(f"启动 {browser} 的 Playwright 失败: {exc}")

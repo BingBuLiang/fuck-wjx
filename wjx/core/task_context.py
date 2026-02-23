@@ -59,6 +59,7 @@ class TaskContext:
     questions_metadata: Dict[int, Dict[str, Any]] = field(default_factory=dict)
 
     # ── 并发 / 浏览器配置 ─────────────────────────────────────────────────
+    headless_mode: bool = False
     browser_preference: List[str] = field(default_factory=list)
     num_threads: int = 1
     target_num: int = 1

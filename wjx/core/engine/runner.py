@@ -197,7 +197,7 @@ class _BrowserSession:
 
         try:
             self.driver, active_browser = create_playwright_driver(
-                headless=False,
+                headless=self.ctx.headless_mode,
                 prefer_browsers=list(preferred_browsers) if preferred_browsers else None,
                 proxy_address=self.proxy_address,
                 user_agent=ua_value,
@@ -390,6 +390,7 @@ def run(
 
             preferred_browsers = [active_browser] + [b for b in base_browser_preference if b != active_browser]
 
+        assert session.driver is not None  # 经过上方 None 分支的 break/continue 保证
         driver_had_error = False
         try:
             if stop_signal.is_set():

@@ -8,10 +8,10 @@ from urllib.parse import urlparse
 import threading
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from PySide6.QtCore import QObject, Signal, QTimer, QCoreApplication
+from PySide6.QtCore import QObject, Signal, QTimer, QCoreApplication, QSettings
 
 from wjx.core.task_context import TaskContext
-from wjx.utils.app.config import DEFAULT_FILL_TEXT, STOP_FORCE_WAIT_SECONDS
+from wjx.utils.app.config import DEFAULT_FILL_TEXT, STOP_FORCE_WAIT_SECONDS, get_bool_from_qsettings
 from wjx.utils.system.cleanup_runner import CleanupRunner
 from wjx.core.questions.config import QuestionEntry, configure_probabilities, validate_question_config
 from wjx.core.engine import (
@@ -525,11 +525,13 @@ class RunController(QObject):
         survey_title = config_title or fallback_title
 
         # ── 构建 TaskContext 实例 ─────────────────────────────────────────
+        settings = QSettings("FuckWjx", "Settings")
         ctx = TaskContext(
             url=config.url,
             survey_title=survey_title,
             target_num=config.target,
             num_threads=max(1, int(config.threads or 1)),
+            headless_mode=get_bool_from_qsettings(settings.value("headless_mode"), False),
             browser_preference=list(getattr(config, "browser_preference", []) or []),
             fail_threshold=fail_threshold,
             cur_num=0,

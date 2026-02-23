@@ -5,7 +5,6 @@ from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtCore import QSettings
 from PySide6.QtGui import QIcon, QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
@@ -158,8 +157,7 @@ class RuntimePage(ScrollArea):
             "开启后浏览器在后台运行，不显示窗口，可提高并发性能",
             parent=run_group,
         )
-        _qs = QSettings("FuckWjx", "Settings")
-        self.headless_card.setChecked(bool(_qs.value("headless_mode", False, type=bool)))
+        self.headless_card.setChecked(False)
 
         run_group.addSettingCard(self.target_card)
         run_group.addSettingCard(self.thread_card)
@@ -242,10 +240,6 @@ class RuntimePage(ScrollArea):
         self.timed_switch.checkedChanged.connect(self._sync_timed_mode)
         self.timed_card.helpButton.clicked.connect(self._show_timed_mode_help)
         self.proxy_source_combo.currentIndexChanged.connect(self._on_proxy_source_changed)
-        self.headless_card.switchButton.checkedChanged.connect(self._on_headless_toggled)
-
-    def _on_headless_toggled(self, checked: bool):
-        QSettings("FuckWjx", "Settings").setValue("headless_mode", checked)
 
     def _show_timed_mode_help(self):
         """显示定时模式说明"""
@@ -410,6 +404,7 @@ class RuntimePage(ScrollArea):
         cfg.fail_stop_enabled = self.fail_stop_switch.isChecked()
         cfg.pause_on_aliyun_captcha = self.pause_on_aliyun_switch.isChecked()
         cfg.reliability_mode_enabled = self.reliability_mode_switch.isChecked()
+        cfg.headless_mode = self.headless_card.switchButton.isChecked()
         try:
             idx = self.proxy_source_combo.currentIndex()
             source = str(self.proxy_source_combo.itemData(idx)) if idx >= 0 else "default"
@@ -464,6 +459,7 @@ class RuntimePage(ScrollArea):
         self.fail_stop_switch.setChecked(cfg.fail_stop_enabled)
         self.pause_on_aliyun_switch.setChecked(getattr(cfg, "pause_on_aliyun_captcha", True))
         self.reliability_mode_switch.setChecked(getattr(cfg, "reliability_mode_enabled", True))
+        self.headless_card.setChecked(getattr(cfg, "headless_mode", False))
 
         try:
             proxy_source = getattr(cfg, "proxy_source", "default")

@@ -131,6 +131,7 @@ class MainWindow(
         self._changelog_page = None
         self._changelog_detail_page = None
         self._donate_page = None
+        self._ip_usage_page = None
         self._settings_page = None
 
         # 设置对象名称

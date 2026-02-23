@@ -178,6 +178,7 @@ class RuntimeConfig:
     fail_stop_enabled: bool = True
     pause_on_aliyun_captcha: bool = True
     reliability_mode_enabled: bool = True  # 信效度模式开关（控制维度设置是否可用）
+    headless_mode: bool = False
     debug_mode: bool = False
     ai_enabled: bool = False
     ai_provider: str = "deepseek"

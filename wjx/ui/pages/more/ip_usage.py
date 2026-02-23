@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import threading
 
-from PySide6.QtCore import Qt, QPointF, QDate, QDateTime, QTime, Signal, QRectF
+from PySide6.QtCore import Qt, QPointF, QDate, QDateTime, QTime, Signal, QRectF, QPropertyAnimation, QEasingCurve, Property, QTimer
 from PySide6.QtCharts import QChart, QSplineSeries, QChartView, QValueAxis, QDateTimeAxis
 from PySide6.QtGui import QPainter, QPen, QColor
 from PySide6.QtWidgets import (
@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QSizePolicy,
-    QToolTip,
     QGraphicsBlurEffect,
 )
 from qfluentwidgets import (
@@ -36,30 +35,65 @@ class ChartOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._current_x = -1.0
         self._current_y = -1.0
-        self.line_visible = False
+        self._target_x = -1.0
+        self._target_y = -1.0
         self.date_str = ""
         self.ip_count = 0
         self.plot_area = QRectF()
+        self._opacity = 0.0
+        self._anim = QPropertyAnimation(self, b"opacity", self)
+        self._anim.setDuration(180)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._smooth_timer = QTimer(self)
+        self._smooth_timer.setInterval(16)
+        self._smooth_timer.timeout.connect(self._smooth_step)
+
+    def _get_opacity(self): return self._opacity
+    def _set_opacity(self, v): self._opacity = v; self.update()
+    opacity = Property(float, _get_opacity, _set_opacity)
+
+    def _smooth_step(self):
+        dx = self._target_x - self._current_x
+        dy = self._target_y - self._current_y
+        if abs(dx) < 0.5 and abs(dy) < 0.5:
+            self._current_x = self._target_x
+            self._current_y = self._target_y
+            self._smooth_timer.stop()
+        else:
+            self._current_x += dx * 0.2
+            self._current_y += dy * 0.2
+        self.update()
 
     def update_point(self, x, y, date_str, ip_count, plot_area):
         self.date_str = date_str
         self.ip_count = ip_count
         self.plot_area = plot_area
-        self._current_x = float(x)
-        self._current_y = float(y)
-        self.line_visible = True
-        self.update()
+        self._target_x = float(x)
+        self._target_y = float(y)
+        if self._opacity < 0.01:  # 首次出现直接跳到位置，不做位移缓动
+            self._current_x = self._target_x
+            self._current_y = self._target_y
+        if not self._smooth_timer.isActive():
+            self._smooth_timer.start()
+        self._anim.stop()
+        self._anim.setStartValue(self._opacity)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
 
     def hide_line(self):
-        self.line_visible = False
-        self.update()
+        self._smooth_timer.stop()
+        self._anim.stop()
+        self._anim.setStartValue(self._opacity)
+        self._anim.setEndValue(0.0)
+        self._anim.start()
 
     def paintEvent(self, event):
-        if not self.line_visible or not self.plot_area.isValid():
+        if self._opacity < 0.01 or not self.plot_area.isValid():
             return
-            
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setOpacity(self._opacity)
         
         top_y = self.plot_area.top()
         bottom_y = self.plot_area.bottom()

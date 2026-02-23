@@ -334,6 +334,24 @@ def _collect_select_option_texts(question_div, soup, question_number: int) -> Li
     return options
 
 
+def _postprocess_matrix_option_texts(option_texts: List[str]) -> List[str]:
+    """矩阵列标题后处理：保序精确去重，并过滤空文本。"""
+    if not option_texts:
+        return []
+    cleaned: List[str] = []
+    seen = set()
+    for raw_text in option_texts:
+        text = _normalize_html_text(raw_text)
+        if not text:
+            continue
+        # 只按“完全相同文本”判定重复，避免误合并相近选项。
+        if text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    return cleaned
+
+
 def _collect_matrix_option_texts(soup, question_div, question_number: int) -> Tuple[int, List[str], List[str]]:
     option_texts: List[str] = []
     matrix_rows = 0
@@ -526,6 +544,13 @@ def _collect_matrix_option_texts(soup, question_div, question_number: int) -> Tu
         if len(header_cells) > 1:
             option_texts = [_normalize_html_text(th.get_text(" ", strip=True)) for th in header_cells[1:]]
             option_texts = [text for text in option_texts if text]
+    raw_option_texts = list(option_texts)
+    option_texts = _postprocess_matrix_option_texts(option_texts)
+    # 兜底：若表头文本全为空或清洗后为空，按已有列数生成数字标题。
+    if not option_texts:
+        fallback_columns = len([text for text in raw_option_texts if _normalize_html_text(text)])
+        if fallback_columns > 0:
+            option_texts = [str(i + 1) for i in range(fallback_columns)]
     return matrix_rows, option_texts, row_texts
 
 

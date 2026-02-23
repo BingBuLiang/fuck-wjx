@@ -272,10 +272,8 @@ def _cleanup_binaries(b_name):
 
 def _cleanup_datas(d_name):
     norm = d_name.replace('\\', '/')
-    # 清理 playwright 留下的无用类型存根文件、接口文档等
-    if 'playwright' in norm:
-        if norm.endswith('.d.ts') or norm.endswith('.json') or norm.endswith('.md'):
-            return True
+    # 不要裁剪 playwright 的数据文件，避免误删运行时必需资源
+    # （历史上这里删 *.json 会导致 Playwright 初始化异常）
     return False
 
 a.binaries = [b for b in a.binaries if not _cleanup_binaries(b[0])]

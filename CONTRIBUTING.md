@@ -31,35 +31,48 @@ wjx/
 ├── boot.py                # 启动流程相关
 ├── assets/                # 针对指定地区随机ip的地区行政编码
 ├── core/                  # 核心业务逻辑
-│   ├── engine/            # 执行引擎（driver/runtime_control/navigation/submission/runner 等）
-│   ├── survey/            # 问卷解析与检测
+│   ├── task_context.py    # 单次任务上下文数据
+│   ├── engine/            # 执行引擎（driver_factory/runtime_control/full_simulation/dom_helpers/navigation/question_detection/submission/answering/runner）
+│   ├── survey/            # 问卷解析（parser.py）
 │   ├── questions/         # 题目配置与题型实现（types/），以及一致性校验（consistency.py）
-│   │   └── types/         # 各题型实现
-│   ├── captcha/           # 验证码处理
-│   ├── ai/                # AI 运行时
-│   ├── persona/           # 画像与上下文约束
-│   └── services/          # 核心服务层（如地区数据加载）
+│   │   └── types/         # 各题型实现（single/multiple/dropdown/matrix/scale/score/slider/text/reorder）
+│   ├── captcha/           # 验证码处理（control/handler）
+│   ├── ai/                # AI 运行时（runtime.py）
+│   ├── persona/           # 画像与上下文约束（generator/context）
+│   └── services/          # 核心服务层（area_service/proxy_service/survey_service）
 ├── ui/                    # 界面层
 │   ├── main_window.py     # 主窗口编排
 │   ├── main_window_parts/ # 主窗口拆分模块（lazy_pages/popup_compat/update）
 │   ├── controller/        # 运行控制器（run_controller.py）
-│   ├── pages/             # 各页面（workbench/settings/more/community）
-│   │   ├── community.py   # 社区页（一级菜单）
-│   │   └── workbench/
-│   │       ├── dashboard.py
-│   │       ├── answer_rules.py   # 作答规则页（条件 -> 动作）
-│   │       ├── dashboard_parts/ # dashboard 拆分模块（clipboard/entries/random_ip）
-│   ├── widgets/           # 通用 UI 组件
-│   ├── dialogs/           # 对话框
-│   ├── helpers/           # 界面辅助逻辑
-│   └── workers/           # 后台任务
+│   ├── dialogs/           # 对话框（card_unlock/contact/terms_of_service）
+│   ├── helpers/           # 界面辅助逻辑（ai_fill/image_attachments）
+│   ├── workers/           # 后台任务（ai_test_worker/update_worker）
+│   ├── widgets/           # 通用 UI 组件（setting_cards/config_drawer/contact_form/full_width_infobar/log_highlighter/no_wheel/ratio_slider/status_polling_mixin/status_worker/time_range_slider）
+│   └── pages/             # 各页面（workbench/settings/more/community）
+│       ├── community.py   # 社区页（一级菜单）
+│       ├── settings/      # 设置页（settings.py）
+│       ├── more/          # 更多子页面（about/changelog/donate/support）
+│       └── workbench/
+│           ├── dashboard.py
+│           ├── answer_rules.py   # 作答规则页（条件 -> 动作）
+│           ├── log.py
+│           ├── dashboard_parts/  # dashboard 拆分模块（clipboard/entries/random_ip）
+│           ├── question/         # 题目配置界面（page/add_dialog/wizard_dialog/constants/utils）
+│           └── runtime/          # 运行时界面（main/cards/ai/dialogs）
 ├── network/               # 网络相关
 │   ├── browser/driver.py  # 浏览器驱动封装
 │   ├── proxy/provider.py  # 随机 IP/代理逻辑
 │   ├── http_client.py     # 请求策略
 │   └── session_policy.py  # 会话策略
-├── modes/                 # 运行模式控制（如定时模式）
-├── utils/                 # 通用工具（app/io/integrations/system/logging/update）
+├── modes/                 # 运行模式控制（timed_mode/duration_control）
+├── utils/                 # 通用工具
+│   ├── event_bus.py       # 全局事件总线
+│   ├── app/               # 应用配置与路径（config/runtime_paths/version）
+│   ├── io/                # 文件读写（load_save/markdown_utils/qrcode_utils）
+│   ├── integrations/      # 外部集成（ai_service）
+│   ├── system/            # 系统工具（cleanup_runner/registry_manager）
+│   ├── logging/           # 日志工具（log_utils）
+│   └── update/            # 更新逻辑（updater）
 └── __pycache__/           # 运行时缓存文件，不应提交到仓库
 ```
 

@@ -5,6 +5,7 @@ from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
 from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QSettings
 from PySide6.QtGui import QIcon, QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
@@ -151,12 +152,22 @@ class RuntimePage(ScrollArea):
         )
         self.pause_on_aliyun_card.setChecked(True)
 
+        self.headless_card = SwitchSettingCard(
+            FluentIcon.SPEED_HIGH,
+            "无头模式",
+            "开启后浏览器在后台运行，不显示窗口，可提高并发性能",
+            parent=run_group,
+        )
+        _qs = QSettings("FuckWjx", "Settings")
+        self.headless_card.setChecked(bool(_qs.value("headless_mode", False, type=bool)))
+
         run_group.addSettingCard(self.target_card)
         run_group.addSettingCard(self.thread_card)
         run_group.addSettingCard(self.browser_card)
         run_group.addSettingCard(self.reliability_mode_card)
         run_group.addSettingCard(self.fail_stop_card)
         run_group.addSettingCard(self.pause_on_aliyun_card)
+        run_group.addSettingCard(self.headless_card)
         layout.addWidget(run_group)
 
         # ========== 时间控制组 ==========
@@ -231,6 +242,10 @@ class RuntimePage(ScrollArea):
         self.timed_switch.checkedChanged.connect(self._sync_timed_mode)
         self.timed_card.helpButton.clicked.connect(self._show_timed_mode_help)
         self.proxy_source_combo.currentIndexChanged.connect(self._on_proxy_source_changed)
+        self.headless_card.switchButton.checkedChanged.connect(self._on_headless_toggled)
+
+    def _on_headless_toggled(self, checked: bool):
+        QSettings("FuckWjx", "Settings").setValue("headless_mode", checked)
 
     def _show_timed_mode_help(self):
         """显示定时模式说明"""

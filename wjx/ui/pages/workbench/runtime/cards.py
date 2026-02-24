@@ -68,15 +68,15 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         self.addWidget(self.switchButton)
 
         # 代理源选择容器
-        container = QWidget()
-        layout = QVBoxLayout(container)
+        self._groupContainer = QWidget()
+        layout = QVBoxLayout(self._groupContainer)
         layout.setContentsMargins(48, 12, 48, 12)
         layout.setSpacing(12)
 
         # 代理源下拉框
         source_row = QHBoxLayout()
-        source_label = BodyLabel("代理源", container)
-        self.proxyCombo = ComboBox(container)
+        source_label = BodyLabel("代理源", self._groupContainer)
+        self.proxyCombo = ComboBox(self._groupContainer)
         self.proxyCombo.addItem("默认", userData="default")
         self.proxyCombo.addItem("皮卡丘代理站 (中国大陆)", userData="pikachu")
         self.proxyCombo.addItem("自定义", userData="custom")
@@ -85,7 +85,7 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         source_row.addStretch(1)
         self.proxyTrialLink = HyperlinkButton(
             FluentIcon.LINK, "https://www.ipzan.com?pid=v6bf6iabg",
-            "API免费试用", container
+            "API免费试用", self._groupContainer
         )
         self.proxyTrialLink.hide()
         source_row.addWidget(self.proxyTrialLink)
@@ -93,7 +93,7 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         layout.addLayout(source_row)
 
         # 地区选择（仅默认代理源）
-        self.areaRow = QWidget(container)
+        self.areaRow = QWidget(self._groupContainer)
         area_layout = QHBoxLayout(self.areaRow)
         area_layout.setContentsMargins(0, 0, 0, 0)
         area_label = BodyLabel("指定地区", self.areaRow)
@@ -108,7 +108,7 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         layout.addWidget(self.areaRow)
 
         # 自定义API输入
-        self.customApiRow = QWidget(container)
+        self.customApiRow = QWidget(self._groupContainer)
         api_layout = QHBoxLayout(self.customApiRow)
         api_layout.setContentsMargins(0, 0, 0, 0)
         api_label = BodyLabel("API 地址", self.customApiRow)
@@ -159,13 +159,16 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         self.provinceCombo.currentIndexChanged.connect(self._on_province_changed)
         self.cityCombo.currentIndexChanged.connect(self._on_city_changed)
 
-        self.addGroupWidget(container)
+        self.addGroupWidget(self._groupContainer)
         self.setExpand(True)
 
         # 代理源变化时显示/隐藏自定义API
         self.proxyCombo.currentIndexChanged.connect(self._on_source_changed)
         # API地址输入完成时同步到全局变量
         self.customApiEdit.editingFinished.connect(self._on_api_edit_finished)
+        # 开关联动：关闭时禁用展开内容
+        self.switchButton.checkedChanged.connect(self._sync_ip_enabled)
+        self._sync_ip_enabled(False)
 
     def _on_source_changed(self):
         idx = self.proxyCombo.currentIndex()
@@ -376,6 +379,16 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
     def setChecked(self, checked):
         self.switchButton.setChecked(checked)
 
+    def _sync_ip_enabled(self, enabled: bool):
+        """开关联动：开启时启用展开内容，关闭时禁用（灰掉）。"""
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        self._groupContainer.setEnabled(bool(enabled))
+        effect = self._groupContainer.graphicsEffect()
+        if effect is None:
+            effect = QGraphicsOpacityEffect(self._groupContainer)
+            self._groupContainer.setGraphicsEffect(effect)
+        effect.setOpacity(1.0 if enabled else 0.4)
+
 
 class TimedModeSettingCard(SettingCard):
     """定时模式设置卡 - 带帮助按钮"""
@@ -422,13 +435,13 @@ class RandomUASettingCard(ExpandGroupSettingCard):
         self.addWidget(self.switchButton)
 
         # 设备占比配置容器
-        container = QWidget()
-        layout = QVBoxLayout(container)
+        self._groupContainer = QWidget()
+        layout = QVBoxLayout(self._groupContainer)
         layout.setContentsMargins(48, 12, 48, 12)
         layout.setSpacing(16)
 
         # 提示信息
-        hint_label = BodyLabel("配置不同设备类型的访问占比，三个滑块占比总和必须为 100%", container)
+        hint_label = BodyLabel("配置不同设备类型的访问占比，三个滑块占比总和必须为 100%", self._groupContainer)
         hint_label.setStyleSheet("color: #606060; font-size: 12px;")
         layout.addWidget(hint_label)
 
@@ -440,12 +453,15 @@ class RandomUASettingCard(ExpandGroupSettingCard):
                 "mobile": "手机访问占比",
                 "pc": "链接访问占比",
             },
-            parent=container
+            parent=self._groupContainer
         )
         layout.addWidget(self.ratioSlider)
 
-        self.addGroupWidget(container)
+        self.addGroupWidget(self._groupContainer)
         self.setExpand(True)
+        # 开关联动：关闭时禁用展开内容
+        self.switchButton.checkedChanged.connect(self.setUAEnabled)
+        self.setUAEnabled(False)
 
     def isChecked(self):
         return self.switchButton.isChecked()
@@ -454,7 +470,13 @@ class RandomUASettingCard(ExpandGroupSettingCard):
         self.switchButton.setChecked(checked)
 
     def setUAEnabled(self, enabled):
-        self.ratioSlider.setEnabled(enabled)
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        self._groupContainer.setEnabled(bool(enabled))
+        effect = self._groupContainer.graphicsEffect()
+        if effect is None:
+            effect = QGraphicsOpacityEffect(self._groupContainer)
+            self._groupContainer.setGraphicsEffect(effect)
+        effect.setOpacity(1.0 if enabled else 0.4)
 
     def getRatios(self) -> dict:
         """获取当前设备占比配置"""

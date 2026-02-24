@@ -299,8 +299,7 @@ class RuntimePage(ScrollArea):
 
     def _sync_random_ua(self, enabled: bool):
         try:
-            # 允许用户在开关关闭时预先调整占比，开关仅控制是否生效
-            self.random_ua_card.setUAEnabled(True)
+            self.random_ua_card.setUAEnabled(bool(enabled))
         except Exception as exc:
             log_suppressed_exception("_sync_random_ua: self.random_ua_card.setUAEnabled(bool(enabled))", exc, level=logging.WARNING)
 
@@ -441,6 +440,7 @@ class RuntimePage(ScrollArea):
         self.random_ip_switch.blockSignals(True)
         self.random_ip_switch.setChecked(cfg.random_ip_enabled)
         self.random_ip_switch.blockSignals(False)
+        self.random_ip_card._sync_ip_enabled(cfg.random_ip_enabled)
         self.random_ua_switch.setChecked(cfg.random_ua_enabled)
         self._sync_browser_icon()
 

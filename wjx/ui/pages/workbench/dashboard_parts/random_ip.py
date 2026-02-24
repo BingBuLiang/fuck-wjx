@@ -120,6 +120,16 @@ class DashboardRandomIPMixin:
         refresh_ip_counter_display(self.controller.adapter)
         self._toast(f"已重置随机IP额度为 0/{quota}", "success", duration=2500)
 
+    def _set_runtime_ip_switch(self, enabled: bool) -> None:
+        """设置运行时页面的随机IP开关，并同步展开区域的启用状态（绕过信号阻塞）。"""
+        try:
+            self.runtime_page.random_ip_switch.blockSignals(True)
+            self.runtime_page.random_ip_switch.setChecked(enabled)
+            self.runtime_page.random_ip_switch.blockSignals(False)
+            self.runtime_page.random_ip_card._sync_ip_enabled(enabled)
+        except Exception as exc:
+            log_suppressed_exception("_set_runtime_ip_switch", exc, level=logging.WARNING)
+
     def update_random_ip_counter(self, count: int, limit: int, custom_api: bool):
         # 三态按钮：未验证 → 已验证(可申请更多) → 二次验证(禁用)
         is_verified = RegistryManager.is_card_verified()
@@ -163,12 +173,7 @@ class DashboardRandomIPMixin:
             self.random_ip_cb.blockSignals(True)
             self.random_ip_cb.setChecked(False)
             self.random_ip_cb.blockSignals(False)
-            try:
-                self.runtime_page.random_ip_switch.blockSignals(True)
-                self.runtime_page.random_ip_switch.setChecked(False)
-                self.runtime_page.random_ip_switch.blockSignals(False)
-            except Exception as exc:
-                log_suppressed_exception("update_random_ip_counter: runtime random_ip_switch sync", exc, level=logging.WARNING)
+            self._set_runtime_ip_switch(False)
 
     def _on_random_ip_toggled(self, state: int):
         enabled = state != 0
@@ -180,12 +185,7 @@ class DashboardRandomIPMixin:
                 self.random_ip_cb.blockSignals(True)
                 self.random_ip_cb.setChecked(False)
                 self.random_ip_cb.blockSignals(False)
-                try:
-                    self.runtime_page.random_ip_switch.blockSignals(True)
-                    self.runtime_page.random_ip_switch.setChecked(False)
-                    self.runtime_page.random_ip_switch.blockSignals(False)
-                except Exception as exc:
-                    log_suppressed_exception("_on_random_ip_toggled disable: runtime random_ip_switch sync", exc, level=logging.WARNING)
+                self._set_runtime_ip_switch(False)
                 refresh_ip_counter_display(self.controller.adapter)
                 return
             if (not custom_api) and count >= limit:
@@ -193,12 +193,7 @@ class DashboardRandomIPMixin:
                 self.random_ip_cb.blockSignals(True)
                 self.random_ip_cb.setChecked(False)
                 self.random_ip_cb.blockSignals(False)
-                try:
-                    self.runtime_page.random_ip_switch.blockSignals(True)
-                    self.runtime_page.random_ip_switch.setChecked(False)
-                    self.runtime_page.random_ip_switch.blockSignals(False)
-                except Exception as exc:
-                    log_suppressed_exception("_on_random_ip_toggled: runtime random_ip_switch sync", exc, level=logging.WARNING)
+                self._set_runtime_ip_switch(False)
                 return
         try:
             self.controller.adapter.random_ip_enabled_var.set(bool(enabled))
@@ -209,12 +204,7 @@ class DashboardRandomIPMixin:
         self.random_ip_cb.blockSignals(True)
         self.random_ip_cb.setChecked(enabled)
         self.random_ip_cb.blockSignals(False)
-        try:
-            self.runtime_page.random_ip_switch.blockSignals(True)
-            self.runtime_page.random_ip_switch.setChecked(enabled)
-            self.runtime_page.random_ip_switch.blockSignals(False)
-        except Exception as exc:
-            log_suppressed_exception("_on_random_ip_toggled: runtime random_ip_switch sync", exc, level=logging.WARNING)
+        self._set_runtime_ip_switch(enabled)
         refresh_ip_counter_display(self.controller.adapter)
 
     def _ask_card_code(self) -> Optional[str]:
@@ -273,12 +263,7 @@ class DashboardRandomIPMixin:
                 RegistryManager.set_extra_quota_verified(True)
             refresh_ip_counter_display(self.controller.adapter)
             self.random_ip_cb.setChecked(True)
-            try:
-                self.runtime_page.random_ip_switch.blockSignals(True)
-                self.runtime_page.random_ip_switch.setChecked(True)
-                self.runtime_page.random_ip_switch.blockSignals(False)
-            except Exception as exc:
-                log_suppressed_exception("_on_card_code_clicked: runtime random_ip_switch sync", exc, level=logging.WARNING)
+            self._set_runtime_ip_switch(True)
 
     def _on_ip_low_infobar_closed(self):
         self._ip_low_infobar_dismissed = True

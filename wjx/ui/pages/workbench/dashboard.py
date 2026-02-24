@@ -243,9 +243,6 @@ class DashboardPage(
         spin_row.addStretch(1)
         exec_layout.addLayout(spin_row)
 
-        self.random_ua_cb = CheckBox("启用随机 UA（模拟微信/PC浏览器访问）", self)
-        exec_layout.addWidget(self.random_ua_cb)
-
         self.random_ip_cb = CheckBox("启用随机 IP 提交（在触发智能验证时开启）", self)
         exec_layout.addWidget(self.random_ip_cb)
         ip_row = QHBoxLayout()
@@ -347,7 +344,6 @@ class DashboardPage(
         self.target_spin.valueChanged.connect(lambda v: self.runtime_page.target_spin.setValue(int(v)))
         self.thread_spin.valueChanged.connect(lambda v: self.runtime_page.thread_spin.setValue(int(v)))
         self.random_ip_cb.stateChanged.connect(self._on_random_ip_toggled)
-        self.random_ua_cb.stateChanged.connect(self._on_random_ua_toggled)
         self.card_btn.clicked.connect(self._on_card_code_clicked)
         self.more_settings_btn.clicked.connect(self._go_to_runtime_page)
         # 监听问卷链接输入框的文本变化（用于检测 reset 命令）
@@ -663,10 +659,6 @@ class DashboardPage(
         self.random_ip_cb.setChecked(bool(cfg.random_ip_enabled))
         self.random_ip_cb.blockSignals(False)
 
-        self.random_ua_cb.blockSignals(True)
-        self.random_ua_cb.setChecked(bool(cfg.random_ua_enabled))
-        self.random_ua_cb.blockSignals(False)
-
         try:
             self.answer_rules_page.set_rules(getattr(cfg, "answer_rules", []) or [])
         except Exception as exc:
@@ -680,17 +672,6 @@ class DashboardPage(
         if hasattr(main_win, "switchTo") and hasattr(main_win, "runtime_page"):
             main_win.switchTo(main_win.runtime_page)
 
-    def _on_random_ua_toggled(self, state: int):
-        is_checked = (state == Qt.CheckState.Checked.value)
-        try:
-            self.runtime_page.random_ua_switch.blockSignals(True)
-            self.runtime_page.random_ua_switch.setChecked(is_checked)
-            self.runtime_page.random_ua_switch.blockSignals(False)
-            if hasattr(self.runtime_page, "_sync_random_ua"):
-                self.runtime_page._sync_random_ua(is_checked)
-        except Exception as exc:
-            log_suppressed_exception("_on_random_ua_toggled dashboard", exc, level=logging.WARNING)
-
     def _build_config(self) -> RuntimeConfig:
         cfg = RuntimeConfig()
         cfg.url = self.url_edit.text().strip()
@@ -699,7 +680,6 @@ class DashboardPage(
         cfg.target = max(1, self.target_spin.value())
         cfg.threads = max(1, self.thread_spin.value())
         cfg.random_ip_enabled = self.random_ip_cb.isChecked()
-        cfg.random_ua_enabled = self.random_ua_cb.isChecked()
         cfg.answer_rules = list(self.answer_rules_page.get_rules() or [])
         return cfg
 

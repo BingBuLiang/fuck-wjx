@@ -18,11 +18,15 @@ pyside6_dir = os.path.dirname(PySide6.__file__)
 pyside6_root_dlls = {
     'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Widgets.dll', 'Qt6Network.dll',
     'Qt6Svg.dll', 'Qt6SvgWidgets.dll', 'Qt6Xml.dll',
+    'Qt6Charts.dll',
+    # Qt6Charts.dll 的运行时依赖
+    'Qt6OpenGL.dll', 'Qt6OpenGLWidgets.dll',
     'pyside6.abi3.dll',
 }
 pyside6_pyd_files = {
     'QtCore.pyd', 'QtGui.pyd', 'QtWidgets.pyd', 'QtNetwork.pyd',
     'QtSvg.pyd', 'QtSvgWidgets.pyd', 'QtXml.pyd',
+    'QtCharts.pyd',
 }
 
 # 收集白名单内的 PySide6 二进制文件
@@ -77,6 +81,8 @@ pyside6_modules = [
     'PySide6.QtXml',
     'PySide6.QtSvg',
     'PySide6.QtSvgWidgets',
+    # IP 使用记录页面折线图
+    'PySide6.QtCharts',
 ]
 
 # qframelesswindow 在 Windows 上需要的 pywin32 模块（经源码验证）
@@ -173,9 +179,6 @@ a = Analysis(
         "PySide6.Qt3DExtras",
         "PySide6.Qt3DAnimation",
         "PySide6.QtDataVisualization",
-        "PySide6.QtCharts",
-        "PySide6.QtOpenGL",
-        "PySide6.QtOpenGLWidgets",
         "PySide6.QtRemoteObjects",
         "PySide6.QtScxml",
         "PySide6.QtStateMachine",
@@ -193,10 +196,14 @@ _pyside6_keep = {
     # 根目录的 DLL
     'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Widgets.dll', 'Qt6Network.dll',
     'Qt6Svg.dll', 'Qt6SvgWidgets.dll', 'Qt6Xml.dll',
+    'Qt6Charts.dll',
+    # Qt6Charts.dll 的运行时依赖
+    'Qt6OpenGL.dll', 'Qt6OpenGLWidgets.dll',
     'pyside6.abi3.dll',
     # PySide6/ 目录的 PYD
     'QtCore.pyd', 'QtGui.pyd', 'QtWidgets.pyd', 'QtNetwork.pyd',
     'QtSvg.pyd', 'QtSvgWidgets.pyd', 'QtXml.pyd',
+    'QtCharts.pyd',
 }
 
 # 多媒体相关 DLL 黑名单（项目不需要音视频处理）

@@ -84,7 +84,6 @@ class DashboardEntriesMixin:
         _sync_start_button_state: Any
         _survey_title: Any
         runtime_page: Any
-        select_all_action: Any
         window: Any
 
     def _show_add_question_dialog(self):
@@ -198,7 +197,6 @@ class DashboardEntriesMixin:
                 entries.pop(row)
         self.question_page.set_entries(entries, self.question_page.questions_info)
         self._refresh_entry_table()
-        self.select_all_action.setChecked(False)
         self._toast(f"已删除 {count} 个题目", "success")
 
     def _refresh_entry_table(self):
@@ -208,35 +206,11 @@ class DashboardEntriesMixin:
         for idx, entry in enumerate(entries):
             type_label = _get_entry_type_label(entry)
             summary = question_summary(entry)
-            check_item = QTableWidgetItem("")
-            check_item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled
-                | Qt.ItemFlag.ItemIsUserCheckable
-                | Qt.ItemFlag.ItemIsSelectable
-            )
-            check_item.setCheckState(Qt.CheckState.Unchecked)
-            check_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.entry_table.setItem(idx, 0, check_item)
             type_item = QTableWidgetItem(type_label)
             type_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.entry_table.setItem(idx, 1, type_item)
-            self.entry_table.setItem(idx, 2, QTableWidgetItem(summary))
+            self.entry_table.setItem(idx, 0, type_item)
+            self.entry_table.setItem(idx, 1, QTableWidgetItem(summary))
         self._sync_start_button_state()
 
     def _checked_rows(self) -> List[int]:
-        rows: List[int] = []
-        for r in range(self.entry_table.rowCount()):
-            item = self.entry_table.item(r, 0)
-            if item and item.checkState() == Qt.CheckState.Checked:
-                rows.append(r)
-        if not rows:
-            rows = [idx.row() for idx in self.entry_table.selectionModel().selectedRows()]
-        return rows
-
-    def _toggle_select_all_action(self):
-        """CommandBar 全选 Action 触发时切换所有行的选中状态"""
-        checked = self.select_all_action.isChecked()
-        for r in range(self.entry_table.rowCount()):
-            item = self.entry_table.item(r, 0)
-            if item:
-                item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+        return [idx.row() for idx in self.entry_table.selectionModel().selectedRows()]

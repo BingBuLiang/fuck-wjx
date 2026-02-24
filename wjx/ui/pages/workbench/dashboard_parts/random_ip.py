@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QDialog
+from qfluentwidgets import FluentIcon
 
 from wjx.network.proxy import (
     _format_status_payload,
@@ -95,6 +96,7 @@ class DashboardRandomIPMixin:
             RegistryManager.write_submit_count(0)
             RegistryManager.write_quota_limit(default_quota)
             RegistryManager.set_card_verified(False)
+            RegistryManager.set_extra_quota_verified(False)
             payload["ok"] = True
             payload["quota"] = int(default_quota)
         except Exception as exc:
@@ -119,14 +121,21 @@ class DashboardRandomIPMixin:
         self._toast(f"已重置随机IP额度为 0/{quota}", "success", duration=2500)
 
     def update_random_ip_counter(self, count: int, limit: int, custom_api: bool):
-        # 检查是否已验证过卡密
+        # 三态按钮：未验证 → 已验证(可申请更多) → 二次验证(禁用)
         is_verified = RegistryManager.is_card_verified()
-        if is_verified:
+        is_extra = RegistryManager.is_extra_quota_verified()
+        if is_verified and is_extra:
             self.card_btn.setEnabled(False)
             self.card_btn.setText("已解锁")
+            self.card_btn.setIcon(FluentIcon.FINGERPRINT)
+        elif is_verified:
+            self.card_btn.setEnabled(True)
+            self.card_btn.setText("申请更多额度")
+            self.card_btn.setIcon(FluentIcon.SHOPPING_CART)
         else:
             self.card_btn.setEnabled(True)
             self.card_btn.setText("解锁大额IP")
+            self.card_btn.setIcon(FluentIcon.FINGERPRINT)
 
         if custom_api:
             self.random_ip_hint.setText("自定义接口")
@@ -239,6 +248,7 @@ class DashboardRandomIPMixin:
 
     def _on_card_code_clicked(self):
         """用户主动输入卡密解锁大额随机IP。"""
+        was_already_verified = RegistryManager.is_card_verified()
         dialog = CardUnlockDialog(
             self,
             status_fetcher=get_status,
@@ -259,6 +269,8 @@ class DashboardRandomIPMixin:
             new_limit = current_limit + quota_to_add
             RegistryManager.write_quota_limit(new_limit)
             RegistryManager.set_card_verified(True)
+            if was_already_verified:
+                RegistryManager.set_extra_quota_verified(True)
             refresh_ip_counter_display(self.controller.adapter)
             self.random_ip_cb.setChecked(True)
             try:

@@ -168,6 +168,7 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
 
         self.cancel_btn.clicked.connect(self.reject)
         self.ok_btn.clicked.connect(self._on_validate_clicked)
+        self.card_edit.returnPressed.connect(self._on_validate_clicked)
         self.contact_btn.clicked.connect(contact_handler if callable(contact_handler) else self._open_contact)
         self.donate_btn.clicked.connect(self._open_donate)
 

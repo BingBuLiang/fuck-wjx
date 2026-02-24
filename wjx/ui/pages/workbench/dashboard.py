@@ -288,30 +288,21 @@ class DashboardPage(
         self.del_action = Action(FluentIcon.DELETE, "删除选中")
         self.command_bar.addAction(self.del_action)
         
-        # 分隔符
-        self.command_bar.addSeparator()
-        
-        # 全选（可勾选）
-        self.select_all_action = Action(FluentIcon.CHECKBOX, "全选", checkable=True)
-        self.command_bar.addAction(self.select_all_action)
-        
         list_layout.addWidget(self.command_bar)
         self.entry_table = TableWidget(self)
         self.entry_table.setRowCount(0)
-        self.entry_table.setColumnCount(3)
-        self.entry_table.setHorizontalHeaderLabels(["选择", "类型", "策略"])
+        self.entry_table.setColumnCount(2)
+        self.entry_table.setHorizontalHeaderLabels(["类型", "策略"])
         self.entry_table.verticalHeader().setVisible(False)
         self.entry_table.setSelectionBehavior(TableWidget.SelectionBehavior.SelectRows)
         self.entry_table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
         self.entry_table.setAlternatingRowColors(True)
         self.entry_table.setMinimumHeight(360)
-        # 设置列宽策略：前2列固定宽度，最后一列自动拉伸填充剩余空间
+        # 设置列宽策略：第1列固定宽度，第2列自动拉伸填充剩余空间
         header = self.entry_table.horizontalHeader()
         header.setSectionResizeMode(0, header.ResizeMode.Fixed)
-        header.setSectionResizeMode(1, header.ResizeMode.Fixed)
-        header.setSectionResizeMode(2, header.ResizeMode.Stretch)
-        self.entry_table.setColumnWidth(0, 100)
-        self.entry_table.setColumnWidth(1, 180)
+        header.setSectionResizeMode(1, header.ResizeMode.Stretch)
+        self.entry_table.setColumnWidth(0, 180)
         list_layout.addWidget(self.entry_table)
         layout.addWidget(list_card, 1)
 
@@ -366,7 +357,6 @@ class DashboardPage(
         clipboard = QApplication.clipboard()
         clipboard.dataChanged.connect(self._on_clipboard_changed)
         # CommandBar Actions
-        self.select_all_action.triggered.connect(self._toggle_select_all_action)
         self.add_action.triggered.connect(self._show_add_question_dialog)
         self.edit_action.triggered.connect(self._edit_selected_entries)
         self.del_action.triggered.connect(self._delete_selected_entries)

@@ -197,7 +197,7 @@ class RuntimePage(ScrollArea):
             parent=time_group
         )
         self.timed_card = TimedModeSettingCard(
-            FluentIcon.SPEED_HIGH, "定时模式", "启用后忽略时间设置，在开放后立即提交",
+            FluentIcon.RINGER, "定时模式", "启用后忽略时间设置，在开放后立即提交",
             parent=time_group
         )
 

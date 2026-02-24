@@ -37,7 +37,20 @@ if getattr(sys, 'frozen', False):
             except OSError:
                 pass
 
-    # 3. 设置 Qt 插件路径
+    # 3. 用 ctypes 显式预加载 numpy.libs 里的所有 DLL
+    # 原因：Windows DLL 加载器在处理依赖链时不走 os.add_dll_directory 的路径，
+    # 提前把 DLL 加载进进程内存后，后续加载 _multiarray_umath.pyd 时就能直接命中缓存
+    if os.path.isdir(numpy_libs_dir):
+        import ctypes
+        import glob
+        # 先加载 msvcp140 变体（libscipy_openblas64_ 依赖它）
+        for dll_path in sorted(glob.glob(os.path.join(numpy_libs_dir, '*.dll'))):
+            try:
+                ctypes.WinDLL(dll_path)
+            except OSError:
+                pass
+
+    # 4. 设置 Qt 插件路径
     plugins_dir = os.path.join(pyside6_dir, 'plugins')
     if os.path.isdir(plugins_dir):
         os.environ['QT_PLUGIN_PATH'] = plugins_dir

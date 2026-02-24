@@ -17,6 +17,12 @@ if getattr(sys, 'frozen', False):
     # 在此提前注册，确保 libscipy_openblas64_ 等 DLL 能被 Windows 加载器找到
     numpy_libs_dir = os.path.join(app_dir, 'numpy.libs')
 
+    # 0. 限制 OpenBLAS 线程数，防止 DllMain 初始化线程池失败
+    # 在 LTSC / 精简版 Windows 上，OpenBLAS 在 DllMain 里创建线程池会触发
+    # ERROR_DLL_INIT_FAILED，导致 numpy C 扩展无法加载
+    os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+    os.environ.setdefault('OMP_NUM_THREADS', '1')
+
     # 1. 添加到 PATH（必须在 PySide6.__init__ 之前）
     dirs_to_add = []
     if os.path.isdir(pyside6_dir):

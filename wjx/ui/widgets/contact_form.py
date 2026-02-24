@@ -125,6 +125,8 @@ class ContactForm(StatusPollingMixin, QWidget):
         self._verify_code_requested: bool = False
         self._verify_code_requested_email: str = ""
         self._verify_code_sending: bool = False
+        self._cooldown_timer: Optional[QTimer] = None
+        self._cooldown_remaining: int = 0
         self._polling_started = False
         self._auto_clear_on_success = auto_clear_on_success
         self._manage_polling = manage_polling
@@ -336,6 +338,7 @@ class ContactForm(StatusPollingMixin, QWidget):
     def closeEvent(self, event):
         """关闭事件：停止轮询、关闭所有 InfoBar 并断开信号"""
         self.stop_status_polling()
+        self._stop_cooldown()
 
         # 关闭所有可能存在的 InfoBar，避免其内部线程导致崩溃
         self._close_all_infobars()
@@ -518,8 +521,7 @@ class ContactForm(StatusPollingMixin, QWidget):
             self._verify_code_requested = False
             self._verify_code_requested_email = ""
             self._verify_code_sending = False
-            self.send_verify_btn.setEnabled(True)
-            self.send_verify_btn.setText("发送验证码")
+            self._stop_cooldown()
             self.email_label.setText("您的邮箱（必填）：")
             self.message_label.setText("请输入白嫖话术：")
         else:
@@ -537,8 +539,7 @@ class ContactForm(StatusPollingMixin, QWidget):
             self._verify_code_requested = False
             self._verify_code_requested_email = ""
             self._verify_code_sending = False
-            self.send_verify_btn.setEnabled(True)
-            self.send_verify_btn.setText("发送验证码")
+            self._stop_cooldown()
             self.email_label.setText("您的邮箱（选填，如果希望收到回复的话）：")
             self.message_label.setText("请输入您的消息：")
 
@@ -547,6 +548,36 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.send_verify_btn.setEnabled(not sending)
         self.send_verify_btn.setText("发送中..." if sending else "发送验证码")
         self.verify_send_spinner.setVisible(sending)
+
+    def _start_cooldown(self):
+        """发送成功后启动30秒冷却，期间按钮不可点击并显示倒计时。"""
+        self._cooldown_remaining = 30
+        self.send_verify_btn.setEnabled(False)
+        self.send_verify_btn.setText(f"重新发送({self._cooldown_remaining}s)")
+        self._cooldown_timer = QTimer(self)
+        self._cooldown_timer.setInterval(1000)
+        self._cooldown_timer.timeout.connect(self._on_cooldown_tick)
+        self._cooldown_timer.start()
+
+    def _on_cooldown_tick(self):
+        self._cooldown_remaining -= 1
+        if self._cooldown_remaining <= 0:
+            if self._cooldown_timer is not None:
+                self._cooldown_timer.stop()
+            self._cooldown_timer = None
+            self.send_verify_btn.setEnabled(True)
+            self.send_verify_btn.setText("发送验证码")
+        else:
+            self.send_verify_btn.setText(f"重新发送({self._cooldown_remaining}s)")
+
+    def _stop_cooldown(self):
+        """停止冷却计时器并重置按钮状态。"""
+        if self._cooldown_timer is not None:
+            self._cooldown_timer.stop()
+            self._cooldown_timer = None
+        self._cooldown_remaining = 0
+        self.send_verify_btn.setEnabled(True)
+        self.send_verify_btn.setText("发送验证码")
 
     def _on_send_verify_clicked(self):
         if self._verify_code_sending:
@@ -603,6 +634,7 @@ class ContactForm(StatusPollingMixin, QWidget):
             self._verify_code_requested = True
             self._verify_code_requested_email = email
             InfoBar.success("", "验证码已发送，请查收并输入验证码", parent=self, position=InfoBarPosition.TOP, duration=2200)
+            self._start_cooldown()
             return
 
         self._verify_code_requested = False

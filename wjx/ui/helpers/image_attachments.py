@@ -39,7 +39,7 @@ class ImageAttachmentManager:
     pixmap = QPixmap.fromImage(image)
     if pixmap.isNull():
       return QPixmap()
-    return pixmap.scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    return pixmap.scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
   def add_qimage(self, image: QImage, name_hint: str = "clipboard.png"):
     ok, msg = self._ensure_capacity()
@@ -49,11 +49,11 @@ class ImageAttachmentManager:
       return False, "剪贴板内容不是有效图片"
 
     buffer = QBuffer()
-    buffer.open(QIODevice.WriteOnly)
-    saved = image.save(buffer, "PNG")
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    saved = image.save(buffer, b"PNG")
     if not saved:
       return False, "图片保存失败"
-    data = bytes(buffer.data())
+    data = bytes(bytearray(buffer.data()))  # type: ignore[arg-type]
     if len(data) > self.max_size_bytes:
       return False, "图片超过 10MB 限制"
 
@@ -84,7 +84,7 @@ class ImageAttachmentManager:
     if len(data) > self.max_size_bytes:
       return False, "图片超过 10MB 限制"
 
-    fmt = (reader.format() or b"").decode("utf-8").lower()
+    fmt = bytearray(reader.format() or b"").decode("utf-8").lower()  # type: ignore[arg-type]
     mime = f"image/{fmt}" if fmt else "image/png"
     name = os.path.basename(path) or "image"
     thumb = self._make_thumb(image)

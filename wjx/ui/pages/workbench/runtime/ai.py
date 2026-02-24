@@ -239,8 +239,8 @@ class RuntimeAISection(QObject):
         if self._current_infobar is not None:
             try:
                 self._current_infobar.close()
-            except (RuntimeError, AttributeError) as exc:
-                log_suppressed_exception("_show_ai_infobar: self._current_infobar.close()", exc, level=logging.WARNING)
+            except (RuntimeError, AttributeError):
+                pass
             self._current_infobar = None
         
         # 显示新的 InfoBar
@@ -252,6 +252,27 @@ class RuntimeAISection(QObject):
             position=InfoBarPosition.TOP,
             duration=duration,
         )
+
+    def _show_ai_infobar_with_link(self, message: str, url: str):
+        """显示带超链接按钮的警告 InfoBar"""
+        if self._current_infobar is not None:
+            try:
+                self._current_infobar.close()
+            except (RuntimeError, AttributeError):
+                pass
+            self._current_infobar = None
+
+        bar = InfoBar.warning(
+            "",
+            message,
+            parent=self._owner.window(),
+            position=InfoBarPosition.TOP,
+            duration=5000,
+        )
+        if url:
+            link_btn = HyperlinkButton(FluentIcon.LINK, url, "查看 API 文档", bar)
+            bar.addWidget(link_btn)
+        self._current_infobar = bar
 
     def _update_ai_visibility(self):
         """根据选择的提供商更新 AI 配置项的可见性和推荐模型"""
@@ -337,6 +358,20 @@ class RuntimeAISection(QObject):
     def _on_ai_enabled_toggled(self, checked: bool):
         """AI 功能开关切换"""
         if self._ai_loading:
+            return
+        if checked and not self.ai_apikey_edit.text().strip():
+            # 没有填写 API Key，阻止开启并提示
+            self._ai_loading = True
+            self.ai_enabled_card.switchButton.setChecked(False)
+            self._ai_loading = False
+            # 获取当前服务商的文档链接
+            idx = self.ai_provider_combo.currentIndex()
+            provider_key = str(self.ai_provider_combo.itemData(idx)) if idx >= 0 else "deepseek"
+            doc_url = self._PROVIDER_DOCS.get(provider_key, "")
+            self._show_ai_infobar_with_link(
+                "请先填写 API Key，获取方法请查阅服务商 API 文档",
+                doc_url,
+            )
             return
         save_ai_settings(enabled=checked)
         self._show_ai_infobar(f"AI 填空功能已{'开启' if checked else '关闭'}")

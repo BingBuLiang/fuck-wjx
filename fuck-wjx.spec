@@ -1,10 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_dynamic_libs, collect_all
+from PyInstaller.utils.hooks import collect_all
 import os
-import glob as _glob
 
 binaries = []
-binaries += collect_dynamic_libs('pyzbar')
 
 # 收集 qfluentwidgets
 qfw_datas, qfw_binaries, qfw_hiddenimports = collect_all('qfluentwidgets')
@@ -139,13 +137,15 @@ a = Analysis(
         "ftplib",
         "cgi",
         "socketserver",
-        # "tarfile",  # pandas.io.common 需要
+        "tarfile",
         "pickletools",
         "difflib",
         "fileinput",
         "rlcompleter",
         "tty",
         "plistlib",
+        "scipy",
+        "pandas",
         # PySide6 黑名单：排除未使用的大模块（防止依赖分析拉回来）
         "PySide6.QtWebEngine",
         "PySide6.QtWebEngineCore",
@@ -255,6 +255,29 @@ def _is_unwanted_pyside6_data(name):
     return False
 
 a.datas = [d for d in a.datas if not _is_unwanted_pyside6_data(d[0])]
+
+# === 附加体积优化：清理收集进来的冗余依赖和无用文件 ===
+def _cleanup_binaries(b_name):
+    norm = b_name.replace('\\', '/')
+    basename = os.path.basename(norm)
+    # 1. 强制清理 PySide6 重复被放置在内层目录的 DLL (根目录已存在)
+    if norm.startswith('PySide6/') and basename.endswith('.dll') and basename in pyside6_root_dlls:
+        return True
+    if norm.startswith('PySide6/') and basename == 'pyside6.abi3.dll':
+        return True
+    # 2. 清理 CV2 无用的视频编码依赖 (扫码只需图片处理)
+    if basename.lower().startswith('opencv_videoio_ffmpeg'):
+        return True
+    return False
+
+def _cleanup_datas(d_name):
+    norm = d_name.replace('\\', '/')
+    # 不要裁剪 playwright 的数据文件，避免误删运行时必需资源
+    # （历史上这里删 *.json 会导致 Playwright 初始化异常）
+    return False
+
+a.binaries = [b for b in a.binaries if not _cleanup_binaries(b[0])]
+a.datas = [d for d in a.datas if not _cleanup_datas(d[0])]
 
 pyz = PYZ(a.pure)
 

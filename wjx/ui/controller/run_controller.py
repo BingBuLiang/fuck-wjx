@@ -3,41 +3,37 @@ from __future__ import annotations
 
 import math
 import logging
+import copy
 from urllib.parse import urlparse
 import threading
-import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
-
-import wjx.network.http_client as http_client
 
 from PySide6.QtCore import QObject, Signal, QTimer, QCoreApplication
 
-import wjx.core.state as state
-from wjx.utils.app.config import DEFAULT_HTTP_HEADERS, DEFAULT_FILL_TEXT, STOP_FORCE_WAIT_SECONDS
+from wjx.core.task_context import TaskContext
+from wjx.utils.app.config import DEFAULT_FILL_TEXT, STOP_FORCE_WAIT_SECONDS
 from wjx.utils.system.cleanup_runner import CleanupRunner
 from wjx.core.questions.config import QuestionEntry, configure_probabilities, validate_question_config
 from wjx.core.engine import (
-    create_playwright_driver,
-    parse_survey_questions_from_html,
     _normalize_question_type_code,
-    _extract_survey_title_from_html,
-    _normalize_html_text,
     run,
 )
 from wjx.utils.io.load_save import RuntimeConfig, load_config, save_config
-from wjx.utils.logging.log_utils import log_popup_confirm, log_popup_error, log_popup_info, log_popup_warning
 from wjx.network.proxy import (
-    _fetch_new_proxy_batch,
     get_effective_proxy_api_url,
     is_custom_proxy_api_active,
+    set_proxy_occupy_minute_by_answer_duration,
 )
 from wjx.utils.system.registry_manager import RegistryManager
-from wjx.core.stats.collector import stats_collector
-from wjx.core.stats.persistence import save_stats
+from wjx.utils.event_bus import (
+    bus as _event_bus,
+    EVENT_TASK_STARTED,
+    EVENT_TASK_STOPPED,
+)
 
 
 def _is_wjx_domain(url_value: str) -> bool:
-    """仅接受 wjx.cn 及子域名。"""
+    """接受问卷星域名：wjx.top、wjx.cn、wjx.com 及其子域名。"""
     if not url_value:
         return False
     text = str(url_value).strip()
@@ -50,7 +46,12 @@ def _is_wjx_domain(url_value: str) -> bool:
     except Exception:
         return False
     host = (parsed.netloc or "").split(":", 1)[0].lower()
-    return bool(host == "wjx.cn" or host.endswith(".wjx.cn"))
+    # 支持 wjx.top、wjx.cn、wjx.com 及其子域名
+    allowed_domains = ["wjx.top", "wjx.cn", "wjx.com"]
+    for domain in allowed_domains:
+        if host == domain or host.endswith(f".{domain}"):
+            return True
+    return False
 
 
 class BoolVar:
@@ -86,6 +87,7 @@ class EngineGuiAdapter:
         self._stop_signal = stop_signal
         self._card_code_provider = card_code_provider
         self.update_random_ip_counter = on_ip_counter
+        self.task_ctx: Optional[TaskContext] = None  # 任务上下文，由 RunController 在 start_run 时设置
         self._pause_event = threading.Event()
         self._pause_reason = ""
         self._cleanup_runner = cleanup_runner  # 用于异步清理浏览器
@@ -157,7 +159,7 @@ class EngineGuiAdapter:
         优化策略：
         1. 立即刷新批量清理队列（不等待去抖延迟）
         2. 使用批量 taskkill 清理残留 PID
-        3. Fire-and-Forget 方式停止 Playwright 实例
+        3. 不再尝试调用 playwright.stop()（避免线程安全问题）
         """
         drivers = list(self.active_drivers or [])
         self.active_drivers.clear()
@@ -192,31 +194,6 @@ class EngineGuiAdapter:
             except Exception:
                 logging.debug("触发批量清理失败", exc_info=True)
 
-        # 【优化 3】Fire-and-Forget 方式停止 Playwright 实例
-        def _stop_playwright_instances():
-            cleaned_count = 0
-            for driver in drivers:
-                try:
-                    # 尝试标记为已清理（如果已被标记则返回 False，但我们仍然尝试清理）
-                    driver.mark_cleanup_done()
-                    driver._playwright.stop()
-                    cleaned_count += 1
-                except Exception as exc:
-                    # 如果已经被清理过，这里会抛异常，忽略即可
-                    logging.debug(f"停止 Playwright 实例失败（可能已被清理）: {exc}")
-
-            if cleaned_count > 0:
-                logging.debug(f"[兜底清理] 已停止 {cleaned_count} 个 playwright 实例")
-
-        # 在后台线程中停止 Playwright 实例，不阻塞 GUI
-        if drivers:
-            cleanup_thread = threading.Thread(
-                target=_stop_playwright_instances,
-                daemon=True,
-                name="PlaywrightCleanup"
-            )
-            cleanup_thread.start()
-
 
 
 class RunController(QObject):
@@ -227,7 +204,6 @@ class RunController(QObject):
     statusUpdated = Signal(str, int, int)
     pauseStateChanged = Signal(bool, str)
     cleanupFinished = Signal()
-    askSaveStats = Signal()  # 新增：询问用户是否保存统计数据
     _uiCallbackQueued = Signal(object)
 
     def __init__(self, parent=None):
@@ -235,8 +211,11 @@ class RunController(QObject):
         self.config = RuntimeConfig()
         self.questions_info: List[Dict[str, Any]] = []
         self.question_entries: List[QuestionEntry] = []
+        self.survey_title = ""
         self.stop_event = threading.Event()
         self.worker_threads: List[threading.Thread] = []
+        # 当前任务上下文（每次 start_run 时重新构造）
+        self._task_ctx: Optional[TaskContext] = None
         # 先创建清理器，后续 adapter 需要引用
         self._cleanup_runner = CleanupRunner()
         self.adapter = EngineGuiAdapter(
@@ -311,6 +290,7 @@ class RunController(QObject):
                 # 传入现有配置，以便复用已配置的题型权重
                 self.question_entries = self._build_default_entries(info, self.question_entries)
                 self.config.url = normalized_url
+                self.survey_title = title or ""
                 self.surveyParsed.emit(info, title or "")
             except Exception as exc:
                 friendly = str(exc) or "解析失败，请稍后重试"
@@ -319,39 +299,8 @@ class RunController(QObject):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _parse_questions(self, url: str) -> Tuple[List[Dict[str, Any]], str]:
-        info: Optional[List[Dict[str, Any]]] = None
-        title = ""
-        try:
-            resp = http_client.get(url, timeout=12, headers=DEFAULT_HTTP_HEADERS, proxies={})
-            resp.raise_for_status()
-            html = resp.text
-            info = parse_survey_questions_from_html(html)
-            title = _extract_survey_title_from_html(html) or title
-        except Exception as exc:
-            logging.exception("使用 httpx 获取问卷失败，url=%r", url)
-            info = None
-        if info is None:
-            driver = None
-            try:
-                driver, _ = create_playwright_driver(headless=True, user_agent=None)
-                driver.get(url)
-                time.sleep(2.5)
-                page_source = driver.page_source
-                info = parse_survey_questions_from_html(page_source)
-                title = _extract_survey_title_from_html(page_source) or title
-            except Exception as exc:
-                logging.exception("使用 Playwright 获取问卷失败，url=%r", url)
-                info = None
-            finally:
-                try:
-                    if driver:
-                        driver.quit()
-                except Exception:
-                    logging.debug("关闭解析用浏览器实例失败", exc_info=True)
-        if not info:
-            raise RuntimeError("无法打开问卷链接，请确认链接有效且网络正常")
-        normalized_title = _normalize_html_text(title) if title else ""
-        return info, normalized_title
+        from wjx.core.services.survey_service import parse_survey
+        return parse_survey(url)
 
     @staticmethod
     def _as_float(val, default):
@@ -372,15 +321,36 @@ class RunController(QObject):
         questions_info: List[Dict[str, Any]], 
         existing_entries: Optional[List[QuestionEntry]] = None
     ) -> List[QuestionEntry]:
-        """构建题目配置列表。如果 existing_entries 中有相同题型的配置，则优先复用其权重设置。"""
-        # 建立题型到已配置权重的映射
-        type_config_map: Dict[str, QuestionEntry] = {}
+        """构建题目配置列表。优先按题号/题目文本精确复用旧配置，避免同题型串台。"""
+        def _normalize_question_num(raw: Any) -> Optional[int]:
+            try:
+                if raw is None:
+                    return None
+                return int(raw)
+            except Exception:
+                return None
+
+        def _normalize_title(raw: Any) -> str:
+            try:
+                text = str(raw or "").strip()
+            except Exception:
+                return ""
+            if not text:
+                return ""
+            # 去掉所有空白，避免不同格式导致匹配失败
+            return "".join(text.split())
+
+        # 建立可复用配置映射（按题号、题目文本）
+        existing_by_num: Dict[int, QuestionEntry] = {}
+        existing_by_title: Dict[str, QuestionEntry] = {}
         if existing_entries:
             for entry in existing_entries:
-                q_type = entry.question_type
-                # 只保存每个题型的第一个配置作为参考
-                if q_type not in type_config_map:
-                    type_config_map[q_type] = entry
+                q_num = _normalize_question_num(getattr(entry, "question_num", None))
+                if q_num is not None and q_num not in existing_by_num:
+                    existing_by_num[q_num] = entry
+                title_key = _normalize_title(getattr(entry, "question_title", None))
+                if title_key and title_key not in existing_by_title:
+                    existing_by_title[title_key] = entry
         
         entries: List[QuestionEntry] = []
         for q in questions_info:
@@ -427,19 +397,42 @@ class RunController(QObject):
             else:
                 option_count = base_option_count
             
-            # 检查是否有已配置的相同题型，如果有则复用其权重配置
-            existing_config = type_config_map.get(q_type)
+            parsed_title_key = _normalize_title(title_text)
+
+            # 优先按题号匹配；题号可用时仍会校验题目标题，避免跨问卷误复用
+            existing_config: Optional[QuestionEntry] = None
+            parsed_question_num = _normalize_question_num(q.get("num"))
+            if parsed_question_num is not None:
+                candidate = existing_by_num.get(parsed_question_num)
+                if candidate and candidate.question_type == q_type:
+                    candidate_title_key = _normalize_title(getattr(candidate, "question_title", None))
+                    if parsed_title_key and candidate_title_key and candidate_title_key != parsed_title_key:
+                        candidate = None
+                    if candidate is not None:
+                        existing_config = candidate
+            if existing_config is None:
+                if parsed_title_key:
+                    candidate = existing_by_title.get(parsed_title_key)
+                    if candidate and candidate.question_type == q_type:
+                        existing_config = candidate
+
             if existing_config:
-                # 复用已配置的权重设置
-                probabilities: Any = existing_config.probabilities
+                # 复用已配置的权重设置（深拷贝，避免多题共享同一对象）
+                probabilities: Any = copy.deepcopy(existing_config.probabilities)
                 distribution = existing_config.distribution_mode or "random"
-                custom_weights = existing_config.custom_weights
-                texts = existing_config.texts
+                custom_weights = copy.deepcopy(existing_config.custom_weights)
+                texts = copy.deepcopy(existing_config.texts)
                 # 对于文本题，复用AI设置
                 ai_enabled_from_existing = getattr(existing_config, "ai_enabled", False) if q_type in ("text", "multi_text") else False
+                text_random_mode_from_existing = (
+                    str(getattr(existing_config, "text_random_mode", "none") or "none")
+                    if q_type == "text"
+                    else "none"
+                )
             else:
                 # 没有已配置的相同题型，使用默认配置
                 ai_enabled_from_existing = False
+                text_random_mode_from_existing = "none"
                 if q_type in ("single", "dropdown", "scale"):
                     probabilities = -1
                     distribution = "random"
@@ -495,6 +488,7 @@ class RunController(QObject):
                 question_num=q.get("num"),
                 question_title=title_text or None,
                 ai_enabled=ai_enabled_from_existing if q_type in ("text", "multi_text") else False,
+                text_random_mode=text_random_mode_from_existing if q_type == "text" else "none",
                 option_fill_texts=None,
                 fillable_option_indices=q.get("fillable_options"),
                 is_location=is_location,
@@ -530,34 +524,42 @@ class RunController(QObject):
             return None
         return result_container.get("value")
 
-    def _prepare_engine_state(self, config: RuntimeConfig, proxy_pool: List[str]) -> None:
+    def _prepare_engine_state(self, config: RuntimeConfig, proxy_pool: List[str]) -> TaskContext:
+        """构建本次任务的 TaskContext。"""
         fail_threshold = max(1, math.ceil(config.target / 4) + 1)
-        # sync controller copies
-        state.url = config.url
-        state.target_num = config.target
-        state.num_threads = max(1, int(config.threads or 1))
-        state.browser_preference = list(getattr(config, "browser_preference", []) or [])
-        state.fail_threshold = fail_threshold
-        # 新一轮任务必须从 0 开始计数，否则进度会沿用上次完成值
-        state.cur_num = 0
-        state.cur_fail = 0
-        state.stop_event = self.stop_event
-        state.submit_interval_range_seconds = tuple(config.submit_interval)
-        state.answer_duration_range_seconds = tuple(config.answer_duration)
-        state.timed_mode_enabled = config.timed_mode_enabled
-        state.timed_mode_refresh_interval = config.timed_mode_interval
-        state.random_proxy_ip_enabled = config.random_ip_enabled
-        state.proxy_ip_pool = proxy_pool if config.random_ip_enabled else []
-        state.random_user_agent_enabled = config.random_ua_enabled
-        state.user_agent_pool_keys = config.random_ua_keys
-        state.stop_on_fail_enabled = config.fail_stop_enabled
-        state.pause_on_aliyun_captcha = bool(getattr(config, "pause_on_aliyun_captcha", True))
-        # sync module-level aliases used elsewhere in this file
-        state._aliyun_captcha_stop_triggered = False
-        state._aliyun_captcha_popup_shown = False
-        state._target_reached_stop_triggered = False
+        config_title = str(getattr(config, "survey_title", "") or "")
+        fallback_title = str(getattr(self, "survey_title", "") or "")
+        survey_title = config_title or fallback_title
 
-    def start_run(self, config: RuntimeConfig):
+        # ── 构建 TaskContext 实例 ─────────────────────────────────────────
+        ctx = TaskContext(
+            url=config.url,
+            survey_title=survey_title,
+            target_num=config.target,
+            num_threads=max(1, int(config.threads or 1)),
+            headless_mode=getattr(config, "headless_mode", False),
+            browser_preference=list(getattr(config, "browser_preference", []) or []),
+            fail_threshold=fail_threshold,
+            cur_num=0,
+            cur_fail=0,
+            stop_event=self.stop_event,
+            submit_interval_range_seconds=(int(config.submit_interval[0]), int(config.submit_interval[1])),
+            answer_duration_range_seconds=(int(config.answer_duration[0]), int(config.answer_duration[1])),  # type: ignore[arg-type]
+            timed_mode_enabled=config.timed_mode_enabled,
+            timed_mode_refresh_interval=config.timed_mode_interval,
+            random_proxy_ip_enabled=config.random_ip_enabled,
+            proxy_ip_pool=list(proxy_pool) if config.random_ip_enabled else [],
+            random_user_agent_enabled=config.random_ua_enabled,
+            user_agent_pool_keys=list(config.random_ua_keys),
+            user_agent_ratios=dict(getattr(config, "random_ua_ratios", {"wechat": 33, "mobile": 33, "pc": 34})),
+            answer_rules=copy.deepcopy(getattr(config, "answer_rules", []) or []),
+            stop_on_fail_enabled=config.fail_stop_enabled,
+            pause_on_aliyun_captcha=bool(getattr(config, "pause_on_aliyun_captcha", True)),
+        )
+
+        return ctx
+
+    def start_run(self, config: RuntimeConfig):  # noqa: C901
         import logging
         logging.info("收到启动请求")
 
@@ -565,14 +567,6 @@ class RunController(QObject):
             logging.warning("任务已在运行中，忽略重复启动请求")
             return
 
-        # 仅在确认要启动新一轮任务时再重置全局进度状态
-        # 避免“正在运行时误点开始”把当前任务状态清零。
-        state.cur_num = 0
-        state.cur_fail = 0
-        state.target_num = max(1, int(getattr(config, "target", 1) or 1))
-        state._target_reached_stop_triggered = False
-        state._aliyun_captcha_stop_triggered = False
-        state._aliyun_captcha_popup_shown = False
         if not getattr(config, "question_entries", None):
             logging.error("未配置任何题目，无法启动")
             self.runFailed.emit('未配置任何题目，无法开始执行（请先在"题目配置"页添加/配置题目）')
@@ -591,6 +585,8 @@ class RunController(QObject):
         
         self.config = config
         self.question_entries = list(getattr(config, "question_entries", []) or [])
+        if not self.questions_info and getattr(config, "questions_info", None):
+            self.questions_info = list(getattr(config, "questions_info") or [])
         self.stop_event = threading.Event()
         self.adapter = EngineGuiAdapter(
             self._dispatch_to_ui,
@@ -606,23 +602,38 @@ class RunController(QObject):
         self._cleanup_scheduled = False
         self._stopped_by_stop_run = False
         self._starting = True
+        _ad = config.answer_duration or (0, 0)
+        proxy_answer_duration: Tuple[int, int] = (0, 0) if config.timed_mode_enabled else (int(_ad[0]), int(_ad[1]))
+        try:
+            set_proxy_occupy_minute_by_answer_duration(proxy_answer_duration)
+        except Exception:
+            logging.debug("同步随机IP占用时长失败", exc_info=True)
 
         logging.info(f"配置题目概率分布（共{len(config.question_entries)}题）")
+        # 构建本次任务的上下文（尚未有 proxy_pool，后面在 _start_workers_with_proxy_pool 中注入）
+        # 这里先创建一个临时 ctx，供 configure_probabilities 写入题目配置
+        _tmp_ctx = TaskContext()
         try:
-            configure_probabilities(config.question_entries)
+            configure_probabilities(
+                config.question_entries,
+                ctx=_tmp_ctx,
+                reliability_mode_enabled=getattr(config, "reliability_mode_enabled", True),
+            )
         except Exception as exc:
             logging.error(f"配置题目失败：{exc}")
             self._starting = False
             self.runFailed.emit(str(exc))
             return
 
-        # 保存题目元数据到 state（用于统计展示时补充选项文本等信息）
-        state.questions_metadata = {}
+        # 保存题目元数据（用于统计展示时补充选项文本等信息）
+        _tmp_ctx.questions_metadata = {}
         if hasattr(self, 'questions_info') and self.questions_info:
             for q_info in self.questions_info:
                 q_num = q_info.get('num')
                 if q_num:
-                    state.questions_metadata[q_num] = q_info
+                    _tmp_ctx.questions_metadata[q_num] = q_info
+        # 把临时 ctx 的题目配置结果缓存到实例，等 _start_workers_with_proxy_pool 内合并到正式 ctx
+        self._pending_question_ctx = _tmp_ctx
 
         if config.random_ip_enabled:
             # 检查是否已达随机IP上限
@@ -652,16 +663,19 @@ class RunController(QObject):
 
     def _prefetch_proxies_and_start(self, config: RuntimeConfig) -> None:
         try:
-            proxy_pool = _fetch_new_proxy_batch(
+            from wjx.core.services.proxy_service import prefetch_proxy_pool
+            proxy_pool = prefetch_proxy_pool(
                 expected_count=max(1, config.threads),
-                proxy_url=config.random_proxy_api or get_effective_proxy_api_url(),
-                notify_on_area_error=False,
+                proxy_api_url=config.random_proxy_api or get_effective_proxy_api_url(),
                 stop_signal=self.stop_event,
             )
         except Exception as exc:
+            err_text = str(exc)
+
             def _fail():
                 self._starting = False
-                self.runFailed.emit(str(exc))
+                self.runFailed.emit(err_text)
+
             self._dispatch_to_ui_async(_fail)
             return
 
@@ -675,11 +689,40 @@ class RunController(QObject):
         self._dispatch_to_ui_async(_continue_start)
 
     def _start_workers_with_proxy_pool(self, config: RuntimeConfig, proxy_pool: List[str]) -> None:
-        self._prepare_engine_state(config, proxy_pool)
+        # 构建并注入完整的 TaskContext
+        ctx = self._prepare_engine_state(config, proxy_pool)
+        # 将之前所配置的题目概率内容合并入正式 ctx
+        pending = getattr(self, '_pending_question_ctx', None)
+        if pending is not None:
+            ctx.single_prob = pending.single_prob
+            ctx.droplist_prob = pending.droplist_prob
+            ctx.multiple_prob = pending.multiple_prob
+            ctx.matrix_prob = pending.matrix_prob
+            ctx.scale_prob = pending.scale_prob
+            ctx.slider_targets = pending.slider_targets
+            ctx.texts = pending.texts
+            ctx.texts_prob = pending.texts_prob
+            ctx.text_entry_types = pending.text_entry_types
+            ctx.text_ai_flags = pending.text_ai_flags
+            ctx.text_titles = pending.text_titles
+            ctx.single_option_fill_texts = pending.single_option_fill_texts
+            ctx.droplist_option_fill_texts = pending.droplist_option_fill_texts
+            ctx.multiple_option_fill_texts = pending.multiple_option_fill_texts
+            ctx.question_config_index_map = pending.question_config_index_map
+            ctx.question_dimension_map = pending.question_dimension_map
+            ctx.question_reverse_map = pending.question_reverse_map
+            ctx.questions_metadata = pending.questions_metadata
+            self._pending_question_ctx = None
+        self._task_ctx = ctx
+        # 将 TaskContext 传递给 adapter，供 runner.py 更新进度计数
+        self.adapter.task_ctx = ctx
+
         self.running = True
         self._starting = False
         self.runStateChanged.emit(True)
         self._status_timer.start()
+
+        _event_bus.emit(EVENT_TASK_STARTED, ctx=ctx)
 
         logging.info(f"创建{config.threads}个工作线程")
         threads: List[threading.Thread] = []
@@ -689,6 +732,7 @@ class RunController(QObject):
             t = threading.Thread(
                 target=run,
                 args=(x, y, self.stop_event, self.adapter),
+                kwargs={"ctx": ctx},
                 daemon=True,
                 name=f"Worker-{idx+1}"
             )
@@ -710,6 +754,10 @@ class RunController(QObject):
         logging.info("任务启动完成，监控线程已启动")
 
     def _wait_for_threads(self, adapter_snapshot: Optional[EngineGuiAdapter] = None):
+        """等待所有工作线程结束
+
+        注意：这个方法在后台 Monitor 线程中运行，不会阻塞 GUI
+        """
         for t in self.worker_threads:
             t.join()
         self._on_run_finished(adapter_snapshot)
@@ -723,6 +771,7 @@ class RunController(QObject):
         already_stopped = getattr(self, '_stopped_by_stop_run', False)
         self._stopped_by_stop_run = False
         self._status_timer.stop()
+        _event_bus.emit(EVENT_TASK_STOPPED)
         if not already_stopped:
             self.running = False
             self.runStateChanged.emit(False)
@@ -784,13 +833,6 @@ class RunController(QObject):
         # 做一次最终状态刷新
         self._emit_status()
 
-        # 如果是用户手动停止（未达到目标份数），询问是否保存统计
-        current = getattr(state, "cur_num", 0)
-        target = getattr(state, "target_num", 0)
-        if target > 0 and current < target and current > 0:
-            # 延迟发送信号，确保UI状态已更新
-            QTimer.singleShot(100, self.askSaveStats.emit)
-
     def resume_run(self):
         """Resume execution after a pause (does not restart threads)."""
         if not self.running:
@@ -804,9 +846,10 @@ class RunController(QObject):
             self.pauseStateChanged.emit(False, "")
 
     def _emit_status(self):
-        current = getattr(state, "cur_num", 0)
-        target = getattr(state, "target_num", 0)
-        fail = getattr(state, "cur_fail", 0)
+        ctx = self._task_ctx
+        current = getattr(ctx, "cur_num", 0)
+        target = getattr(ctx, "target_num", 0)
+        fail = getattr(ctx, "cur_fail", 0)
         paused = False
         reason = ""
         try:
@@ -836,6 +879,8 @@ class RunController(QObject):
         cfg = load_config(path)
         self.config = cfg
         self.question_entries = cfg.question_entries
+        self.questions_info = list(getattr(cfg, "questions_info", None) or [])
+        self.survey_title = str(getattr(cfg, "survey_title", "") or "")
         return cfg
 
     def save_current_config(self, path: Optional[str] = None) -> str:
@@ -846,19 +891,4 @@ class RunController(QObject):
         self.config.question_entries = self.question_entries
         return save_config(self.config, path)
 
-    def _save_stats_if_available(self) -> Optional[str]:
-        """内部方法：保存统计数据（如果有）"""
-        try:
-            current_stats = stats_collector.get_current_stats()
-            if current_stats and current_stats.total_submissions > 0:
-                path = save_stats(current_stats)
-                logging.info(f"统计数据已保存到：{path}")
-                return path
-        except Exception as exc:
-            logging.error(f"保存统计数据失败：{exc}", exc_info=True)
-        return None
-
-    def save_stats_with_prompt(self) -> Optional[str]:
-        """UI调用：保存统计数据（通常在用户确认后调用）"""
-        return self._save_stats_if_available()
 

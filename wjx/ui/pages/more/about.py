@@ -4,7 +4,6 @@ import webbrowser
 import os
 import sys
 from datetime import datetime
-import wjx.network.http_client as http_client
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
@@ -19,7 +18,6 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     ScrollArea,
-    SubtitleLabel,
     BodyLabel,
     CaptionLabel,
     TitleLabel,
@@ -53,16 +51,14 @@ def get_resource_path(relative_path: str) -> str:
 class AboutPage(ScrollArea):
     """关于页面，包含版本号、链接、检查更新等。"""
 
-    _updateCheckFinished = Signal(object)  # update_info or None
-    _updateCheckError = Signal(str)  # error message
-    _publishTimeLoaded = Signal(str)  # publish time string
-    _ipBalanceLoaded = Signal(float)  # balance
+    _updateCheckFinished = Signal(object)
+    _updateCheckError = Signal(str)
+    _publishTimeLoaded = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._updateCheckFinished.connect(self._on_update_result)
         self._updateCheckError.connect(self._on_update_error)
-        self._ipBalanceLoaded.connect(self._on_ip_balance_loaded)
 
         self.view = QWidget(self)
         self.view.setObjectName('view')
@@ -235,13 +231,10 @@ class AboutPage(ScrollArea):
         # Footer
         footer_layout = QHBoxLayout()
         footer_layout.setSpacing(8)
-        copyright_text = CaptionLabel("© 2026 HUNGRY_M0", self)
+        copyright_text = CaptionLabel("Copyright © 2026 HUNGRY_M0. All rights reserved.", self)
         copyright_text.setStyleSheet("color: #888;")
-        self.ip_balance_label = CaptionLabel("", self)
-        self.ip_balance_label.setStyleSheet("color: #888;")
         footer_layout.addStretch(1)
         footer_layout.addWidget(copyright_text)
-        footer_layout.addWidget(self.ip_balance_label)
         footer_layout.addStretch(1)
         content_layout.addSpacing(8)
         content_layout.addLayout(footer_layout)
@@ -251,9 +244,8 @@ class AboutPage(ScrollArea):
         self.github_btn.clicked.connect(lambda: webbrowser.open(f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}"))
         self.website_btn.clicked.connect(lambda: webbrowser.open("https://www.hungrym0.top/fuck-wjx.html"))
         
-        # 异步获取发布时间和IP余额
+        # 异步获取发布时间
         self._load_publish_time()
-        self._load_ip_balance()
 
     def _set_update_loading(self, loading: bool):
         self._checking_update = loading
@@ -269,13 +261,19 @@ class AboutPage(ScrollArea):
         """处理更新检查结果（在主线程中执行）"""
         self._set_update_loading(False)
         win = self.window()
-        if update_info:
+        status = update_info.get("status", "unknown") if update_info else "unknown"
+        if status == "outdated":
             if hasattr(win, 'update_info'):
                 win.update_info = update_info  # type: ignore[union-attr]
             from wjx.utils.update.updater import show_update_notification
             show_update_notification(win)
-        else:
+        elif status == "latest":
             InfoBar.success("", f"当前已是最新版本 v{__VERSION__}", parent=win, position=InfoBarPosition.TOP, duration=3000)
+        elif status == "preview":
+            latest = update_info.get("latest_version", "?") if update_info else "?"
+            InfoBar.warning("", f"当前版本 v{__VERSION__} 高于远程最新版 v{latest}，属于预览版", parent=win, position=InfoBarPosition.TOP, duration=4000)
+        else:
+            InfoBar.warning("", "检查更新失败，请检查网络连接后重试", parent=win, position=InfoBarPosition.TOP, duration=4000)
 
     def _on_update_error(self, error_msg: str):
         """处理更新检查错误（在主线程中执行）"""
@@ -320,36 +318,6 @@ class AboutPage(ScrollArea):
     def _on_publish_time_loaded(self, time_str: str):
         """更新发布时间标签"""
         self.publish_time_label.setText(f"({time_str})")
-
-    def _load_ip_balance(self):
-        """异步加载IP余额"""
-        def _do_load():
-            try:
-                response = http_client.get(
-                    "https://service.ipzan.com/userProduct-get",
-                    params={"no": "20260112572376490874", "userId": "72FH7U4E0IG"},
-                    timeout=5,
-                )
-                data = response.json()
-                if data.get("code") in (0, 200) and data.get("status") in (200, "200", None):
-                    balance = data.get("data", {}).get("balance", 0)
-                    try:
-                        self._ipBalanceLoaded.emit(float(balance))
-                    except Exception as exc:
-                        log_suppressed_exception("_do_load: self._ipBalanceLoaded.emit(float(balance))", exc, level=logging.WARNING)
-            except Exception as exc:
-                log_suppressed_exception("_do_load: response = http_client.get( \"https://service.ipzan.com/userProduct-get\", para...", exc, level=logging.WARNING)
-        
-        threading.Thread(target=_do_load, daemon=True).start()
-
-    def _on_ip_balance_loaded(self, balance: float):
-        """更新IP余额标签，显示剩余IP数"""
-        try:
-            ip_count = int(float(balance) / 0.0035)
-            display = str(ip_count)
-        except Exception:
-            display = "--"
-        self.ip_balance_label.setText(f"|  代理源剩余 IP 数：{display}")
 
     def _show_terms_of_service(self):
         """显示服务条款对话框"""

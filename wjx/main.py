@@ -31,17 +31,23 @@ def main():
 
     qInstallMessageHandler(_qt_message_handler)
     app = QApplication(sys.argv)
-    
+
     # 设置默认字体
     font = QFont("Microsoft YaHei UI", 9)
     app.setFont(font)
-    
+
     # 导入并创建主窗口（主窗口内部会显示 SplashScreen）
     from wjx.ui.main_window import create_window
     window = create_window()
     window.show()
-    
-    sys.exit(app.exec())
+
+    exit_code = app.exec()
+
+    # 优雅关闭：停止日志系统后台线程
+    from wjx.utils.logging.log_utils import shutdown_logging
+    shutdown_logging()
+
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

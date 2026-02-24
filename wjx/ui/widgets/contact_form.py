@@ -7,7 +7,7 @@ import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
-from PySide6.QtCore import Qt, QTimer, Signal, QEvent
+from PySide6.QtCore import QTimer, Signal, QEvent
 from PySide6.QtGui import QDoubleValidator, QIntValidator, QKeySequence, QGuiApplication, QKeyEvent
 from PySide6.QtWidgets import (
     QWidget,
@@ -37,7 +37,7 @@ from qfluentwidgets import (
 from wjx.ui.widgets.status_polling_mixin import StatusPollingMixin
 from wjx.ui.helpers.image_attachments import ImageAttachmentManager
 import wjx.network.http_client as http_client
-from wjx.utils.app.config import CONTACT_API_URL
+from wjx.utils.app.config import CONTACT_API_URL, EMAIL_VERIFY_ENDPOINT
 from wjx.utils.app.version import __VERSION__
 
 
@@ -100,6 +100,7 @@ class ContactForm(StatusPollingMixin, QWidget):
 
     _statusLoaded = Signal(str, str)  # text, color
     _sendFinished = Signal(bool, str)  # success, message
+    _verifyCodeFinished = Signal(bool, str, str)  # success, message, email
 
     sendSucceeded = Signal()
     cancelRequested = Signal()
@@ -116,10 +117,16 @@ class ContactForm(StatusPollingMixin, QWidget):
     ):
         super().__init__(parent)
         self._sendFinished.connect(self._on_send_finished)
+        self._verifyCodeFinished.connect(self._on_verify_code_finished)
         self._init_status_polling(status_fetcher, status_formatter)
         self._attachments = ImageAttachmentManager(max_count=3, max_size_bytes=10 * 1024 * 1024)
         self._current_message_type: str = ""
         self._current_has_email: bool = False
+        self._verify_code_requested: bool = False
+        self._verify_code_requested_email: str = ""
+        self._verify_code_sending: bool = False
+        self._cooldown_timer: Optional[QTimer] = None
+        self._cooldown_remaining: int = 0
         self._polling_started = False
         self._auto_clear_on_success = auto_clear_on_success
         self._manage_polling = manage_polling
@@ -136,6 +143,28 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.email_edit = PasteOnlyLineEdit(self)
         self.email_edit.setPlaceholderText("name@example.com")
         form_layout.addWidget(self.email_edit)
+
+        self.verify_code_label = BodyLabel("验证码（6位）：", self)
+        form_layout.addWidget(self.verify_code_label)
+        self.verify_row = QHBoxLayout()
+        self.verify_code_edit = LineEdit(self)
+        self.verify_code_edit.setPlaceholderText("请输入6位数字验证码")
+        self.verify_code_edit.setMaxLength(6)
+        self.verify_code_edit.setValidator(QIntValidator(0, 999999, self))
+        self.send_verify_btn = PushButton("发送验证码", self)
+        self.verify_send_spinner = IndeterminateProgressRing(self)
+        self.verify_send_spinner.setFixedSize(16, 16)
+        self.verify_send_spinner.setStrokeWidth(2)
+        self.verify_send_spinner.hide()
+        self.verify_row.addWidget(self.verify_code_edit)
+        self.verify_row.addWidget(self.send_verify_btn)
+        self.verify_row.addWidget(self.verify_send_spinner)
+        self.verify_row.addStretch()
+        form_layout.addLayout(self.verify_row)
+        self.verify_code_label.hide()
+        self.verify_code_edit.hide()
+        self.send_verify_btn.hide()
+        self.verify_send_spinner.hide()
 
         form_layout.addWidget(BodyLabel("消息类型（可选）：", self))
         self.type_combo = ComboBox(self)
@@ -274,6 +303,7 @@ class ContactForm(StatusPollingMixin, QWidget):
                 self.type_combo.setCurrentIndex(idx)
 
         self.send_btn.clicked.connect(self._on_send_clicked)
+        self.send_verify_btn.clicked.connect(self._on_send_verify_clicked)
         self.attach_add_btn.clicked.connect(self._on_choose_files)
         self.attach_clear_btn.clicked.connect(self._on_clear_attachments)
         if self.cancel_btn is not None:
@@ -308,6 +338,7 @@ class ContactForm(StatusPollingMixin, QWidget):
     def closeEvent(self, event):
         """关闭事件：停止轮询、关闭所有 InfoBar 并断开信号"""
         self.stop_status_polling()
+        self._stop_cooldown()
 
         # 关闭所有可能存在的 InfoBar，避免其内部线程导致崩溃
         self._close_all_infobars()
@@ -315,6 +346,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         # 断开所有信号连接以避免回调析构警告
         try:
             self._sendFinished.disconnect()
+            self._verifyCodeFinished.disconnect()
             self._statusLoaded.disconnect()
         except Exception as exc:
             log_suppressed_exception("closeEvent: disconnect signals", exc, level=logging.WARNING)
@@ -362,6 +394,8 @@ class ContactForm(StatusPollingMixin, QWidget):
         """重新渲染附件列表。"""
         while self.attach_list_layout.count():
             item = self.attach_list_layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget:
                 widget.deleteLater()
@@ -466,6 +500,9 @@ class ContactForm(StatusPollingMixin, QWidget):
             self.quantity_edit.show()
             self.urgency_label.show()
             self.urgency_combo.show()
+            self.verify_code_label.show()
+            self.verify_code_edit.show()
+            self.send_verify_btn.show()
             self.email_label.setText("您的邮箱（必填）：")
             self.message_label.setText("请输入您的消息：")
             self._sync_card_request_message_meta()
@@ -476,6 +513,15 @@ class ContactForm(StatusPollingMixin, QWidget):
             self.quantity_edit.hide()
             self.urgency_label.hide()
             self.urgency_combo.hide()
+            self.verify_code_label.hide()
+            self.verify_code_edit.hide()
+            self.send_verify_btn.hide()
+            self.verify_send_spinner.hide()
+            self.verify_code_edit.clear()
+            self._verify_code_requested = False
+            self._verify_code_requested_email = ""
+            self._verify_code_sending = False
+            self._stop_cooldown()
             self.email_label.setText("您的邮箱（必填）：")
             self.message_label.setText("请输入白嫖话术：")
         else:
@@ -485,8 +531,122 @@ class ContactForm(StatusPollingMixin, QWidget):
             self.quantity_edit.hide()
             self.urgency_label.hide()
             self.urgency_combo.hide()
+            self.verify_code_label.hide()
+            self.verify_code_edit.hide()
+            self.send_verify_btn.hide()
+            self.verify_send_spinner.hide()
+            self.verify_code_edit.clear()
+            self._verify_code_requested = False
+            self._verify_code_requested_email = ""
+            self._verify_code_sending = False
+            self._stop_cooldown()
             self.email_label.setText("您的邮箱（选填，如果希望收到回复的话）：")
             self.message_label.setText("请输入您的消息：")
+
+    def _set_verify_code_sending(self, sending: bool):
+        self._verify_code_sending = sending
+        self.send_verify_btn.setEnabled(not sending)
+        self.send_verify_btn.setText("发送中..." if sending else "发送验证码")
+        self.verify_send_spinner.setVisible(sending)
+
+    def _start_cooldown(self):
+        """发送成功后启动30秒冷却，期间按钮不可点击并显示倒计时。"""
+        self._cooldown_remaining = 30
+        self.send_verify_btn.setEnabled(False)
+        self.send_verify_btn.setText(f"重新发送({self._cooldown_remaining}s)")
+        self._cooldown_timer = QTimer(self)
+        self._cooldown_timer.setInterval(1000)
+        self._cooldown_timer.timeout.connect(self._on_cooldown_tick)
+        self._cooldown_timer.start()
+
+    def _on_cooldown_tick(self):
+        self._cooldown_remaining -= 1
+        if self._cooldown_remaining <= 0:
+            if self._cooldown_timer is not None:
+                self._cooldown_timer.stop()
+            self._cooldown_timer = None
+            self.send_verify_btn.setEnabled(True)
+            self.send_verify_btn.setText("发送验证码")
+        else:
+            self.send_verify_btn.setText(f"重新发送({self._cooldown_remaining}s)")
+
+    def _stop_cooldown(self):
+        """停止冷却计时器并重置按钮状态。"""
+        if self._cooldown_timer is not None:
+            self._cooldown_timer.stop()
+            self._cooldown_timer = None
+        self._cooldown_remaining = 0
+        self.send_verify_btn.setEnabled(True)
+        self.send_verify_btn.setText("发送验证码")
+
+    def _on_send_verify_clicked(self):
+        if self._verify_code_sending:
+            return
+
+        email = (self.email_edit.text() or "").strip()
+        if not email:
+            InfoBar.warning("", "请先填写邮箱地址", parent=self, position=InfoBarPosition.TOP, duration=2000)
+            return
+        if not self._validate_email(email):
+            InfoBar.warning("", "邮箱格式不正确，请先检查", parent=self, position=InfoBarPosition.TOP, duration=2000)
+            return
+
+        if not EMAIL_VERIFY_ENDPOINT:
+            InfoBar.error("", "验证码接口未配置", parent=self, position=InfoBarPosition.TOP, duration=2500)
+            return
+
+        self._verify_code_requested = False
+        self._verify_code_requested_email = ""
+        self._set_verify_code_sending(True)
+
+        def _send_verify():
+            try:
+                resp = http_client.post(
+                    EMAIL_VERIFY_ENDPOINT,
+                    headers={"Content-Type": "application/json"},
+                    json={"email": email},
+                    timeout=10,
+                )
+                data = None
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = None
+
+                if resp.status_code == 200 and isinstance(data, dict) and bool(data.get("ok")):
+                    self._verifyCodeFinished.emit(True, "", email)
+                    return
+
+                if isinstance(data, dict):
+                    error_msg = str(data.get("error") or f"发送失败：{resp.status_code}")
+                else:
+                    error_msg = f"发送失败：{resp.status_code}"
+                self._verifyCodeFinished.emit(False, error_msg, email)
+            except Exception as exc:
+                self._verifyCodeFinished.emit(False, f"发送失败：{exc}", email)
+
+        threading.Thread(target=_send_verify, daemon=True).start()
+
+    def _on_verify_code_finished(self, success: bool, error_msg: str, email: str):
+        self._set_verify_code_sending(False)
+
+        if success:
+            self._verify_code_requested = True
+            self._verify_code_requested_email = email
+            InfoBar.success("", "验证码已发送，请查收并输入验证码", parent=self, position=InfoBarPosition.TOP, duration=2200)
+            self._start_cooldown()
+            return
+
+        self._verify_code_requested = False
+        self._verify_code_requested_email = ""
+        normalized = (error_msg or "").strip().lower()
+        if normalized == "invalid request":
+            ui_msg = "邮箱参数无效，请检查邮箱后重试"
+        elif normalized == "send mail failed":
+            ui_msg = "邮件发送失败，请稍后重试"
+        else:
+            ui_msg = error_msg or "验证码发送失败，请稍后重试"
+        InfoBar.error("", ui_msg, parent=self, position=InfoBarPosition.TOP, duration=2500)
 
     def _on_amount_changed(self, text: str):
         """金额输入框文本改变时同步卡密获取的元信息到消息框"""
@@ -591,6 +751,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         if mtype == "卡密获取":
             amount_text = (self.amount_edit.text() or "").strip()
             quantity_text = (self.quantity_edit.text() or "").strip()
+            verify_code = (self.verify_code_edit.text() or "").strip()
 
             if not amount_text:
                 InfoBar.warning("", "请输入捐助金额", parent=self, position=InfoBarPosition.TOP, duration=2000)
@@ -600,6 +761,15 @@ class ContactForm(StatusPollingMixin, QWidget):
                 return
             if not quantity_text.isdigit() or int(quantity_text) <= 0:
                 InfoBar.warning("", "需求份数必须为正整数", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                return
+            if not self._verify_code_requested:
+                InfoBar.warning("", "请先点击发送验证码", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                return
+            if email != self._verify_code_requested_email:
+                InfoBar.warning("", "邮箱已变更，请重新发送验证码", parent=self, position=InfoBarPosition.TOP, duration=2200)
+                return
+            if verify_code != "114514":
+                InfoBar.warning("", "验证码错误，请重试", parent=self, position=InfoBarPosition.TOP, duration=2200)
                 return
             self._sync_card_request_message_meta()
 
@@ -719,6 +889,9 @@ class ContactForm(StatusPollingMixin, QWidget):
             if self._auto_clear_on_success:
                 self.amount_edit.clear()
                 self.quantity_edit.clear()
+                self.verify_code_edit.clear()
+                self._verify_code_requested = False
+                self._verify_code_requested_email = ""
                 urgency_default_index = self.urgency_combo.findText("中")
                 if urgency_default_index >= 0:
                     self.urgency_combo.setCurrentIndex(urgency_default_index)

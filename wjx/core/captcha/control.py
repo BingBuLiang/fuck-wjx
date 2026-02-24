@@ -3,16 +3,17 @@ import logging
 import threading
 from typing import Any, Optional
 
-import wjx.core.state as state
+from wjx.core.task_context import TaskContext
+from wjx.utils.event_bus import bus as _event_bus, EVENT_CAPTCHA_DETECTED
 from wjx.utils.logging.log_utils import log_popup_confirm, log_popup_warning
 
 
-def _show_aliyun_captcha_popup(message: str) -> None:
+def _show_aliyun_captcha_popup(ctx: TaskContext, message: str) -> None:
     """在首次检测到阿里云智能验证时弹窗提醒用户。"""
-    with state._aliyun_captcha_stop_lock:
-        if state._aliyun_captcha_popup_shown:
+    with ctx._aliyun_captcha_stop_lock:
+        if ctx._aliyun_captcha_popup_shown:
             return
-        state._aliyun_captcha_popup_shown = True
+        ctx._aliyun_captcha_popup_shown = True
     try:
         log_popup_warning("智能验证提示", message)
     except Exception:
@@ -20,16 +21,20 @@ def _show_aliyun_captcha_popup(message: str) -> None:
 
 
 def _trigger_aliyun_captcha_stop(
+    ctx: TaskContext,
     gui_instance: Optional[Any],
     stop_signal: Optional[threading.Event],
 ) -> None:
     """检测到阿里云智能验证时触发全局暂停，并提示用户启用随机 IP。"""
-    with state._aliyun_captcha_stop_lock:
-        if state._aliyun_captcha_stop_triggered:
+    with ctx._aliyun_captcha_stop_lock:
+        if ctx._aliyun_captcha_stop_triggered:
             return
-        state._aliyun_captcha_stop_triggered = True
+        ctx._aliyun_captcha_stop_triggered = True
 
     logging.warning("检测到阿里云智能验证，已触发全局暂停。")
+
+    # 通过 EventBus 广播验证码事件
+    _event_bus.emit(EVENT_CAPTCHA_DETECTED, ctx=ctx)
 
     # 关键兜底：先立即停止所有工作线程，再做 UI 提示。
     # 避免 UI 线程忙/派发超时时没有真正停下。
@@ -164,14 +169,18 @@ def _trigger_aliyun_captcha_stop(
     _notify()
 
 
-def _handle_aliyun_captcha_detected(gui_instance: Optional[Any], stop_signal: Optional[threading.Event]) -> None:
+def _handle_aliyun_captcha_detected(
+    ctx: TaskContext,
+    gui_instance: Optional[Any],
+    stop_signal: Optional[threading.Event],
+) -> None:
     """
     统一处理阿里云智能验证命中后的策略：
     - 默认（pause_on_aliyun_captcha=True）：全局暂停执行并提示用户启用随机 IP；
     - 关闭该开关：不全局暂停，仅记录告警（可能会导致后续持续失败）。
     """
-    if state.pause_on_aliyun_captcha:
-        _trigger_aliyun_captcha_stop(gui_instance, stop_signal)
+    if ctx.pause_on_aliyun_captcha:
+        _trigger_aliyun_captcha_stop(ctx, gui_instance, stop_signal)
         return
-    logging.warning("检测到阿里云智能验证，但已关闭“触发智能验证自动暂停”，将继续尝试后续提交。")
+    logging.warning('检测到阿里云智能验证，但已关闭[触发智能验证自动暂停]开关，将继续尝试后续提交。')
 

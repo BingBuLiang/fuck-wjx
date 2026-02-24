@@ -1,8 +1,7 @@
 """题目配置数据结构 - 策略、概率、选项等参数定义"""
-from dataclasses import dataclass
-from typing import Any, List, Optional, Union
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 
-import wjx.core.state as state
 from wjx.core.questions.types.text import MULTI_TEXT_DELIMITER
 from wjx.core.questions.utils import (
     normalize_option_fill_texts as _normalize_option_fill_texts,
@@ -12,6 +11,24 @@ from wjx.core.questions.utils import (
 )
 from wjx.utils.app.config import DEFAULT_FILL_TEXT, LOCATION_QUESTION_LABEL, QUESTION_TYPE_LABELS
 from wjx.utils.logging.log_utils import log_suppressed_exception
+
+if TYPE_CHECKING:
+    from wjx.core.task_context import TaskContext
+
+_TEXT_RANDOM_NAME_TOKEN = "__RANDOM_NAME__"
+_TEXT_RANDOM_MOBILE_TOKEN = "__RANDOM_MOBILE__"
+_TEXT_RANDOM_NONE = "none"
+_TEXT_RANDOM_NAME = "name"
+_TEXT_RANDOM_MOBILE = "mobile"
+
+
+def _pretty_text_answer(value: Any) -> str:
+    text = str(value or "").strip()
+    if text == _TEXT_RANDOM_NAME_TOKEN:
+        return "随机姓名"
+    if text == _TEXT_RANDOM_MOBILE_TOKEN:
+        return "随机手机号"
+    return text
 
 
 def _infer_option_count(entry: "QuestionEntry") -> int:
@@ -75,9 +92,13 @@ class QuestionEntry:
     question_num: Optional[int] = None
     question_title: Optional[str] = None
     ai_enabled: bool = False
+    text_random_mode: str = _TEXT_RANDOM_NONE
     option_fill_texts: Optional[List[Optional[str]]] = None
     fillable_option_indices: Optional[List[int]] = None
     is_location: bool = False
+    dimension: Optional[str] = None  # 题目所属维度（如"满意度"、"信任感"等），None 表示未分组
+    is_reverse: bool = False  # 是否为反向题（用于信效度一致性约束时翻转基准）
+    row_reverse_flags: List[bool] = field(default_factory=list)  # 矩阵题每行的反向标记（空列表时回退到 is_reverse）
 
     def summary(self) -> str:
         def _mode_text(mode: Optional[str]) -> str:
@@ -87,6 +108,10 @@ class QuestionEntry:
             }.get(mode or "", "完全随机")
 
         if self.question_type in ("text", "multi_text"):
+            text_random_mode = str(getattr(self, "text_random_mode", _TEXT_RANDOM_NONE) or _TEXT_RANDOM_NONE).strip().lower()
+            if self.question_type == "text" and text_random_mode in (_TEXT_RANDOM_NAME, _TEXT_RANDOM_MOBILE):
+                random_label = "随机姓名" if text_random_mode == _TEXT_RANDOM_NAME else "随机手机号"
+                return f"填空题: {random_label}"
             raw_samples = self.texts or []
             if self.question_type == "multi_text":
                 formatted_samples: List[str] = []
@@ -105,7 +130,8 @@ class QuestionEntry:
                         formatted_samples.append(text_value)
                 samples = " | ".join(formatted_samples)
             else:
-                samples = " | ".join(filter(None, raw_samples))
+                pretty_samples = [_pretty_text_answer(sample) for sample in raw_samples if str(sample or "").strip()]
+                samples = " | ".join(pretty_samples)
             preview = samples if samples else "未设置示例内容"
             if len(preview) > 60:
                 preview = preview[:57] + "..."
@@ -164,22 +190,34 @@ def _get_entry_type_label(entry: QuestionEntry) -> str:
     return QUESTION_TYPE_LABELS.get(entry.question_type, entry.question_type)
 
 
-def configure_probabilities(entries: List[QuestionEntry]):
-    state.single_prob = []
-    state.droplist_prob = []
-    state.multiple_prob = []
-    state.matrix_prob = []
-    state.scale_prob = []
-    state.slider_targets = []
-    state.texts = []
-    state.texts_prob = []
-    state.text_entry_types = []
-    state.text_ai_flags = []
-    state.text_titles = []
-    state.single_option_fill_texts = []
-    state.droplist_option_fill_texts = []
-    state.multiple_option_fill_texts = []
-    state.question_config_index_map = {}
+# 信效度模式下所有量表/矩阵/评价题共享的全局维度标识
+_RELIABILITY_GLOBAL_DIMENSION = "__reliability__"
+
+
+def configure_probabilities(
+    entries: List[QuestionEntry],
+    ctx: "TaskContext",
+    reliability_mode_enabled: bool = True,
+):
+    _target = ctx
+
+    _target.single_prob = []
+    _target.droplist_prob = []
+    _target.multiple_prob = []
+    _target.matrix_prob = []
+    _target.scale_prob = []
+    _target.slider_targets = []
+    _target.texts = []
+    _target.texts_prob = []
+    _target.text_entry_types = []
+    _target.text_ai_flags = []
+    _target.text_titles = []
+    _target.single_option_fill_texts = []
+    _target.droplist_option_fill_texts = []
+    _target.multiple_option_fill_texts = []
+    _target.question_config_index_map = {}
+    _target.question_dimension_map = {}
+    _target.question_reverse_map = {}
 
     # 各题型的当前索引,用于构建 question_config_index_map
     _idx_single = 0
@@ -203,28 +241,33 @@ def configure_probabilities(entries: List[QuestionEntry]):
             getattr(entry, "custom_weights", None),
             prefer_custom=(getattr(entry, "distribution_mode", None) == "custom"),
         )
-        if probs is not entry.probabilities:
-            entry.probabilities = probs
         if entry.question_type == "single":
-            state.question_config_index_map[question_num] = ("single", _idx_single)
+            _target.question_config_index_map[question_num] = ("single", _idx_single)
             _idx_single += 1
-            state.single_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
-            state.single_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
+            _target.single_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
+            _target.single_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
         elif entry.question_type == "dropdown":
-            state.question_config_index_map[question_num] = ("dropdown", _idx_dropdown)
+            _target.question_config_index_map[question_num] = ("dropdown", _idx_dropdown)
             _idx_dropdown += 1
-            state.droplist_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
-            state.droplist_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
+            _target.droplist_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
+            _target.droplist_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
         elif entry.question_type == "multiple":
-            state.question_config_index_map[question_num] = ("multiple", _idx_multiple)
+            _target.question_config_index_map[question_num] = ("multiple", _idx_multiple)
             _idx_multiple += 1
             if not isinstance(probs, list):
                 raise ValueError("多选题必须提供概率列表，数值范围0-100")
-            state.multiple_prob.append([float(value) for value in probs])
-            state.multiple_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
+            _target.multiple_prob.append([float(value) for value in probs])
+            _target.multiple_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
         elif entry.question_type == "matrix":
             rows = max(1, entry.rows)
-            state.question_config_index_map[question_num] = ("matrix", _idx_matrix)
+            _target.question_config_index_map[question_num] = ("matrix", _idx_matrix)
+            _target.question_dimension_map[question_num] = _RELIABILITY_GLOBAL_DIMENSION if reliability_mode_enabled else None
+            # 矩阵题：优先用 row_reverse_flags（每行独立），否则用 is_reverse 广播到所有行
+            _row_flags = getattr(entry, "row_reverse_flags", [])
+            if _row_flags:
+                _target.question_reverse_map[question_num] = list(_row_flags)
+            else:
+                _target.question_reverse_map[question_num] = bool(getattr(entry, "is_reverse", False))
             _idx_matrix += rows
             option_count = max(1, _infer_option_count(entry))
 
@@ -262,27 +305,29 @@ def configure_probabilities(entries: List[QuestionEntry]):
                     normalized_row = _normalize_row(raw_row)
                     if normalized_row is None:
                         normalized_row = [1.0 / option_count] * option_count
-                    state.matrix_prob.append(normalized_row)
+                    _target.matrix_prob.append(normalized_row)
                     last_row = raw_row if raw_row is not None else last_row
             elif isinstance(probs, list):
                 normalized = _normalize_row(probs)
                 if normalized is None:
                     normalized = [1.0 / option_count] * option_count
                 for _ in range(rows):
-                    state.matrix_prob.append(list(normalized))
+                    _target.matrix_prob.append(list(normalized))
             else:
                 for _ in range(rows):
-                    state.matrix_prob.append(-1)
+                    _target.matrix_prob.append(-1)
         elif entry.question_type in ("scale", "score"):
-            state.question_config_index_map[question_num] = (entry.question_type, _idx_scale)
+            _target.question_config_index_map[question_num] = (entry.question_type, _idx_scale)
+            _target.question_dimension_map[question_num] = _RELIABILITY_GLOBAL_DIMENSION if reliability_mode_enabled else None
+            _target.question_reverse_map[question_num] = getattr(entry, "is_reverse", False)
             _idx_scale += 1
-            state.scale_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
+            _target.scale_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
         elif entry.question_type == "slider":
-            state.question_config_index_map[question_num] = ("slider", _idx_slider)
+            _target.question_config_index_map[question_num] = ("slider", _idx_slider)
             _idx_slider += 1
             mode = str(getattr(entry, "distribution_mode", "") or "").strip().lower()
             if mode == "random":
-                state.slider_targets.append(float("nan"))
+                _target.slider_targets.append(float("nan"))
                 continue
             target_value: Optional[float] = None
             if isinstance(entry.custom_weights, (list, tuple)) and entry.custom_weights:
@@ -300,13 +345,14 @@ def configure_probabilities(entries: List[QuestionEntry]):
                         target_value = None
             if target_value is None:
                 target_value = 50.0
-            state.slider_targets.append(target_value)
+            _target.slider_targets.append(target_value)
         elif entry.question_type in ("text", "multi_text"):
             if not getattr(entry, "is_location", False):
-                state.question_config_index_map[question_num] = ("text", _idx_text)
+                _target.question_config_index_map[question_num] = ("text", _idx_text)
                 _idx_text += 1
             else:
-                state.question_config_index_map[question_num] = ("location", -1)
+                _target.question_config_index_map[question_num] = ("location", -1)
+            text_random_mode = str(getattr(entry, "text_random_mode", _TEXT_RANDOM_NONE) or _TEXT_RANDOM_NONE).strip().lower()
             raw_values = entry.texts or []
             normalized_values: List[str] = []
             for item in raw_values:
@@ -317,6 +363,11 @@ def configure_probabilities(entries: List[QuestionEntry]):
                 if text_value:
                     normalized_values.append(text_value)
             ai_enabled = bool(getattr(entry, "ai_enabled", False)) if entry.question_type == "text" else False
+            if entry.question_type == "text" and text_random_mode in (_TEXT_RANDOM_NAME, _TEXT_RANDOM_MOBILE):
+                ai_enabled = False
+                normalized_values = [
+                    _TEXT_RANDOM_NAME_TOKEN if text_random_mode == _TEXT_RANDOM_NAME else _TEXT_RANDOM_MOBILE_TOKEN
+                ]
             if not normalized_values:
                 if ai_enabled:
                     normalized_values = [DEFAULT_FILL_TEXT]
@@ -326,11 +377,11 @@ def configure_probabilities(entries: List[QuestionEntry]):
                 normalized = normalize_probabilities([float(value) for value in probs])
             else:
                 normalized = normalize_probabilities([1.0] * len(normalized_values))
-            state.texts.append(normalized_values)
-            state.texts_prob.append(normalized)
-            state.text_entry_types.append(entry.question_type)
-            state.text_ai_flags.append(ai_enabled)
-            state.text_titles.append(str(getattr(entry, "question_title", "") or ""))
+            _target.texts.append(normalized_values)
+            _target.texts_prob.append(normalized)
+            _target.text_entry_types.append(entry.question_type)
+            _target.text_ai_flags.append(ai_enabled)
+            _target.text_titles.append(str(getattr(entry, "question_title", "") or ""))
 
 
 def validate_question_config(entries: List[QuestionEntry], questions_info: Optional[List[dict]] = None) -> Optional[str]:
@@ -357,11 +408,9 @@ def validate_question_config(entries: List[QuestionEntry], questions_info: Optio
         if question_type == "multiple":
             # 获取多选题的限制信息
             multi_min_limit: Optional[int] = None
-            multi_max_limit: Optional[int] = None
 
             if questions_info and idx < len(questions_info):
                 multi_min_limit = questions_info[idx].get("multi_min_limit")
-                multi_max_limit = questions_info[idx].get("multi_max_limit")
 
             # 获取概率配置
             probs = getattr(entry, "custom_weights", None) or getattr(entry, "probabilities", None)

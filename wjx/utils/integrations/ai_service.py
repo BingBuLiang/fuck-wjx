@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """AI 服务模块 - 支持多种 AI API 调用"""
-import json
 from typing import Optional, Dict, Any
 import wjx.network.http_client as http_client
 

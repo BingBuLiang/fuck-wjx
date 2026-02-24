@@ -4,12 +4,11 @@ import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
-import os
 import random
 import shutil
 import subprocess
-import sys
 import time
+import traceback
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 from urllib.parse import urlparse
 
@@ -21,9 +20,11 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
-import base64
+import threading
 
-from wjx.utils.app.config import BROWSER_PREFERENCE, HEADLESS_WINDOW_SIZE
+_PW_START_LOCK = threading.Lock()
+
+from wjx.utils.app.config import BROWSER_PREFERENCE, HEADLESS_WINDOW_SIZE, get_proxy_auth
 from wjx.network.proxy import (
     _normalize_proxy_address,
     get_proxy_source,
@@ -31,9 +32,20 @@ from wjx.network.proxy import (
     PROXY_SOURCE_CUSTOM,
 )
 
-_PROXY_AUTH_B64 = "MTgxNzAxMTk4MDg6dFdKNWhMRG9Id3JIZ1RraWowelk="
 _WMIC_AVAILABLE: Optional[bool] = None
 _WMIC_MISSING_LOGGED = False
+
+
+def _format_exception_chain(exc: BaseException) -> str:
+    """格式化异常链，便于定位被掩盖的底层错误。"""
+    parts: List[str] = []
+    current: Optional[BaseException] = exc
+    depth = 0
+    while current is not None and depth < 8:
+        parts.append(f"{type(current).__name__}: {current}")
+        current = current.__cause__ or current.__context__
+        depth += 1
+    return " <- ".join(parts)
 
 
 class NoSuchElementException(Exception):
@@ -230,11 +242,11 @@ class PlaywrightDriver:
             self._page.goto(url, wait_until=wait_until, timeout=timeout)
             return
         except PlaywrightTimeoutError as exc:
-            logging.warning("Page.goto timeout after %d ms: %s", timeout, exc)
+            logging.debug("Page.goto timeout after %d ms: %s", timeout, exc)
             raise
         except Exception as exc:
             if _is_proxy_tunnel_error(exc):
-                logging.warning("Page.goto proxy tunnel failure: %s", exc)
+                logging.debug("Page.goto proxy tunnel failure: %s", exc)
                 raise ProxyConnectionError(str(exc)) from exc
             raise
 
@@ -399,34 +411,53 @@ def create_playwright_driver(
     last_exc: Optional[Exception] = None
 
     for browser in candidates:
-        pre_launch_pids = list_browser_pids()
+        # 在锁外预先构建 launch_args，避免持锁时间过长
+        launch_args: Dict[str, Any] = {"headless": headless}
+        if browser == "edge":
+            launch_args["channel"] = "msedge"
+        elif browser == "chrome":
+            launch_args["channel"] = "chrome"
+        if "args" not in launch_args:
+            launch_args["args"] = []
+        if window_position and not headless:
+            x, y = window_position
+            launch_args["args"].append(f"--window-position={x},{y}")
+        if not normalized_proxy:
+            launch_args["args"].append("--no-proxy-server")
+
+        # pre_launch_pids 捕获、playwright 启动、浏览器启动必须在同一把锁内原子完成，
+        # 否则多线程并发时 after-pre 差值会混入其他线程的浏览器 PID，导致清理时误杀。
+        pw = None
         try:
-            pw = sync_playwright().start()
+            with _PW_START_LOCK:
+                pre_launch_pids = list_browser_pids()
+                pw = sync_playwright().start()
+                browser_instance = pw.chromium.launch(**launch_args)
         except Exception as exc:
             last_exc = exc
-            logging.warning(f"启动 {browser} 的 Playwright 失败: {exc}")
+            logging.warning("启动 %s 的 Playwright 失败: %s", browser, exc)
+            logging.error(
+                "[Action Log] Playwright 启动异常链(%s): %s",
+                browser,
+                _format_exception_chain(exc),
+            )
+            logging.error(
+                "[Action Log] Playwright 启动堆栈(%s):\n%s",
+                browser,
+                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            )
+            if pw is not None:
+                try:
+                    pw.stop()
+                except Exception as e:
+                    log_suppressed_exception(
+                        "browser_driver.create_playwright_driver pw.stop on launch fail",
+                        e,
+                        level=logging.WARNING,
+                    )
             continue
 
         try:
-            launch_args: Dict[str, Any] = {"headless": headless}
-            if browser == "edge":
-                launch_args["channel"] = "msedge"
-            elif browser == "chrome":
-                launch_args["channel"] = "chrome"
-            
-            # 初始化 args 列表
-            if "args" not in launch_args:
-                launch_args["args"] = []
-            
-            if window_position and not headless:
-                x, y = window_position
-                launch_args["args"].append(f"--window-position={x},{y}")
-
-            if not normalized_proxy:
-                # 没有指定代理时，添加 --no-proxy-server 绕过系统代理
-                launch_args["args"].append("--no-proxy-server")
-
-            browser_instance = pw.chromium.launch(**launch_args)
 
             context_args: Dict[str, Any] = {}
             if normalized_proxy:
@@ -447,13 +478,12 @@ def create_playwright_driver(
 
                 if get_proxy_source() in (PROXY_SOURCE_DEFAULT, PROXY_SOURCE_CUSTOM) and "username" not in proxy_settings:
                     try:
-                        encoded = os.environ.get("WJX_PROXY_AUTH_B64", _PROXY_AUTH_B64)
-                        decoded = base64.b64decode(encoded).decode("utf-8")
-                        username, password = decoded.split(":", 1)
+                        auth = get_proxy_auth()
+                        username, password = auth.split(":", 1)
                         proxy_settings["username"] = username
                         proxy_settings["password"] = password
                     except Exception:
-                        logging.debug("解码失败", exc_info=True)
+                        logging.debug("代理认证解析失败", exc_info=True)
                 
                 context_args["proxy"] = proxy_settings
             if user_agent:
@@ -498,6 +528,16 @@ def create_playwright_driver(
         except Exception as exc:
             last_exc = exc
             logging.warning("启动 %s 浏览器失败: %s", browser, exc)
+            logging.error(
+                "[Action Log] 浏览器初始化异常链(%s): %s",
+                browser,
+                _format_exception_chain(exc),
+            )
+            logging.error(
+                "[Action Log] 浏览器初始化堆栈(%s):\n%s",
+                browser,
+                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            )
             try:
                 pw.stop()
             except Exception as exc:

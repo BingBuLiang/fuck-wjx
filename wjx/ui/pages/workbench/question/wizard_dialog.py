@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QDialog,
+    QButtonGroup,
 )
 from qfluentwidgets import (
     ScrollArea,
@@ -23,13 +24,17 @@ from qfluentwidgets import (
 from wjx.ui.widgets.no_wheel import NoWheelSlider
 from wjx.core.questions.config import QuestionEntry
 from wjx.utils.app.config import DEFAULT_FILL_TEXT
-from wjx.ui.helpers.ai_fill import ensure_ai_ready
 
 from .constants import _get_entry_type_label
-from .utils import _shorten_text, _apply_label_color, _bind_slider_input
+from .utils import _shorten_text, _apply_label_color
+from .wizard_sections import WizardSectionsMixin, _TEXT_RANDOM_NONE
 
 
-class QuestionWizardDialog(QDialog):
+# ---------------------------------------------------------------------------
+# QuestionWizardDialog — 主对话框
+# ---------------------------------------------------------------------------
+
+class QuestionWizardDialog(WizardSectionsMixin, QDialog):
     """配置向导：用滑块快速设置权重/概率，编辑填空题答案。"""
 
     @staticmethod
@@ -104,21 +109,28 @@ class QuestionWizardDialog(QDialog):
             max_int = min_int + 1
         return [min_int, max_int]
 
-    def __init__(self, entries: List[QuestionEntry], info: List[Dict[str, Any]], survey_title: Optional[str] = None, parent=None):
+    def __init__(self, entries: List[QuestionEntry], info: List[Dict[str, Any]], survey_title: Optional[str] = None, parent=None, reliability_mode_enabled: bool = True):
         super().__init__(parent)
         window_title = "配置向导"
         if survey_title:
             window_title = f"{window_title} - {_shorten_text(survey_title, 36)}"
         self.setWindowTitle(window_title)
-        self.resize(720, 640)
+        self.resize(900, 800)
         self.entries = entries
         self.info = info or []
+        self.reliability_mode_enabled = reliability_mode_enabled
         self.slider_map: Dict[int, List[NoWheelSlider]] = {}
         self.matrix_row_slider_map: Dict[int, List[List[NoWheelSlider]]] = {}
         self.text_edit_map: Dict[int, List[LineEdit]] = {}
         self.ai_check_map: Dict[int, CheckBox] = {}
+        self.reverse_check_map: Dict[int, CheckBox] = {}          # scale/score 用
+        self.matrix_reverse_check_map: Dict[int, List[CheckBox]] = {}  # matrix 每行用
         self.text_container_map: Dict[int, QWidget] = {}
         self.text_add_btn_map: Dict[int, PushButton] = {}
+        self.text_random_mode_map: Dict[int, str] = {}
+        self.text_random_name_check_map: Dict[int, CheckBox] = {}
+        self.text_random_mobile_check_map: Dict[int, CheckBox] = {}
+        self.text_random_group_map: Dict[int, QButtonGroup] = {}
         self._entry_snapshots: List[QuestionEntry] = [copy.deepcopy(entry) for entry in entries]
         self._has_content = False
 
@@ -152,7 +164,7 @@ class QuestionWizardDialog(QDialog):
             inner.addWidget(empty_label)
 
         inner.addStretch(1)
-        layout.addWidget(scroll, 1)
+        layout.addWidget(scroll, 3)
 
         # 底部按钮
         btn_row = QHBoxLayout()
@@ -168,6 +180,10 @@ class QuestionWizardDialog(QDialog):
 
         ok_btn.clicked.connect(self.accept)
         cancel_btn.clicked.connect(self.reject)
+
+    # ------------------------------------------------------------------ #
+    #  题目配置卡片                                                        #
+    # ------------------------------------------------------------------ #
 
     def _build_entry_card(self, idx: int, entry: QuestionEntry, container: QWidget, inner: QVBoxLayout) -> None:
         """构建单个题目的配置卡片。"""
@@ -207,6 +223,17 @@ class QuestionWizardDialog(QDialog):
         type_label = BodyLabel(f"[{_get_entry_type_label(entry)}]", card)
         type_label.setStyleSheet("color: #0078d4; font-size: 12px;")
         header.addWidget(type_label)
+
+        # 跳题逻辑警告徽标
+        has_jump = False
+        if idx < len(self.info):
+            has_jump = bool(self.info[idx].get("has_jump"))
+        if has_jump:
+            jump_badge = BodyLabel("[含跳题逻辑]", card)
+            jump_badge.setStyleSheet("font-size: 12px; font-weight: 500;")
+            _apply_label_color(jump_badge, "#d97706", "#e5a00d")
+            header.addWidget(jump_badge)
+
         header.addStretch(1)
         if entry.question_type == "slider":
             slider_note = BodyLabel("目标值会自动做小幅随机抖动，避免每份都填同一个数", card)
@@ -247,6 +274,18 @@ class QuestionWizardDialog(QDialog):
             _apply_label_color(desc, "#555555", "#c8c8c8")
             card_layout.addWidget(desc)
 
+        # 跳题逻辑风险提示
+        if has_jump:
+            jump_warn = BodyLabel(
+                "⚠️ 此题包含跳题逻辑。若给跳题选项分配较高概率，"
+                "可能导致大量样本提前结束或跳过后续题目，请谨慎设定配比。",
+                card,
+            )
+            jump_warn.setWordWrap(True)
+            jump_warn.setStyleSheet("font-size: 12px; padding: 4px 0;")
+            _apply_label_color(jump_warn, "#b45309", "#e5a00d")
+            card_layout.addWidget(jump_warn)
+
         # 根据题型构建不同的配置区域
         if entry.question_type in ("text", "multi_text"):
             self._build_text_section(idx, entry, card, card_layout)
@@ -259,282 +298,6 @@ class QuestionWizardDialog(QDialog):
 
         inner.addWidget(card)
 
-    def _build_text_section(self, idx: int, entry: QuestionEntry, card: CardWidget, card_layout: QVBoxLayout) -> None:
-        """构建填空题答案编辑区。"""
-        self._has_content = True
-        hint = BodyLabel("答案列表（随机选择一个填入）：", card)
-        hint.setStyleSheet("font-size: 12px;")
-        _apply_label_color(hint, "#666666", "#bfbfbf")
-        card_layout.addWidget(hint)
-
-        # 答案行容器
-        text_rows_container = QWidget(card)
-        text_rows_layout = QVBoxLayout(text_rows_container)
-        text_rows_layout.setContentsMargins(0, 0, 0, 0)
-        text_rows_layout.setSpacing(4)
-        card_layout.addWidget(text_rows_container)
-
-        texts = list(entry.texts or [DEFAULT_FILL_TEXT])
-        edits: List[LineEdit] = []
-
-        def make_add_row_func(container_layout, edit_list, parent_card):
-            def add_row(initial_text: str = ""):
-                row_widget = QWidget(parent_card)
-                row_layout = QHBoxLayout(row_widget)
-                row_layout.setContentsMargins(0, 2, 0, 2)
-                row_layout.setSpacing(8)
-                num_lbl = BodyLabel(f"{len(edit_list) + 1}.", parent_card)
-                num_lbl.setFixedWidth(24)
-                num_lbl.setStyleSheet("font-size: 12px;")
-                _apply_label_color(num_lbl, "#888888", "#a6a6a6")
-                row_layout.addWidget(num_lbl)
-                edit = LineEdit(parent_card)
-                edit.setText(initial_text)
-                edit.setPlaceholderText("输入答案")
-                row_layout.addWidget(edit, 1)
-                del_btn = PushButton("×", parent_card)
-                del_btn.setFixedWidth(32)
-                row_layout.addWidget(del_btn)
-                container_layout.addWidget(row_widget)
-                edit_list.append(edit)
-
-                def remove_row():
-                    if len(edit_list) > 1:
-                        edit_list.remove(edit)
-                        row_widget.deleteLater()
-                del_btn.clicked.connect(remove_row)
-            return add_row
-
-        add_row_func = make_add_row_func(text_rows_layout, edits, card)
-        for txt in texts:
-            add_row_func(txt)
-
-        # 添加按钮
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-        add_btn = PushButton("+ 添加答案", card)
-        add_btn.setFixedWidth(100)
-        add_btn.clicked.connect(lambda checked=False, f=add_row_func: f(""))
-        btn_row.addWidget(add_btn)
-        self.text_container_map[idx] = text_rows_container
-        self.text_add_btn_map[idx] = add_btn
-
-        if entry.question_type == "text":
-            ai_cb = CheckBox("启用 AI", card)
-            ai_cb.setToolTip("运行时每次填空都会调用 AI")
-            ai_cb.setChecked(bool(getattr(entry, "ai_enabled", False)))
-            ai_cb.toggled.connect(lambda checked, i=idx: self._on_entry_ai_toggled(i, checked))
-            btn_row.addWidget(ai_cb)
-            self.ai_check_map[idx] = ai_cb
-            self._set_text_answer_enabled(idx, not ai_cb.isChecked())
-
-        btn_row.addStretch(1)
-        card_layout.addLayout(btn_row)
-
-        self.text_edit_map[idx] = edits
-
-    def _build_matrix_section(self, idx: int, entry: QuestionEntry, card: CardWidget,
-                              card_layout: QVBoxLayout, option_texts: List[str], row_texts: List[str]) -> None:
-        """构建矩阵量表题配置区。"""
-        self._has_content = True
-        info_rows = self.info[idx].get("rows") if idx < len(self.info) else 0
-        try:
-            info_rows = int(info_rows or 0)
-        except Exception:
-            info_rows = 0
-        rows = max(1, int(entry.rows or 1), info_rows)
-        columns = max(1, int(entry.option_count or len(option_texts) or 1))
-        if len(row_texts) < rows:
-            row_texts += [""] * (rows - len(row_texts))
-
-        hint = BodyLabel("矩阵量表：每一行都需要单独设置配比", card)
-        hint.setStyleSheet("font-size: 12px;")
-        _apply_label_color(hint, "#666666", "#bfbfbf")
-        card_layout.addWidget(hint)
-
-        per_row_scroll = ScrollArea(card)
-        per_row_scroll.setWidgetResizable(True)
-        per_row_scroll.setMinimumHeight(180)
-        per_row_scroll.setMaximumHeight(320)
-        per_row_scroll.enableTransparentBackground()
-        per_row_view = QWidget(card)
-        per_row_scroll.setWidget(per_row_view)
-        per_row_layout = QVBoxLayout(per_row_view)
-        per_row_layout.setContentsMargins(0, 0, 0, 0)
-        per_row_layout.setSpacing(10)
-        card_layout.addWidget(per_row_scroll)
-
-        def build_slider_rows(parent_widget: QWidget, target_layout: QVBoxLayout, values: List[float]) -> List[NoWheelSlider]:
-            sliders: List[NoWheelSlider] = []
-            for col_idx in range(columns):
-                opt_widget = QWidget(parent_widget)
-                opt_layout = QHBoxLayout(opt_widget)
-                opt_layout.setContentsMargins(0, 2, 0, 2)
-                opt_layout.setSpacing(12)
-
-                opt_text = option_texts[col_idx] if col_idx < len(option_texts) else f"列 {col_idx + 1}"
-                text_label = BodyLabel(_shorten_text(opt_text, 50), parent_widget)
-                text_label.setFixedWidth(160)
-                text_label.setStyleSheet("font-size: 13px;")
-                opt_layout.addWidget(text_label)
-
-                slider = NoWheelSlider(Qt.Orientation.Horizontal, parent_widget)
-                slider.setRange(0, 100)
-                try:
-                    slider.setValue(int(values[col_idx]))
-                except Exception:
-                    slider.setValue(1)
-                slider.setMinimumWidth(200)
-                opt_layout.addWidget(slider, 1)
-
-                value_input = LineEdit(parent_widget)
-                value_input.setFixedWidth(60)
-                value_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                value_input.setText(str(slider.value()))
-                _bind_slider_input(slider, value_input)
-                opt_layout.addWidget(value_input)
-
-                target_layout.addWidget(opt_widget)
-                sliders.append(slider)
-            return sliders
-
-        matrix_weights = self._resolve_matrix_weights(entry, rows, columns)
-
-        per_row_sliders: List[List[NoWheelSlider]] = []
-        per_row_values = matrix_weights if matrix_weights else [[1.0] * columns for _ in range(rows)]
-        for row_idx in range(rows):
-            row_card = CardWidget(per_row_view)
-            row_card_layout = QVBoxLayout(row_card)
-            row_card_layout.setContentsMargins(12, 8, 12, 8)
-            row_card_layout.setSpacing(6)
-            row_label_text = row_texts[row_idx] if row_idx < len(row_texts) else ""
-            if row_label_text:
-                row_label = BodyLabel(_shorten_text(f"第{row_idx + 1}行：{row_label_text}", 60), row_card)
-            else:
-                row_label = BodyLabel(f"第{row_idx + 1}行", row_card)
-            row_label.setStyleSheet("font-weight: 500;")
-            _apply_label_color(row_label, "#444444", "#e0e0e0")
-            row_card_layout.addWidget(row_label)
-
-            row_sliders = build_slider_rows(row_card, row_card_layout, per_row_values[row_idx])
-            per_row_sliders.append(row_sliders)
-            per_row_layout.addWidget(row_card)
-
-        self.matrix_row_slider_map[idx] = per_row_sliders
-
-    def _build_order_section(self, card: CardWidget, card_layout: QVBoxLayout, option_texts: List[str]) -> None:
-        """构建排序题展示区。"""
-        self._has_content = True
-        hint = BodyLabel("排序题无需设置配比，执行时会随机排序；如题干要求仅排序前 N 项，将自动识别。", card)
-        hint.setWordWrap(True)
-        hint.setStyleSheet("font-size: 12px;")
-        _apply_label_color(hint, "#666666", "#bfbfbf")
-        card_layout.addWidget(hint)
-
-        if option_texts:
-            list_container = QWidget(card)
-            list_layout = QVBoxLayout(list_container)
-            list_layout.setContentsMargins(0, 6, 0, 0)
-            list_layout.setSpacing(4)
-            for opt_idx, opt_text in enumerate(option_texts, 1):
-                item = BodyLabel(f"{opt_idx}. {_shorten_text(opt_text, 60)}", card)
-                item.setStyleSheet("font-size: 12px;")
-                _apply_label_color(item, "#666666", "#c8c8c8")
-                list_layout.addWidget(item)
-            card_layout.addWidget(list_container)
-
-    def _build_slider_section(self, idx: int, entry: QuestionEntry, card: CardWidget,
-                              card_layout: QVBoxLayout, option_texts: List[str]) -> None:
-        """构建选择题/滑块题的滑块配置区。"""
-        self._has_content = True
-        slider_min, slider_max = (0, 100)
-        if entry.question_type == "slider":
-            slider_min, slider_max = self._resolve_slider_bounds(idx, entry)
-        if entry.question_type == "slider":
-            slider_hint = BodyLabel("滑块题：此处数值代表填写时的目标值（不是概率）", card)
-            slider_hint.setWordWrap(True)
-            slider_hint.setStyleSheet("font-size: 12px;")
-            _apply_label_color(slider_hint, "#666666", "#bfbfbf")
-            card_layout.addWidget(slider_hint)
-        options = max(1, int(entry.option_count or 1))
-        if entry.question_type == "multiple":
-            default_weight = 50
-        elif entry.question_type == "slider":
-            default_weight = int(round((slider_min + slider_max) / 2))
-        else:
-            default_weight = 1
-        weights = list(entry.custom_weights or [])
-        if len(weights) < options:
-            weights += [default_weight] * (options - len(weights))
-        if all(w <= 0 for w in weights):
-            weights = [default_weight] * options
-
-        sliders: List[NoWheelSlider] = []
-        is_multiple = entry.question_type == "multiple"
-        for opt_idx in range(options):
-            opt_widget = QWidget(card)
-            opt_layout = QHBoxLayout(opt_widget)
-            opt_layout.setContentsMargins(0, 4, 0, 4)
-            opt_layout.setSpacing(12)
-
-            num_label = BodyLabel(f"{opt_idx + 1}.", card)
-            num_label.setFixedWidth(24)
-            num_label.setStyleSheet("font-size: 12px;")
-            _apply_label_color(num_label, "#888888", "#a6a6a6")
-            opt_layout.addWidget(num_label)
-
-            opt_text = option_texts[opt_idx] if opt_idx < len(option_texts) else "选项"
-            text_label = BodyLabel(_shorten_text(opt_text, 50), card)
-            text_label.setFixedWidth(160)
-            text_label.setStyleSheet("font-size: 13px;")
-            opt_layout.addWidget(text_label)
-
-            slider = NoWheelSlider(Qt.Orientation.Horizontal, card)
-            if entry.question_type == "slider":
-                slider.setRange(slider_min, slider_max)
-            else:
-                slider.setRange(0, 100)
-            slider.setValue(int(min(slider.maximum(), max(slider.minimum(), weights[opt_idx]))))
-            slider.setMinimumWidth(200)
-            opt_layout.addWidget(slider, 1)
-
-            value_input = LineEdit(card)
-            value_input.setFixedWidth(60)
-            value_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            value_input.setText(str(slider.value()))
-            _bind_slider_input(slider, value_input)
-            opt_layout.addWidget(value_input)
-            if is_multiple:
-                percent_label = BodyLabel("%", card)
-                percent_label.setFixedWidth(12)
-                percent_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                _apply_label_color(percent_label, "#666666", "#bfbfbf")
-                opt_layout.addWidget(percent_label)
-
-            card_layout.addWidget(opt_widget)
-            sliders.append(slider)
-
-        self.slider_map[idx] = sliders
-
-    def _set_text_answer_enabled(self, idx: int, enabled: bool) -> None:
-        container = self.text_container_map.get(idx)
-        if container:
-            container.setEnabled(enabled)
-        add_btn = self.text_add_btn_map.get(idx)
-        if add_btn:
-            add_btn.setEnabled(enabled)
-
-    def _on_entry_ai_toggled(self, idx: int, checked: bool) -> None:
-        if checked and not ensure_ai_ready(self.window() or self):
-            cb = self.ai_check_map.get(idx)
-            if cb:
-                cb.blockSignals(True)
-                cb.setChecked(False)
-                cb.blockSignals(False)
-            self._set_text_answer_enabled(idx, True)
-            return
-        self._set_text_answer_enabled(idx, not checked)
-
     def _restore_entries(self) -> None:
         limit = min(len(self.entries), len(self._entry_snapshots))
         for idx in range(limit):
@@ -544,6 +307,10 @@ class QuestionWizardDialog(QDialog):
     def reject(self) -> None:
         self._restore_entries()
         super().reject()
+
+    # ------------------------------------------------------------------ #
+    #  结果获取接口                                                        #
+    # ------------------------------------------------------------------ #
 
     def get_results(self) -> Dict[int, Any]:
         """获取滑块权重/概率结果"""
@@ -574,6 +341,26 @@ class QuestionWizardDialog(QDialog):
             result[idx] = texts
         return result
 
+    def get_text_random_modes(self) -> Dict[int, str]:
+        """获取填空题随机值模式（none/name/mobile）"""
+        return {idx: mode for idx, mode in self.text_random_mode_map.items()}
+
     def get_ai_flags(self) -> Dict[int, bool]:
         """获取填空题是否启用 AI"""
-        return {idx: cb.isChecked() for idx, cb in self.ai_check_map.items()}
+        result: Dict[int, bool] = {}
+        for idx, cb in self.ai_check_map.items():
+            random_mode = self.text_random_mode_map.get(idx, _TEXT_RANDOM_NONE)
+            result[idx] = False if random_mode != _TEXT_RANDOM_NONE else cb.isChecked()
+        return result
+
+    def get_reverse_results(self) -> Dict[int, Any]:
+        """获取反向题标记结果。
+        - scale/score：{idx: bool}
+        - matrix：{idx: List[bool]}（每行一个）
+        """
+        result: Dict[int, Any] = {}
+        for idx, cb in self.reverse_check_map.items():
+            result[idx] = cb.isChecked()
+        for idx, cbs in self.matrix_reverse_check_map.items():
+            result[idx] = [cb.isChecked() for cb in cbs]
+        return result

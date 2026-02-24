@@ -8,9 +8,9 @@
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from wjx.core.persona.generator import Persona, get_current_persona
+from wjx.core.persona.generator import get_current_persona
 
 
 # ── 已答题目记录 ────────────────────────────────────────────

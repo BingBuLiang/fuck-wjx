@@ -9,7 +9,6 @@ from PySide6.QtGui import QIcon, QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
-    CheckBox,
     FluentIcon,
     ModelComboBox,
     PopupTeachingTip,
@@ -20,15 +19,14 @@ from qfluentwidgets import (
 )
 
 from wjx.ui.controller import RunController
-from wjx.ui.pages.workbench.runtime_ai import RuntimeAISection
-from wjx.ui.pages.workbench.runtime_cards import (
+from wjx.ui.pages.workbench.runtime.ai import RuntimeAISection
+from wjx.ui.pages.workbench.runtime.cards import (
     RandomIPSettingCard,
     RandomUASettingCard,
     TimeRangeSettingCard,
     TimedModeSettingCard,
 )
 from wjx.ui.widgets.setting_cards import SpinBoxSettingCard, SwitchSettingCard
-from wjx.ui.pages.workbench.runtime_dialogs import pick_time_value
 from wjx.utils.app.runtime_paths import _get_resource_path
 from wjx.utils.io.load_save import RuntimeConfig
 
@@ -70,7 +68,6 @@ class RuntimePage(ScrollArea):
         self.setWidgetResizable(True)
         self.enableTransparentBackground()
         self.view.setObjectName("settings_view")
-        self.ua_checkboxes: Dict[str, CheckBox] = {}
         self._build_ui()
         self._bind_events()
         self._sync_random_ua(self.random_ua_card.isChecked())
@@ -133,6 +130,13 @@ class RuntimePage(ScrollArea):
         spin_width = self.target_card.suggestSpinBoxWidthForDigits(4)
         self.target_card.setSpinBoxWidth(spin_width)
         self.thread_card.setSpinBoxWidth(spin_width)
+
+        self.reliability_mode_card = SwitchSettingCard(
+            FluentIcon.CERTIFICATE, "针对信效度优化策略", "启用后量表/矩阵/评价题将共享答题倾向，提升问卷信效度",
+            parent=run_group
+        )
+        self.reliability_mode_card.setChecked(True)
+
         self.fail_stop_card = SwitchSettingCard(
             FluentIcon.CANCEL, "失败过多自动停止", "连续失败次数过多时自动停止运行",
             parent=run_group
@@ -147,18 +151,28 @@ class RuntimePage(ScrollArea):
         )
         self.pause_on_aliyun_card.setChecked(True)
 
+        self.headless_card = SwitchSettingCard(
+            FluentIcon.SPEED_HIGH,
+            "无头模式",
+            "开启后浏览器在后台运行，不显示窗口，可提高并发性能",
+            parent=run_group,
+        )
+        self.headless_card.setChecked(False)
+
         run_group.addSettingCard(self.target_card)
         run_group.addSettingCard(self.thread_card)
         run_group.addSettingCard(self.browser_card)
+        run_group.addSettingCard(self.reliability_mode_card)
         run_group.addSettingCard(self.fail_stop_card)
         run_group.addSettingCard(self.pause_on_aliyun_card)
+        run_group.addSettingCard(self.headless_card)
         layout.addWidget(run_group)
 
         # ========== 时间控制组 ==========
         time_group = SettingCardGroup("时间控制", self.view)
         # 在标题后添加小字提示（保持原标题字号）
         time_hint = BodyLabel("（其实问卷星官方并不会因为你提交过快就封你号）", time_group)
-        time_hint.setStyleSheet("color: blue; font-size: 12px;")
+        time_hint.setStyleSheet("color: green; font-size: 12px;")
         # 创建水平布局放置标题和提示
         title_container = QWidget(time_group)
         title_h_layout = QHBoxLayout(title_container)
@@ -173,17 +187,17 @@ class RuntimePage(ScrollArea):
         time_group.vBoxLayout.insertWidget(0, title_container)
 
         self.interval_card = TimeRangeSettingCard(
-            FluentIcon.HISTORY, "提交间隔", "两次提交之间的等待时间范围",
+            FluentIcon.HISTORY, "提交间隔", "两次提交之间的等待时间",
             max_seconds=300,
             parent=time_group
         )
         self.answer_card = TimeRangeSettingCard(
-            FluentIcon.STOP_WATCH, "作答时长", "模拟作答所需的时间范围",
+            FluentIcon.STOP_WATCH, "作答时长", "设置单份作答消耗的时间",
             max_seconds=120,
             parent=time_group
         )
         self.timed_card = TimedModeSettingCard(
-            FluentIcon.SPEED_HIGH, "定时模式", "启用后忽略时间设置，在开放后立即提交",
+            FluentIcon.RINGER, "定时模式", "启用后忽略时间设置，在开放后立即提交",
             parent=time_group
         )
 
@@ -197,7 +211,6 @@ class RuntimePage(ScrollArea):
 
         self.random_ip_card = RandomIPSettingCard(parent=feature_group)
         self.random_ua_card = RandomUASettingCard(parent=feature_group)
-        self.ua_checkboxes = self.random_ua_card.checkboxes
 
         feature_group.addSettingCard(self.random_ip_card)
         feature_group.addSettingCard(self.random_ua_card)
@@ -214,6 +227,7 @@ class RuntimePage(ScrollArea):
         self.thread_spin = self.thread_card.spinBox
         self.fail_stop_switch = self.fail_stop_card.switchButton
         self.pause_on_aliyun_switch = self.pause_on_aliyun_card.switchButton
+        self.reliability_mode_switch = self.reliability_mode_card.switchButton
         self.timed_switch = self.timed_card.switchButton
         self.random_ip_switch = self.random_ip_card.switchButton
         self.random_ua_switch = self.random_ua_card.switchButton
@@ -222,7 +236,7 @@ class RuntimePage(ScrollArea):
 
     def _bind_events(self):
         self.random_ip_switch.checkedChanged.connect(self._on_random_ip_toggled)
-        self.random_ua_switch.checkedChanged.connect(self._sync_random_ua)
+        self.random_ua_switch.checkedChanged.connect(self._on_random_ua_toggled)
         self.timed_switch.checkedChanged.connect(self._sync_timed_mode)
         self.timed_card.helpButton.clicked.connect(self._show_timed_mode_help)
         self.proxy_source_combo.currentIndexChanged.connect(self._on_proxy_source_changed)
@@ -258,6 +272,15 @@ class RuntimePage(ScrollArea):
                 dashboard._on_random_ip_toggled(2 if enabled else 0)
             finally:
                 self.random_ip_switch.blockSignals(False)
+
+    def _on_random_ua_toggled(self, enabled: bool):
+        main_win = self.window()
+        dashboard = getattr(main_win, "dashboard", None)
+        if dashboard is not None and hasattr(dashboard, "random_ua_cb"):
+            dashboard.random_ua_cb.blockSignals(True)
+            dashboard.random_ua_cb.setChecked(enabled)
+            dashboard.random_ua_cb.blockSignals(False)
+        self._sync_random_ua(enabled)
 
     def _on_proxy_source_changed(self):
         """代理源选择变化时更新设置"""
@@ -376,9 +399,11 @@ class RuntimePage(ScrollArea):
         cfg.timed_mode_enabled = self.timed_switch.isChecked()
         cfg.random_ip_enabled = self.random_ip_switch.isChecked()
         cfg.random_ua_enabled = self.random_ua_switch.isChecked()
-        cfg.random_ua_keys = [k for k, cb in self.ua_checkboxes.items() if cb.isChecked()] if cfg.random_ua_enabled else []
+        cfg.random_ua_ratios = self.random_ua_card.getRatios() if cfg.random_ua_enabled else {"wechat": 33, "mobile": 33, "pc": 34}
         cfg.fail_stop_enabled = self.fail_stop_switch.isChecked()
         cfg.pause_on_aliyun_captcha = self.pause_on_aliyun_switch.isChecked()
+        cfg.reliability_mode_enabled = self.reliability_mode_switch.isChecked()
+        cfg.headless_mode = self.headless_card.switchButton.isChecked()
         try:
             idx = self.proxy_source_combo.currentIndex()
             source = str(self.proxy_source_combo.itemData(idx)) if idx >= 0 else "default"
@@ -415,15 +440,26 @@ class RuntimePage(ScrollArea):
         self.random_ip_switch.blockSignals(True)
         self.random_ip_switch.setChecked(cfg.random_ip_enabled)
         self.random_ip_switch.blockSignals(False)
+        self.random_ip_card._sync_ip_enabled(cfg.random_ip_enabled)
         self.random_ua_switch.setChecked(cfg.random_ua_enabled)
         self._sync_browser_icon()
 
-        active = set(cfg.random_ua_keys or [])
-        for key, cb in self.ua_checkboxes.items():
-            cb.setChecked((not active and key == "pc_web") or key in active)
+        # 应用UA占比配置
+        try:
+            ratios = getattr(cfg, "random_ua_ratios", None)
+            if ratios and isinstance(ratios, dict):
+                self.random_ua_card.setRatios(ratios)
+            else:
+                self.random_ua_card.setRatios({"wechat": 33, "mobile": 33, "pc": 34})
+        except Exception as exc:
+            log_suppressed_exception("apply_config: self.random_ua_card.setRatios(ratios)", exc, level=logging.WARNING)
+            self.random_ua_card.setRatios({"wechat": 33, "mobile": 33, "pc": 34})
+
         self._sync_random_ua(self.random_ua_switch.isChecked())
         self.fail_stop_switch.setChecked(cfg.fail_stop_enabled)
         self.pause_on_aliyun_switch.setChecked(getattr(cfg, "pause_on_aliyun_captcha", True))
+        self.reliability_mode_switch.setChecked(getattr(cfg, "reliability_mode_enabled", True))
+        self.headless_card.setChecked(getattr(cfg, "headless_mode", False))
 
         try:
             proxy_source = getattr(cfg, "proxy_source", "default")

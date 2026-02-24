@@ -9,10 +9,12 @@ import logging
 集中管理应用的各种配置参数，方便统一修改和维护
 """
 
-import base64
+import json
 import os
 import re
 import sys
+import threading
+import urllib.request
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -144,17 +146,60 @@ def _resolve_env_value(key: str, default: str) -> str:
     return default
 
 
-def _r(s: str) -> str:
-    try:
-        return base64.b64decode(s).decode("utf-8")
-    except Exception:
-        return ""
+_IPZAN_ENV_ENDPOINT = "https://api-wjx.hungrym0.top/api/ipzan/env"
+_RANDOM_IP_API_BASE = "https://service.ipzan.com/core-extract?num=1&no=20260112572376490874&minute=1&format=json&repeat=1&protocol=1&pool=ordinary&mode=auth&secret="
+_DEFAULT_SECRET = "pf706vk77kknlo"
+_DEFAULT_PROXY_AUTH = "18170119808:tWJ5hLDoHwrHgTkij0zY"
 
-_DEFAULT_RANDOM_IP_API_B64 = "aHR0cHM6Ly9zZXJ2aWNlLmlwemFuLmNvbS9jb3JlLWV4dHJhY3Q/bnVtPTEmbm89MjAyNjAxMTI1NzIzNzY0OTA4NzQmbWludXRlPTEmZm9ybWF0PWpzb24mcmVwZWF0PTEmcHJvdG9jb2w9MSZwb29sPW9yZGluYXJ5Jm1vZGU9YXV0aCZzZWNyZXQ9cGY3MDZ2azc3a2tubG8="
-_DEFAULT_CONTACT_API_B64 = "aHR0cHM6Ly9ib3QuaHVuZ3J5bTAudG9w"
-_DEFAULT_CARD_VALIDATION_B64 = "aHR0cHM6Ly9hcGktd2p4Lmh1bmdyeW0wLnRvcC9hcGkvY2FyZC92ZXJpZnk="
-_DEFAULT_STATUS_ENDPOINT_B64 = "aHR0cHM6Ly9hcGktd2p4Lmh1bmdyeW0wLnRvcC9hcGkvc3RhdHVz"
-_DEFAULT_PIKACHU_PROXY_API_B64 = "aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL0NoYXJsZXNQaWthY2h1L2ZyZWVwcm94eS9tYXN0ZXIvcHJveGllcy5qc29u"
+_ipzan_env_cache: Optional[dict] = None
+_ipzan_env_lock = threading.Lock()
+
+
+def _fetch_ipzan_env() -> dict:
+    """从远端拉取 ipzan 配置（secret / proxy auth），带缓存和降级。"""
+    global _ipzan_env_cache
+    if _ipzan_env_cache is not None:
+        return _ipzan_env_cache
+    with _ipzan_env_lock:
+        if _ipzan_env_cache is not None:
+            return _ipzan_env_cache
+        try:
+            req = urllib.request.Request(
+                _IPZAN_ENV_ENDPOINT,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            _ipzan_env_cache = {
+                "secret": data.get("secret") or _DEFAULT_SECRET,
+                "proxy": data.get("proxy") or _DEFAULT_PROXY_AUTH,
+            }
+        except Exception:
+            logging.debug("获取 ipzan env 失败，使用默认值", exc_info=True)
+            _ipzan_env_cache = {"secret": _DEFAULT_SECRET, "proxy": _DEFAULT_PROXY_AUTH}
+    return _ipzan_env_cache
+
+
+def get_proxy_remote_url() -> str:
+    """获取随机 IP API 地址（优先环境变量，其次远端配置）。"""
+    env_url = _resolve_env_value(_RANDOM_IP_API_ENV_KEY, "")
+    if env_url:
+        return env_url
+    secret = _fetch_ipzan_env()["secret"]
+    return _RANDOM_IP_API_BASE + secret
+
+
+def get_proxy_auth() -> str:
+    """获取代理认证字符串 'user:pass'（优先环境变量，其次远端配置）。"""
+    env_auth = os.environ.get("WJX_PROXY_AUTH", "")
+    if env_auth:
+        return env_auth
+    return _fetch_ipzan_env()["proxy"]
+_DEFAULT_CONTACT_API = "https://bot.hungrym0.top"
+_DEFAULT_CARD_VALIDATION = "https://api-wjx.hungrym0.top/api/card/verify"
+_DEFAULT_STATUS_ENDPOINT = "https://api-wjx.hungrym0.top/api/status"
+_DEFAULT_EMAIL_VERIFY_ENDPOINT = "https://api-wjx.hungrym0.top/api/email"
+_DEFAULT_PIKACHU_PROXY_API = "https://raw.githubusercontent.com/CharlesPikachu/freeproxy/master/proxies.json"
 
 # ==================== 浏览器配置 ====================
 # 浏览器选择优先级（默认优先 Edge，不存在则回落到 Chrome/内置 Chromium）
@@ -168,17 +213,13 @@ USER_AGENT_PRESETS = {
         "label": "电脑网页端",
         "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     },
+    "mobile_android": {
+        "label": "安卓手机浏览器",
+        "ua": "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
+    },
     "wechat_android": {
         "label": "安卓微信端",
         "ua": "Mozilla/5.0 (Linux; Android 13; Pixel 6 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.43.2460(0x28002B3B) Process/appbrand0 WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64",
-    },
-    "wechat_ios": {
-        "label": "苹果微信端",
-        "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.43(0x18002b2f) NetType/WIFI Language/zh_CN",
-    },
-    "wechat_windows": {
-        "label": "Windows微信WebView",
-        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 MicroMessenger/3.9.8.25 NetType/WIFI WindowsWechat/WMPF WindowsWechat(0x63090819) XWEB/9129 Flue",
     },
 }
 
@@ -225,13 +266,13 @@ PROXY_MAX_PROXIES = 80
 PROXY_HEALTH_CHECK_URL = "https://www.wjx.cn"
 PROXY_HEALTH_CHECK_TIMEOUT = 15
 _RANDOM_IP_API_ENV_KEY = "RANDOM_IP_API_URL"
-PROXY_REMOTE_URL = _resolve_env_value(_RANDOM_IP_API_ENV_KEY, _r(_DEFAULT_RANDOM_IP_API_B64))
 
 # ==================== API 端点配置 ====================
-CONTACT_API_URL = _resolve_env_value("CONTACT_API_URL", _r(_DEFAULT_CONTACT_API_B64))
-CARD_VALIDATION_ENDPOINT = _resolve_env_value("CARD_VALIDATION_ENDPOINT", _r(_DEFAULT_CARD_VALIDATION_B64))
-STATUS_ENDPOINT = _resolve_env_value("STATUS_ENDPOINT", _r(_DEFAULT_STATUS_ENDPOINT_B64))
-PIKACHU_PROXY_API = _resolve_env_value("PIKACHU_PROXY_API", _r(_DEFAULT_PIKACHU_PROXY_API_B64))
+CONTACT_API_URL = _resolve_env_value("CONTACT_API_URL", _DEFAULT_CONTACT_API)
+CARD_VALIDATION_ENDPOINT = _resolve_env_value("CARD_VALIDATION_ENDPOINT", _DEFAULT_CARD_VALIDATION)
+STATUS_ENDPOINT = _resolve_env_value("STATUS_ENDPOINT", _DEFAULT_STATUS_ENDPOINT)
+EMAIL_VERIFY_ENDPOINT = _resolve_env_value("EMAIL_VERIFY_ENDPOINT", _DEFAULT_EMAIL_VERIFY_ENDPOINT)
+PIKACHU_PROXY_API = _resolve_env_value("PIKACHU_PROXY_API", _DEFAULT_PIKACHU_PROXY_API)
 
 
 # ==================== 时长控制配置 ====================
@@ -259,6 +300,18 @@ QUESTION_TYPE_LABELS = {
 }
 LOCATION_QUESTION_LABEL = "位置题"
 DEFAULT_FILL_TEXT = "无"  # 填空选项留空时的默认文本
+
+# ==================== 维度配置 ====================
+# 预设的常用维度列表（用户也可以自定义新维度）
+PRESET_DIMENSIONS = [
+    "满意度",
+    "信任感",
+    "使用意愿",
+    "感知价值",
+    "服务质量",
+    "产品质量",
+]
+DIMENSION_UNGROUPED = "未分组"  # 未指定维度的题目归为此组
 
 # ==================== 正则表达式配置 ====================
 _HTML_SPACE_RE = re.compile(r"\s+")

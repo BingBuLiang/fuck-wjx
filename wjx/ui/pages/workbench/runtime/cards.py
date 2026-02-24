@@ -1,13 +1,15 @@
 """运行参数页 - 专属设置卡片组件（随机IP、随机UA、定时模式等）"""
 import logging
-from typing import Dict, Optional
+from typing import Optional
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QStringListModel
+from PySide6.QtGui import QIntValidator
+from PySide6.QtWidgets import QCompleter, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
+    Action,
     BodyLabel,
-    CheckBox,
     ComboBox,
+    EditableComboBox,
     ExpandGroupSettingCard,
     FluentIcon,
     HyperlinkButton,
@@ -17,14 +19,40 @@ from qfluentwidgets import (
     InfoBarPosition,
     LineEdit,
     PushButton,
+    RoundMenu,
     SettingCard,
     SwitchButton,
     TransparentToolButton,
 )
 
-from wjx.ui.widgets.no_wheel import NoWheelSpinBox
-from wjx.ui.widgets.setting_cards import SpinBoxSettingCard, SwitchSettingCard
-from wjx.utils.app.config import USER_AGENT_PRESETS
+
+class SearchableComboBox(EditableComboBox):
+    """带搜索过滤的下拉框：聚焦时展开全量列表，打字时按包含关系过滤。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._str_model = QStringListModel(self)
+        completer = QCompleter(self._str_model, self)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.setCompleter(completer)
+
+    def addItem(self, text, icon=None, userData=None):
+        super().addItem(text, icon, userData)
+        self._sync_model()
+
+    def clear(self):
+        super().clear()
+        self._sync_model()
+
+    def _sync_model(self):
+        self._str_model.setStringList([item.text for item in self.items])
+
+    def _onComboTextChanged(self, text: str):
+        # 打字时关闭全量菜单，交给 completer 过滤
+        if text:
+            self._closeComboMenu()
+        super()._onComboTextChanged(text)
 
 
 class RandomIPSettingCard(ExpandGroupSettingCard):
@@ -40,15 +68,15 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         self.addWidget(self.switchButton)
 
         # 代理源选择容器
-        container = QWidget()
-        layout = QVBoxLayout(container)
+        self._groupContainer = QWidget()
+        layout = QVBoxLayout(self._groupContainer)
         layout.setContentsMargins(48, 12, 48, 12)
         layout.setSpacing(12)
 
         # 代理源下拉框
         source_row = QHBoxLayout()
-        source_label = BodyLabel("代理源", container)
-        self.proxyCombo = ComboBox(container)
+        source_label = BodyLabel("代理源", self._groupContainer)
+        self.proxyCombo = ComboBox(self._groupContainer)
         self.proxyCombo.addItem("默认", userData="default")
         self.proxyCombo.addItem("皮卡丘代理站 (中国大陆)", userData="pikachu")
         self.proxyCombo.addItem("自定义", userData="custom")
@@ -57,7 +85,7 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         source_row.addStretch(1)
         self.proxyTrialLink = HyperlinkButton(
             FluentIcon.LINK, "https://www.ipzan.com?pid=v6bf6iabg",
-            "API免费试用", container
+            "API免费试用", self._groupContainer
         )
         self.proxyTrialLink.hide()
         source_row.addWidget(self.proxyTrialLink)
@@ -65,12 +93,12 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         layout.addLayout(source_row)
 
         # 地区选择（仅默认代理源）
-        self.areaRow = QWidget(container)
+        self.areaRow = QWidget(self._groupContainer)
         area_layout = QHBoxLayout(self.areaRow)
         area_layout.setContentsMargins(0, 0, 0, 0)
         area_label = BodyLabel("指定地区", self.areaRow)
-        self.provinceCombo = ComboBox(self.areaRow)
-        self.cityCombo = ComboBox(self.areaRow)
+        self.provinceCombo = SearchableComboBox(self.areaRow)
+        self.cityCombo = SearchableComboBox(self.areaRow)
         self.provinceCombo.setMinimumWidth(160)
         self.cityCombo.setMinimumWidth(200)
         area_layout.addWidget(area_label)
@@ -80,7 +108,7 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         layout.addWidget(self.areaRow)
 
         # 自定义API输入
-        self.customApiRow = QWidget(container)
+        self.customApiRow = QWidget(self._groupContainer)
         api_layout = QHBoxLayout(self.customApiRow)
         api_layout.setContentsMargins(0, 0, 0, 0)
         api_label = BodyLabel("API 地址", self.customApiRow)
@@ -131,12 +159,16 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         self.provinceCombo.currentIndexChanged.connect(self._on_province_changed)
         self.cityCombo.currentIndexChanged.connect(self._on_city_changed)
 
-        self.addGroupWidget(container)
+        self.addGroupWidget(self._groupContainer)
+        self.setExpand(True)
 
         # 代理源变化时显示/隐藏自定义API
         self.proxyCombo.currentIndexChanged.connect(self._on_source_changed)
         # API地址输入完成时同步到全局变量
         self.customApiEdit.editingFinished.connect(self._on_api_edit_finished)
+        # 开关联动：关闭时禁用展开内容
+        self.switchButton.checkedChanged.connect(self._sync_ip_enabled)
+        self._sync_ip_enabled(False)
 
     def _on_source_changed(self):
         idx = self.proxyCombo.currentIndex()
@@ -347,6 +379,16 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
     def setChecked(self, checked):
         self.switchButton.setChecked(checked)
 
+    def _sync_ip_enabled(self, enabled: bool):
+        """开关联动：开启时启用展开内容，关闭时禁用（灰掉）。"""
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        self._groupContainer.setEnabled(bool(enabled))
+        effect = self._groupContainer.graphicsEffect()
+        if effect is None:
+            effect = QGraphicsOpacityEffect(self._groupContainer)
+            self._groupContainer.setGraphicsEffect(effect)
+        effect.setOpacity(1.0 if enabled else 0.4)
+
 
 class TimedModeSettingCard(SettingCard):
     """定时模式设置卡 - 带帮助按钮"""
@@ -381,11 +423,10 @@ class TimedModeSettingCard(SettingCard):
 
 
 class RandomUASettingCard(ExpandGroupSettingCard):
-    """随机UA设置卡 - 包含UA类型选择"""
+    """随机UA设置卡 - 包含设备类型占比配置"""
 
     def __init__(self, parent=None):
         super().__init__(FluentIcon.ROBOT, "随机 UA", "模拟不同的 User-Agent，例如微信环境或浏览器直链环境", parent)
-        self.checkboxes: Dict[str, CheckBox] = {}
 
         # 开关
         self.switchButton = SwitchButton(self, IndicatorPosition.RIGHT)
@@ -393,25 +434,34 @@ class RandomUASettingCard(ExpandGroupSettingCard):
         self.switchButton.setOffText("关")
         self.addWidget(self.switchButton)
 
-        # UA 类型选择容器
-        container = QWidget()
-        grid = QGridLayout(container)
-        grid.setContentsMargins(48, 12, 48, 12)
-        grid.setSpacing(12)
+        # 设备占比配置容器
+        self._groupContainer = QWidget()
+        layout = QVBoxLayout(self._groupContainer)
+        layout.setContentsMargins(48, 12, 48, 12)
+        layout.setSpacing(16)
 
-        col, row = 0, 0
-        for key, preset in USER_AGENT_PRESETS.items():
-            label = preset.get("label") or key
-            cb = CheckBox(label, container)
-            cb.setChecked(key == "pc_web")
-            self.checkboxes[key] = cb
-            grid.addWidget(cb, row, col)
-            col += 1
-            if col >= 3:
-                col = 0
-                row += 1
+        # 提示信息
+        hint_label = BodyLabel("配置不同设备类型的访问占比，三个滑块占比总和必须为 100%", self._groupContainer)
+        hint_label.setStyleSheet("color: #606060; font-size: 12px;")
+        layout.addWidget(hint_label)
 
-        self.addGroupWidget(container)
+        # 三联动占比滑块
+        from wjx.ui.widgets.ratio_slider import RatioSlider
+        self.ratioSlider = RatioSlider(
+            labels={
+                "wechat": "微信访问占比",
+                "mobile": "手机访问占比",
+                "pc": "链接访问占比",
+            },
+            parent=self._groupContainer
+        )
+        layout.addWidget(self.ratioSlider)
+
+        self.addGroupWidget(self._groupContainer)
+        self.setExpand(True)
+        # 开关联动：关闭时禁用展开内容
+        self.switchButton.checkedChanged.connect(self.setUAEnabled)
+        self.setUAEnabled(False)
 
     def isChecked(self):
         return self.switchButton.isChecked()
@@ -420,39 +470,117 @@ class RandomUASettingCard(ExpandGroupSettingCard):
         self.switchButton.setChecked(checked)
 
     def setUAEnabled(self, enabled):
-        for cb in self.checkboxes.values():
-            cb.setEnabled(enabled)
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        self._groupContainer.setEnabled(bool(enabled))
+        effect = self._groupContainer.graphicsEffect()
+        if effect is None:
+            effect = QGraphicsOpacityEffect(self._groupContainer)
+            self._groupContainer.setGraphicsEffect(effect)
+        effect.setOpacity(1.0 if enabled else 0.4)
+
+    def getRatios(self) -> dict:
+        """获取当前设备占比配置"""
+        return self.ratioSlider.getValues()
+
+    def setRatios(self, ratios: dict):
+        """设置设备占比配置"""
+        self.ratioSlider.setValues(ratios)
 
 
 class TimeRangeSettingCard(SettingCard):
-    """时间范围设置卡 - 使用双向滑块"""
+    """时间设置卡 - 使用单个秒数输入框"""
 
     def __init__(self, icon, title, content, max_seconds: int = 300, parent=None):
         super().__init__(icon, title, content, parent)
-        from wjx.ui.widgets.time_range_slider import TimeRangeSlider
-        
+
         self.max_seconds = max_seconds
-        self.slider = TimeRangeSlider(
-            min_value=0,
-            max_value=max_seconds,
-            tick_interval=5,
-            parent=self
-        )
-        self.slider.setMinimumWidth(350)
-        
-        self.hBoxLayout.addWidget(self.slider, 0, Qt.AlignmentFlag.AlignRight)
+
+        self._input_container = QWidget(self)
+        input_layout = QHBoxLayout(self._input_container)
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.setSpacing(8)
+
+        self.value_edit = LineEdit(self._input_container)
+        self.value_edit.setPlaceholderText("秒数")
+        self.value_edit.setFixedWidth(100)
+        self.value_edit.setValidator(QIntValidator(0, max_seconds, self.value_edit))
+        self.value_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.value_edit.customContextMenuRequested.connect(self._show_value_edit_menu)
+
+        sec_label = BodyLabel("秒", self._input_container)
+        sec_label.setStyleSheet("color: #606060;")
+
+        input_layout.addWidget(self.value_edit)
+        input_layout.addWidget(sec_label)
+
+        self.value_edit.editingFinished.connect(self._normalize_inputs)
+        self.setValue(0)
+
+        self.hBoxLayout.addWidget(self._input_container, 0, Qt.AlignmentFlag.AlignRight)
         self.hBoxLayout.addSpacing(16)
 
     def setEnabled(self, enabled):
         super().setEnabled(enabled)
-        self.slider.setEnabled(enabled)
-    
+        self.value_edit.setEnabled(enabled)
+
+    def _parse_int(self, text: str, fallback: int) -> int:
+        text = str(text or "").strip()
+        if not text:
+            return fallback
+        try:
+            value = int(text)
+        except ValueError:
+            return fallback
+        if value < 0:
+            return 0
+        if value > self.max_seconds:
+            return self.max_seconds
+        return value
+
+    def _normalize_inputs(self):
+        self.value_edit.setText(str(self.getValue()))
+
+    def _show_value_edit_menu(self, pos):
+        menu = RoundMenu(parent=self.value_edit)
+
+        cut_action = Action(FluentIcon.CUT, "剪切", parent=menu)
+        cut_action.setEnabled(not self.value_edit.isReadOnly() and self.value_edit.hasSelectedText())
+        cut_action.triggered.connect(self.value_edit.cut)
+        menu.addAction(cut_action)
+
+        copy_action = Action(FluentIcon.COPY, "复制", parent=menu)
+        copy_action.setEnabled(self.value_edit.hasSelectedText())
+        copy_action.triggered.connect(self.value_edit.copy)
+        menu.addAction(copy_action)
+
+        paste_action = Action(FluentIcon.PASTE, "粘贴", parent=menu)
+        paste_action.setEnabled(not self.value_edit.isReadOnly())
+        paste_action.triggered.connect(self.value_edit.paste)
+        menu.addAction(paste_action)
+
+        select_all_action = Action(FluentIcon.CHECKBOX, "全选", parent=menu)
+        select_all_action.setEnabled(bool(self.value_edit.text()))
+        select_all_action.triggered.connect(self.value_edit.selectAll)
+        menu.addAction(select_all_action)
+
+        menu.exec(self.value_edit.mapToGlobal(pos))
+
+    def getValue(self) -> int:
+        """获取当前秒数"""
+        return self._parse_int(self.value_edit.text(), 0)
+
+    def setValue(self, value: int):
+        """设置当前秒数"""
+        value = max(0, min(int(value), self.max_seconds))
+        self.value_edit.setText(str(value))
+
     def getRange(self) -> tuple:
-        """获取当前范围（秒）"""
-        return self.slider.getRange()
-    
+        """兼容调用方：返回 (秒数, 秒数)"""
+        sec = self.getValue()
+        return sec, sec
+
     def setRange(self, min_sec: int, max_sec: int):
-        """设置范围（秒）"""
-        self.slider.setRange(min_sec, max_sec)
+        """兼容调用方：仅使用 min_sec 作为固定秒数"""
+        self.setValue(min_sec)
 
 

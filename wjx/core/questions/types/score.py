@@ -1,5 +1,5 @@
 """评价题处理（星级评价）"""
-from typing import List
+from typing import List, Optional
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
@@ -7,7 +7,6 @@ from wjx.utils.logging.log_utils import log_suppressed_exception
 from wjx.network.browser import By, BrowserDriver, NoSuchElementException
 from wjx.core.persona.context import record_answer
 from wjx.core.questions.tendency import get_tendency_index
-from wjx.core.stats.collector import stats_collector
 
 
 def _is_valid_score_option(element) -> bool:
@@ -62,7 +61,7 @@ def _collect_score_options(question_div) -> List:
     return options
 
 
-def score(driver: BrowserDriver, current: int, index: int, score_prob_config: List) -> None:
+def score(driver: BrowserDriver, current: int, index: int, score_prob_config: List, dimension: Optional[str] = None, is_reverse: bool = False) -> None:
     """评价题处理主函数"""
 
 
@@ -76,7 +75,7 @@ def score(driver: BrowserDriver, current: int, index: int, score_prob_config: Li
     if not options:
         return
     probabilities = score_prob_config[index] if index < len(score_prob_config) else -1
-    selected_index = get_tendency_index(len(options), probabilities)
+    selected_index = get_tendency_index(len(options), probabilities, dimension=dimension, is_reverse=is_reverse)
     if selected_index >= len(options):
         selected_index = max(0, len(options) - 1)
     target = options[selected_index]
@@ -88,7 +87,6 @@ def score(driver: BrowserDriver, current: int, index: int, score_prob_config: Li
         except Exception as exc:
             log_suppressed_exception("score: driver.execute_script(\"arguments[0].click();\", target)", exc, level=logging.ERROR)
     # 记录统计数据
-    stats_collector.record_score_choice(current, selected_index)
     # 记录作答上下文
     record_answer(current, "score", selected_indices=[selected_index])
 

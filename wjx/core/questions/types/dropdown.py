@@ -4,13 +4,15 @@ from typing import Any, List, Optional, Tuple, Union
 
 from wjx.network.browser import By, BrowserDriver
 from wjx.core.persona.context import apply_persona_boost, record_answer
+from wjx.core.questions.consistency import (
+    apply_single_like_consistency,
+)
 from wjx.core.questions.utils import (
     weighted_index,
     normalize_droplist_probs,
     get_fill_text_from_config,
     fill_option_additional_text,
 )
-from wjx.core.stats.collector import stats_collector
 
 
 def _extract_select_options(driver: BrowserDriver, question_number: int) -> Tuple[Any, List[Tuple[str, str]]]:
@@ -130,6 +132,7 @@ def _fill_droplist_via_click(driver: BrowserDriver, current: int, prob_config: U
     # 画像约束：对匹配画像的选项加权
     click_option_texts = [text for _, _, text in filtered_options]
     probabilities = apply_persona_boost(click_option_texts, probabilities)
+    probabilities = apply_single_like_consistency(probabilities, current)
     selected_idx = weighted_index(probabilities)
     _, selected_option, selected_text = filtered_options[selected_idx]
     try:
@@ -137,7 +140,6 @@ def _fill_droplist_via_click(driver: BrowserDriver, current: int, prob_config: U
     except Exception:
         return
     # 记录统计数据
-    stats_collector.record_dropdown_choice(current, selected_idx)
     # 记录作答上下文
     record_answer(current, "dropdown", selected_indices=[selected_idx], selected_texts=[selected_text])
     fill_value = get_fill_text_from_config(fill_entries, selected_idx)
@@ -154,11 +156,11 @@ def dropdown(driver: BrowserDriver, current: int, index: int, droplist_prob_conf
         # 画像约束：对匹配画像的选项加权
         option_texts = [text for _, text in select_options]
         probabilities = apply_persona_boost(option_texts, probabilities)
+        probabilities = apply_single_like_consistency(probabilities, current)
         selected_idx = weighted_index(probabilities)
         selected_value, selected_text = select_options[selected_idx]
         if _select_dropdown_option_via_js(driver, select_element, selected_value, selected_text):
             # 记录统计数据
-            stats_collector.record_dropdown_choice(current, selected_idx)
             # 记录作答上下文
             record_answer(current, "dropdown", selected_indices=[selected_idx], selected_texts=[selected_text])
             fill_value = get_fill_text_from_config(fill_entries, selected_idx)

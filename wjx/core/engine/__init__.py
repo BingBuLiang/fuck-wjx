@@ -14,7 +14,7 @@ from wjx.core.engine.full_simulation import (
     _prepare_full_simulation_schedule,
     _reset_full_simulation_runtime_state,
     _simulate_answer_duration_delay,
-    _sync_full_sim_state_from_globals,
+    _sync_full_sim_state_from_ctx,
     _wait_for_next_full_simulation_slot,
 )
 from wjx.core.engine.navigation import (
@@ -60,7 +60,7 @@ __all__ = [
     "_handle_submission_failure",
     "_wait_if_paused",
     "_trigger_target_reached_stop",
-    "_sync_full_sim_state_from_globals",
+    "_sync_full_sim_state_from_ctx",
     "_driver_question_looks_like_rating",
     "_driver_question_looks_like_reorder",
     "_count_choice_inputs_driver",

@@ -245,11 +245,11 @@ class PlaywrightDriver:
             self._page.goto(url, wait_until=wait_until, timeout=timeout)
             return
         except PlaywrightTimeoutError as exc:
-            logging.warning("Page.goto timeout after %d ms: %s", timeout, exc)
+            logging.debug("Page.goto timeout after %d ms: %s", timeout, exc)
             raise
         except Exception as exc:
             if _is_proxy_tunnel_error(exc):
-                logging.warning("Page.goto proxy tunnel failure: %s", exc)
+                logging.debug("Page.goto proxy tunnel failure: %s", exc)
                 raise ProxyConnectionError(str(exc)) from exc
             raise
 

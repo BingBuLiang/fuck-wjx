@@ -666,6 +666,7 @@ class QuestionAddDialog(QDialog):
                 custom_weights=None,
                 question_num=self._entry_index,
                 ai_enabled=bool(self._ai_enabled) if q_type == "text" else False,
+                text_random_mode="none",
                 dimension=None,
             )
         if q_type == "order":

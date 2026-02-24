@@ -180,7 +180,7 @@ class _BrowserSession:
 
         if self.proxy_address:
             if not _proxy_is_responsive(self.proxy_address):
-                logging.warning(f"代理无响应：{_mask_proxy_for_log(self.proxy_address)}")
+                logging.warning("提取到的代理质量过低，自动弃用更换下一个")
                 _discard_unresponsive_proxy(self.ctx, self.proxy_address)
                 if self.ctx.random_proxy_ip_enabled:
                     _record_bad_proxy_and_maybe_pause(self.ctx, self.gui_instance)
@@ -561,7 +561,7 @@ def run(
             driver_had_error = True
             if stop_signal.is_set():
                 break
-            logging.warning(f"代理隧道连接失败：{exc}")
+            logging.warning("提取到的代理质量过低，自动弃用更换下一个")
             if session.proxy_address:
                 _discard_unresponsive_proxy(ctx, session.proxy_address)
             if ctx.random_proxy_ip_enabled and session.proxy_address:

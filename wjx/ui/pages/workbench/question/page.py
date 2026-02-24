@@ -31,6 +31,18 @@ from .add_dialog import QuestionAddDialog
 
 logger = logging.getLogger(__name__)
 
+_TEXT_RANDOM_NAME_TOKEN = "__RANDOM_NAME__"
+_TEXT_RANDOM_MOBILE_TOKEN = "__RANDOM_MOBILE__"
+
+
+def _pretty_text_answer(value: Any) -> str:
+    text = str(value or "").strip()
+    if text == _TEXT_RANDOM_NAME_TOKEN:
+        return "随机姓名"
+    if text == _TEXT_RANDOM_MOBILE_TOKEN:
+        return "随机手机号"
+    return text
+
 
 class QuestionPage(ScrollArea):
     """题目配置页，支持简单编辑。"""
@@ -204,9 +216,18 @@ class QuestionPage(ScrollArea):
     def _build_detail_text(self, entry: QuestionEntry) -> str:
         """构建配置详情摘要文本。"""
         if entry.question_type in ("text", "multi_text"):
+            if entry.question_type == "text":
+                random_mode = str(getattr(entry, "text_random_mode", "none") or "none").strip().lower()
+                if random_mode == "name":
+                    detail = "答案: 随机姓名"
+                    return detail
+                if random_mode == "mobile":
+                    detail = "答案: 随机手机号"
+                    return detail
             texts = entry.texts or []
             if texts:
-                detail = f"答案: {' | '.join(texts[:3])}"
+                preview = [_pretty_text_answer(text) for text in texts[:3]]
+                detail = f"答案: {' | '.join(preview)}"
                 if len(texts) > 3:
                     detail += f" (+{len(texts)-3})"
             else:

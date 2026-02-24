@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import math
 import threading
+import logging
+
+import wjx.network.http_client as http_client
+from wjx.utils.logging.log_utils import log_suppressed_exception
 
 from PySide6.QtCore import Qt, QPointF, QDate, QDateTime, QTime, Signal, QRectF, QPropertyAnimation, QEasingCurve, Property, QTimer
-from PySide6.QtCharts import QChart, QSplineSeries, QChartView, QValueAxis, QDateTimeAxis
+from PySide6.QtCharts import QChart, QLineSeries, QChartView, QValueAxis, QDateTimeAxis
 from PySide6.QtGui import QPainter, QPen, QColor
 from PySide6.QtWidgets import (
     QWidget,
@@ -28,8 +32,37 @@ from qfluentwidgets import (
     themeColor,
 )
 
+def _compute_monotone_slopes(xs, ys):
+    n = len(xs)
+    d = [(ys[i+1]-ys[i])/(xs[i+1]-xs[i]) for i in range(n-1)]
+    m = [0.0]*n
+    m[0], m[-1] = d[0], d[-1]
+    for i in range(1, n-1):
+        m[i] = (d[i-1]+d[i])/2
+    for i in range(n-1):
+        if abs(d[i]) < 1e-10:
+            m[i] = m[i+1] = 0.0
+        else:
+            a, b = m[i]/d[i], m[i+1]/d[i]
+            s = a*a+b*b
+            if s > 9:
+                t = 3/math.sqrt(s)
+                m[i] = t*a*d[i]; m[i+1] = t*b*d[i]
+    return m
+
+def _eval_monotone_cubic(xs, ys, ms, x):
+    if x <= xs[0]: return ys[0]
+    if x >= xs[-1]: return ys[-1]
+    lo, hi = 0, len(xs)-2
+    while lo < hi:
+        mid = (lo+hi)//2
+        if xs[mid+1] < x: lo = mid+1
+        else: hi = mid
+    i = lo; h = xs[i+1]-xs[i]; t = (x-xs[i])/h; t2, t3 = t*t, t*t*t
+    return (2*t3-3*t2+1)*ys[i]+(t3-2*t2+t)*h*ms[i]+(-2*t3+3*t2)*ys[i+1]+(t3-t2)*h*ms[i+1]
+
 class ChartOverlay(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, curve_y_fn=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -41,6 +74,7 @@ class ChartOverlay(QWidget):
         self.ip_count = 0
         self.plot_area = QRectF()
         self._opacity = 0.0
+        self._curve_y_fn = curve_y_fn
         self._anim = QPropertyAnimation(self, b"opacity", self)
         self._anim.setDuration(180)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -61,7 +95,11 @@ class ChartOverlay(QWidget):
             self._smooth_timer.stop()
         else:
             self._current_x += dx * 0.2
-            self._current_y += dy * 0.2
+            if self._curve_y_fn:
+                cy = self._curve_y_fn(self._current_x)
+                self._current_y = cy if cy is not None else self._current_y + dy * 0.2
+            else:
+                self._current_y += dy * 0.2
         self.update()
 
     def update_point(self, x, y, date_str, ip_count, plot_area):
@@ -160,14 +198,30 @@ class ChartOverlay(QWidget):
         painter.drawText(int(box_x + 16), int(box_y + 10 + fm.height() + 6 + fm.ascent()), text2)
 
 class InteractiveChartView(QChartView):
-    def __init__(self, chart, series, point_meta_ref, parent=None):
+    def __init__(self, chart, series, point_meta_ref, data_points_ref, parent=None):
         super().__init__(chart, parent)
         self.setMouseTracking(True)
         if self.viewport():
             self.viewport().setMouseTracking(True)
         self._series = series
         self._point_meta = point_meta_ref
-        self.overlay = ChartOverlay(self)
+        self._data_points = data_points_ref
+        self._interp_xs: list = []
+        self._interp_ys: list = []
+        self._interp_ms: list = []
+        self.overlay = ChartOverlay(self, self._get_view_y_for_view_x)
+
+    def set_interp_data(self, xs, ys, ms):
+        self._interp_xs, self._interp_ys, self._interp_ms = xs, ys, ms
+
+    def _get_view_y_for_view_x(self, view_x):
+        if len(self._interp_xs) < 2:
+            return None
+        scene_pt = self.mapToScene(QPointF(view_x, 0).toPoint())
+        data_x = self.chart().mapToValue(self.chart().mapFromScene(scene_pt), self._series).x()
+        data_y = _eval_monotone_cubic(self._interp_xs, self._interp_ys, self._interp_ms, data_x)
+        item_pos = self.chart().mapToPosition(QPointF(data_x, data_y), self._series)
+        return self.mapFromScene(self.chart().mapToScene(item_pos)).y()
     
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -175,7 +229,7 @@ class InteractiveChartView(QChartView):
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
-        points = self._series.points()
+        points = self._data_points
         if not points:
             self.overlay.hide_line()
             return
@@ -230,14 +284,17 @@ class InteractiveChartView(QChartView):
 
 class IpUsagePage(ScrollArea):
     _dataLoaded = Signal(list, str)
+    _ipBalanceLoaded = Signal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._dataLoaded.connect(self._on_data_loaded)
+        self._ipBalanceLoaded.connect(self._on_ip_balance_loaded)
         self._load_requested_once = False
         self._last_load_failed = False
         self._loading = False
         self._point_meta: dict[int, tuple[str, int]] = {}
+        self._data_points: list = []
         self.view = QWidget(self)
         self.view.setObjectName("view")
         self.setWidget(self.view)
@@ -254,6 +311,8 @@ class IpUsagePage(ScrollArea):
         title_row = QHBoxLayout()
         title_row.addWidget(TitleLabel("IP 使用记录", self))
         title_row.addStretch(1)
+        self._ip_balance_label = StrongBodyLabel("", self)
+        title_row.addWidget(self._ip_balance_label)
         layout.addLayout(title_row)
 
         card = CardWidget(self)
@@ -262,7 +321,7 @@ class IpUsagePage(ScrollArea):
         card_layout.setSpacing(8)
         card_layout.addWidget(StrongBodyLabel("每日提取 IP 数", self))
 
-        self._series = QSplineSeries()
+        self._series = QLineSeries()
         self._chart = QChart()
         self._chart.addSeries(self._series)
         self._chart.legend().hide()
@@ -283,9 +342,7 @@ class IpUsagePage(ScrollArea):
         self._chart.addAxis(self._axis_y, Qt.AlignmentFlag.AlignLeft)
         self._series.attachAxis(self._axis_y)
 
-        self._series.setPointsVisible(True)
-
-        self._chart_view = InteractiveChartView(self._chart, self._series, self._point_meta)
+        self._chart_view = InteractiveChartView(self._chart, self._series, self._point_meta, self._data_points)
         self._chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._chart_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._chart_view.setMinimumHeight(400)
@@ -370,9 +427,28 @@ class IpUsagePage(ScrollArea):
             self._axis_x.setRange(now.addDays(-1), now.addDays(1))
             return
 
+        xs = [float(p[0]) for p in points]
+        ys = [float(p[1]) for p in points]
+
+        self._data_points.clear()
         for ts, total, label in points:
-            self._series.append(QPointF(float(ts), float(total)))
+            self._data_points.append(QPointF(float(ts), float(total)))
             self._point_meta[ts] = (label, total)
+
+        if len(xs) >= 2:
+            ms = _compute_monotone_slopes(xs, ys)
+            self._chart_view.set_interp_data(xs, ys, ms)
+            for i in range(len(xs)-1):
+                h = xs[i+1]-xs[i]
+                for j in range(12):
+                    t = j/12; t2, t3 = t*t, t*t*t
+                    yi = (2*t3-3*t2+1)*ys[i]+(t3-2*t2+t)*h*ms[i]+(-2*t3+3*t2)*ys[i+1]+(t3-t2)*h*ms[i+1]
+                    self._series.append(QPointF(xs[i]+t*h, yi))
+            self._series.append(QPointF(xs[-1], ys[-1]))
+        else:
+            self._chart_view.set_interp_data(xs, ys, [0.0]*len(xs))
+            for p in self._data_points:
+                self._series.append(p)
 
         x_values = [p[0] for p in points]
         y_values = [p[1] for p in points]
@@ -412,6 +488,33 @@ class IpUsagePage(ScrollArea):
             except Exception:
                 return 0
 
+    def _load_ip_balance(self):
+        def _do():
+            try:
+                response = http_client.get(
+                    "https://service.ipzan.com/userProduct-get",
+                    params={"no": "20260112572376490874", "userId": "72FH7U4E0IG"},
+                    timeout=5,
+                )
+                data = response.json()
+                if data.get("code") in (0, 200) and data.get("status") in (200, "200", None):
+                    balance = data.get("data", {}).get("balance", 0)
+                    try:
+                        self._ipBalanceLoaded.emit(float(balance))
+                    except Exception as exc:
+                        log_suppressed_exception("_load_ip_balance emit", exc, level=logging.WARNING)
+            except Exception as exc:
+                log_suppressed_exception("_load_ip_balance request", exc, level=logging.WARNING)
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _on_ip_balance_loaded(self, balance: float):
+        try:
+            ip_count = int(float(balance) / 0.0035)
+            display = str(ip_count)
+        except Exception:
+            display = "--"
+        self._ip_balance_label.setText(f"代理源剩余 IP 数：{display}")
+
     def _set_loading(self, loading: bool) -> None:
         self._loading = bool(loading)
         if loading:
@@ -443,3 +546,4 @@ class IpUsagePage(ScrollArea):
         if (not self._load_requested_once) or self._last_load_failed:
             self._load_requested_once = True
             self._load_data()
+            self._load_ip_balance()

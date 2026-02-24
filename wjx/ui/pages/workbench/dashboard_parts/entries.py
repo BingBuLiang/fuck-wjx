@@ -10,13 +10,32 @@ from qfluentwidgets import MessageBox
 from wjx.core.questions.config import QuestionEntry
 from wjx.ui.pages.workbench.question import QuestionWizardDialog, _get_entry_type_label
 
+_TEXT_RANDOM_NAME_TOKEN = "__RANDOM_NAME__"
+_TEXT_RANDOM_MOBILE_TOKEN = "__RANDOM_MOBILE__"
+
+
+def _pretty_text_answer(value: Any) -> str:
+    text = str(value or "").strip()
+    if text == _TEXT_RANDOM_NAME_TOKEN:
+        return "随机姓名"
+    if text == _TEXT_RANDOM_MOBILE_TOKEN:
+        return "随机手机号"
+    return text
+
 
 def question_summary(entry: QuestionEntry) -> str:
     """生成题目配置摘要"""
     if entry.question_type in ("text", "multi_text"):
+        if entry.question_type == "text":
+            random_mode = str(getattr(entry, "text_random_mode", "none") or "none").strip().lower()
+            if random_mode == "name":
+                return "答案: 随机姓名"
+            if random_mode == "mobile":
+                return "答案: 随机手机号"
         texts = entry.texts or []
         if texts:
-            summary = f"答案: {' | '.join(texts[:2])}"
+            preview = [_pretty_text_answer(text) for text in texts[:2]]
+            summary = f"答案: {' | '.join(preview)}"
             if len(texts) > 2:
                 summary += f" (+{len(texts)-2})"
             if entry.question_type == "text" and getattr(entry, "ai_enabled", False):
@@ -123,6 +142,11 @@ class DashboardEntriesMixin:
         for idx, texts in text_updates.items():
             if 0 <= idx < len(entries):
                 entries[idx].texts = texts
+        random_mode_updates = dlg.get_text_random_modes()
+        for idx, random_mode in random_mode_updates.items():
+            if 0 <= idx < len(entries):
+                entry = entries[idx]
+                entry.text_random_mode = str(random_mode or "none") if entry.question_type == "text" else "none"
         ai_updates = dlg.get_ai_flags()
         for idx, enabled in ai_updates.items():
             if 0 <= idx < len(entries):

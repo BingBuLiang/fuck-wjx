@@ -424,9 +424,15 @@ class RunController(QObject):
                 texts = copy.deepcopy(existing_config.texts)
                 # 对于文本题，复用AI设置
                 ai_enabled_from_existing = getattr(existing_config, "ai_enabled", False) if q_type in ("text", "multi_text") else False
+                text_random_mode_from_existing = (
+                    str(getattr(existing_config, "text_random_mode", "none") or "none")
+                    if q_type == "text"
+                    else "none"
+                )
             else:
                 # 没有已配置的相同题型，使用默认配置
                 ai_enabled_from_existing = False
+                text_random_mode_from_existing = "none"
                 if q_type in ("single", "dropdown", "scale"):
                     probabilities = -1
                     distribution = "random"
@@ -482,6 +488,7 @@ class RunController(QObject):
                 question_num=q.get("num"),
                 question_title=title_text or None,
                 ai_enabled=ai_enabled_from_existing if q_type in ("text", "multi_text") else False,
+                text_random_mode=text_random_mode_from_existing if q_type == "text" else "none",
                 option_fill_texts=None,
                 fillable_option_indices=q.get("fillable_options"),
                 is_location=is_location,

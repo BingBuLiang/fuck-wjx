@@ -15,6 +15,21 @@ from wjx.utils.logging.log_utils import log_suppressed_exception
 if TYPE_CHECKING:
     from wjx.core.task_context import TaskContext
 
+_TEXT_RANDOM_NAME_TOKEN = "__RANDOM_NAME__"
+_TEXT_RANDOM_MOBILE_TOKEN = "__RANDOM_MOBILE__"
+_TEXT_RANDOM_NONE = "none"
+_TEXT_RANDOM_NAME = "name"
+_TEXT_RANDOM_MOBILE = "mobile"
+
+
+def _pretty_text_answer(value: Any) -> str:
+    text = str(value or "").strip()
+    if text == _TEXT_RANDOM_NAME_TOKEN:
+        return "随机姓名"
+    if text == _TEXT_RANDOM_MOBILE_TOKEN:
+        return "随机手机号"
+    return text
+
 
 def _infer_option_count(entry: "QuestionEntry") -> int:
     """
@@ -77,6 +92,7 @@ class QuestionEntry:
     question_num: Optional[int] = None
     question_title: Optional[str] = None
     ai_enabled: bool = False
+    text_random_mode: str = _TEXT_RANDOM_NONE
     option_fill_texts: Optional[List[Optional[str]]] = None
     fillable_option_indices: Optional[List[int]] = None
     is_location: bool = False
@@ -92,6 +108,10 @@ class QuestionEntry:
             }.get(mode or "", "完全随机")
 
         if self.question_type in ("text", "multi_text"):
+            text_random_mode = str(getattr(self, "text_random_mode", _TEXT_RANDOM_NONE) or _TEXT_RANDOM_NONE).strip().lower()
+            if self.question_type == "text" and text_random_mode in (_TEXT_RANDOM_NAME, _TEXT_RANDOM_MOBILE):
+                random_label = "随机姓名" if text_random_mode == _TEXT_RANDOM_NAME else "随机手机号"
+                return f"填空题: {random_label}"
             raw_samples = self.texts or []
             if self.question_type == "multi_text":
                 formatted_samples: List[str] = []
@@ -110,7 +130,8 @@ class QuestionEntry:
                         formatted_samples.append(text_value)
                 samples = " | ".join(formatted_samples)
             else:
-                samples = " | ".join(filter(None, raw_samples))
+                pretty_samples = [_pretty_text_answer(sample) for sample in raw_samples if str(sample or "").strip()]
+                samples = " | ".join(pretty_samples)
             preview = samples if samples else "未设置示例内容"
             if len(preview) > 60:
                 preview = preview[:57] + "..."
@@ -331,6 +352,7 @@ def configure_probabilities(
                 _idx_text += 1
             else:
                 _target.question_config_index_map[question_num] = ("location", -1)
+            text_random_mode = str(getattr(entry, "text_random_mode", _TEXT_RANDOM_NONE) or _TEXT_RANDOM_NONE).strip().lower()
             raw_values = entry.texts or []
             normalized_values: List[str] = []
             for item in raw_values:
@@ -341,6 +363,11 @@ def configure_probabilities(
                 if text_value:
                     normalized_values.append(text_value)
             ai_enabled = bool(getattr(entry, "ai_enabled", False)) if entry.question_type == "text" else False
+            if entry.question_type == "text" and text_random_mode in (_TEXT_RANDOM_NAME, _TEXT_RANDOM_MOBILE):
+                ai_enabled = False
+                normalized_values = [
+                    _TEXT_RANDOM_NAME_TOKEN if text_random_mode == _TEXT_RANDOM_NAME else _TEXT_RANDOM_MOBILE_TOKEN
+                ]
             if not normalized_values:
                 if ai_enabled:
                     normalized_values = [DEFAULT_FILL_TEXT]

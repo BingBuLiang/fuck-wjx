@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QDialog,
+    QButtonGroup,
 )
 from qfluentwidgets import (
     ScrollArea,
@@ -27,6 +28,12 @@ from wjx.ui.helpers.ai_fill import ensure_ai_ready
 
 from .constants import _get_entry_type_label
 from .utils import _shorten_text, _apply_label_color, _bind_slider_input
+
+_TEXT_RANDOM_NONE = "none"
+_TEXT_RANDOM_NAME = "name"
+_TEXT_RANDOM_MOBILE = "mobile"
+_TEXT_RANDOM_NAME_TOKEN = "__RANDOM_NAME__"
+_TEXT_RANDOM_MOBILE_TOKEN = "__RANDOM_MOBILE__"
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +133,10 @@ class QuestionWizardDialog(QDialog):
         self.matrix_reverse_check_map: Dict[int, List[CheckBox]] = {}  # matrix 每行用
         self.text_container_map: Dict[int, QWidget] = {}
         self.text_add_btn_map: Dict[int, PushButton] = {}
+        self.text_random_mode_map: Dict[int, str] = {}
+        self.text_random_name_check_map: Dict[int, CheckBox] = {}
+        self.text_random_mobile_check_map: Dict[int, CheckBox] = {}
+        self.text_random_group_map: Dict[int, QButtonGroup] = {}
         self._entry_snapshots: List[QuestionEntry] = [copy.deepcopy(entry) for entry in entries]
         self._has_content = False
 
@@ -354,13 +365,51 @@ class QuestionWizardDialog(QDialog):
         self.text_add_btn_map[idx] = add_btn
 
         if entry.question_type == "text":
+            random_row = QHBoxLayout()
+            random_row.setSpacing(8)
+            random_hint = BodyLabel("随机处理：", card)
+            random_hint.setStyleSheet("font-size: 12px;")
+            _apply_label_color(random_hint, "#666666", "#bfbfbf")
+            random_row.addWidget(random_hint)
+
+            random_name_cb = CheckBox("随机姓名", card)
+            random_mobile_cb = CheckBox("随机手机号", card)
+            random_row.addWidget(random_name_cb)
+            random_row.addWidget(random_mobile_cb)
+            random_row.addStretch(1)
+            card_layout.addLayout(random_row)
+
+            random_group = QButtonGroup(card)
+            random_group.setExclusive(False)
+            random_group.addButton(random_name_cb, 1)
+            random_group.addButton(random_mobile_cb, 2)
+            self.text_random_group_map[idx] = random_group
+            self.text_random_name_check_map[idx] = random_name_cb
+            self.text_random_mobile_check_map[idx] = random_mobile_cb
+
+            random_name_cb.toggled.connect(
+                lambda checked, i=idx: self._on_text_random_mode_toggled(i, _TEXT_RANDOM_NAME, checked)
+            )
+            random_mobile_cb.toggled.connect(
+                lambda checked, i=idx: self._on_text_random_mode_toggled(i, _TEXT_RANDOM_MOBILE, checked)
+            )
+
             ai_cb = CheckBox("启用 AI", card)
             ai_cb.setToolTip("运行时每次填空都会调用 AI")
             ai_cb.setChecked(bool(getattr(entry, "ai_enabled", False)))
             ai_cb.toggled.connect(lambda checked, i=idx: self._on_entry_ai_toggled(i, checked))
             btn_row.addWidget(ai_cb)
             self.ai_check_map[idx] = ai_cb
-            self._set_text_answer_enabled(idx, not ai_cb.isChecked())
+
+            random_mode = self._resolve_text_random_mode(entry)
+            self.text_random_mode_map[idx] = random_mode
+            if random_mode == _TEXT_RANDOM_NAME:
+                random_name_cb.setChecked(True)
+            elif random_mode == _TEXT_RANDOM_MOBILE:
+                random_mobile_cb.setChecked(True)
+            self._sync_text_section_state(idx)
+        else:
+            self._set_text_answer_enabled(idx, True)
 
         btn_row.addStretch(1)
         card_layout.addLayout(btn_row)
@@ -632,7 +681,71 @@ class QuestionWizardDialog(QDialog):
         if add_btn:
             add_btn.setEnabled(enabled)
 
+    @staticmethod
+    def _resolve_text_random_mode(entry: QuestionEntry) -> str:
+        mode = str(getattr(entry, "text_random_mode", _TEXT_RANDOM_NONE) or _TEXT_RANDOM_NONE).strip().lower()
+        if mode in (_TEXT_RANDOM_NAME, _TEXT_RANDOM_MOBILE):
+            return mode
+        for raw in (entry.texts or []):
+            token = str(raw or "").strip()
+            if token == _TEXT_RANDOM_NAME_TOKEN:
+                return _TEXT_RANDOM_NAME
+            if token == _TEXT_RANDOM_MOBILE_TOKEN:
+                return _TEXT_RANDOM_MOBILE
+        return _TEXT_RANDOM_NONE
+
+    def _sync_text_section_state(self, idx: int) -> None:
+        random_mode = self.text_random_mode_map.get(idx, _TEXT_RANDOM_NONE)
+        ai_cb = self.ai_check_map.get(idx)
+        if random_mode != _TEXT_RANDOM_NONE:
+            if ai_cb:
+                ai_cb.blockSignals(True)
+                ai_cb.setChecked(False)
+                ai_cb.blockSignals(False)
+                ai_cb.setEnabled(False)
+            self._set_text_answer_enabled(idx, False)
+            return
+        if ai_cb:
+            ai_cb.setEnabled(True)
+            self._set_text_answer_enabled(idx, not ai_cb.isChecked())
+            return
+        self._set_text_answer_enabled(idx, True)
+
+    def _on_text_random_mode_toggled(self, idx: int, mode: str, checked: bool) -> None:
+        if checked:
+            name_cb = self.text_random_name_check_map.get(idx)
+            mobile_cb = self.text_random_mobile_check_map.get(idx)
+            if mode == _TEXT_RANDOM_NAME and mobile_cb and mobile_cb.isChecked():
+                mobile_cb.blockSignals(True)
+                mobile_cb.setChecked(False)
+                mobile_cb.blockSignals(False)
+            if mode == _TEXT_RANDOM_MOBILE and name_cb and name_cb.isChecked():
+                name_cb.blockSignals(True)
+                name_cb.setChecked(False)
+                name_cb.blockSignals(False)
+            self.text_random_mode_map[idx] = mode
+        else:
+            current_mode = _TEXT_RANDOM_NONE
+            name_cb = self.text_random_name_check_map.get(idx)
+            mobile_cb = self.text_random_mobile_check_map.get(idx)
+            if name_cb and name_cb.isChecked():
+                current_mode = _TEXT_RANDOM_NAME
+            elif mobile_cb and mobile_cb.isChecked():
+                current_mode = _TEXT_RANDOM_MOBILE
+            self.text_random_mode_map[idx] = current_mode
+        self._sync_text_section_state(idx)
+
     def _on_entry_ai_toggled(self, idx: int, checked: bool) -> None:
+        random_mode = self.text_random_mode_map.get(idx, _TEXT_RANDOM_NONE)
+        if random_mode != _TEXT_RANDOM_NONE:
+            cb = self.ai_check_map.get(idx)
+            if cb:
+                cb.blockSignals(True)
+                cb.setChecked(False)
+                cb.blockSignals(False)
+                cb.setEnabled(False)
+            self._set_text_answer_enabled(idx, False)
+            return
         if checked and not ensure_ai_ready(self.window() or self):
             cb = self.ai_check_map.get(idx)
             if cb:
@@ -686,9 +799,17 @@ class QuestionWizardDialog(QDialog):
             result[idx] = texts
         return result
 
+    def get_text_random_modes(self) -> Dict[int, str]:
+        """获取填空题随机值模式（none/name/mobile）"""
+        return {idx: mode for idx, mode in self.text_random_mode_map.items()}
+
     def get_ai_flags(self) -> Dict[int, bool]:
         """获取填空题是否启用 AI"""
-        return {idx: cb.isChecked() for idx, cb in self.ai_check_map.items()}
+        result: Dict[int, bool] = {}
+        for idx, cb in self.ai_check_map.items():
+            random_mode = self.text_random_mode_map.get(idx, _TEXT_RANDOM_NONE)
+            result[idx] = False if random_mode != _TEXT_RANDOM_NONE else cb.isChecked()
+        return result
 
     def get_reverse_results(self) -> Dict[int, Any]:
         """获取反向题标记结果。

@@ -13,6 +13,9 @@ if getattr(sys, 'frozen', False):
 
     pyside6_dir = os.path.join(app_dir, 'PySide6')
     shiboken6_dir = os.path.join(app_dir, 'shiboken6')
+    # numpy 的 delvewheel 补丁在 import numpy 时才运行，时序上可能太晚
+    # 在此提前注册，确保 libscipy_openblas64_ 等 DLL 能被 Windows 加载器找到
+    numpy_libs_dir = os.path.join(app_dir, 'numpy.libs')
 
     # 1. 添加到 PATH（必须在 PySide6.__init__ 之前）
     dirs_to_add = []
@@ -20,6 +23,8 @@ if getattr(sys, 'frozen', False):
         dirs_to_add.append(pyside6_dir)
     if os.path.isdir(shiboken6_dir):
         dirs_to_add.append(shiboken6_dir)
+    if os.path.isdir(numpy_libs_dir):
+        dirs_to_add.append(numpy_libs_dir)
 
     if dirs_to_add:
         os.environ['PATH'] = os.pathsep.join(dirs_to_add) + os.pathsep + os.environ.get('PATH', '')

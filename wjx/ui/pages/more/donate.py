@@ -49,7 +49,7 @@ class DonatePage(ScrollArea):
         layout.addWidget(title, 0, Qt.AlignmentFlag.AlignHCenter)
 
         # 说明文字
-        desc = BodyLabel("如果这个项目对你有帮助，欢迎请作者喝杯咖啡~", self)
+        desc = BodyLabel("如果这个项目对你有帮助，欢迎请作者喝杯奶茶~", self)
         desc.setStyleSheet("color: #606060;")
         layout.addWidget(desc, 0, Qt.AlignmentFlag.AlignHCenter)
 

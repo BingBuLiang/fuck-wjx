@@ -4,7 +4,6 @@ import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
-import os
 import random
 import shutil
 import subprocess
@@ -21,12 +20,11 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
-import base64
 import threading
 
 _PW_START_LOCK = threading.Lock()
 
-from wjx.utils.app.config import BROWSER_PREFERENCE, HEADLESS_WINDOW_SIZE
+from wjx.utils.app.config import BROWSER_PREFERENCE, HEADLESS_WINDOW_SIZE, get_proxy_auth
 from wjx.network.proxy import (
     _normalize_proxy_address,
     get_proxy_source,
@@ -34,7 +32,6 @@ from wjx.network.proxy import (
     PROXY_SOURCE_CUSTOM,
 )
 
-_PROXY_AUTH_B64 = "MTgxNzAxMTk4MDg6dFdKNWhMRG9Id3JIZ1RraWowelk="
 _WMIC_AVAILABLE: Optional[bool] = None
 _WMIC_MISSING_LOGGED = False
 
@@ -481,13 +478,12 @@ def create_playwright_driver(
 
                 if get_proxy_source() in (PROXY_SOURCE_DEFAULT, PROXY_SOURCE_CUSTOM) and "username" not in proxy_settings:
                     try:
-                        encoded = os.environ.get("WJX_PROXY_AUTH_B64", _PROXY_AUTH_B64)
-                        decoded = base64.b64decode(encoded).decode("utf-8")
-                        username, password = decoded.split(":", 1)
+                        auth = get_proxy_auth()
+                        username, password = auth.split(":", 1)
                         proxy_settings["username"] = username
                         proxy_settings["password"] = password
                     except Exception:
-                        logging.debug("解码失败", exc_info=True)
+                        logging.debug("代理认证解析失败", exc_info=True)
                 
                 context_args["proxy"] = proxy_settings
             if user_agent:

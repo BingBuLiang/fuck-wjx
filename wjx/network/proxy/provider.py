@@ -15,7 +15,7 @@ from wjx.utils.app.config import (
     PROXY_HEALTH_CHECK_TIMEOUT,
     PROXY_HEALTH_CHECK_URL,
     PROXY_MAX_PROXIES,
-    PROXY_REMOTE_URL,
+    get_proxy_remote_url,
     STATUS_ENDPOINT,
 )
 from wjx.utils.logging.log_utils import (
@@ -463,7 +463,7 @@ def _apply_pool_to_proxy_url(url: str, pool: Optional[str]) -> str:
 
 
 def get_default_proxy_area_code() -> str:
-    url = (PROXY_REMOTE_URL or "").strip()
+    url = get_proxy_remote_url().strip()
     if not url:
         return ""
     try:
@@ -478,7 +478,7 @@ def get_default_proxy_area_code() -> str:
 
 def get_effective_proxy_api_url() -> str:
     override = (_proxy_api_url_override or "").strip()
-    url = override or PROXY_REMOTE_URL
+    url = override or get_proxy_remote_url()
     if get_proxy_source() != PROXY_SOURCE_DEFAULT:
         return url
     url = _apply_area_to_proxy_url(url, _proxy_area_code_override)

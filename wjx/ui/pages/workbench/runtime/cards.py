@@ -160,6 +160,7 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         self.cityCombo.currentIndexChanged.connect(self._on_city_changed)
 
         self.addGroupWidget(container)
+        self.setExpand(True)
 
         # 代理源变化时显示/隐藏自定义API
         self.proxyCombo.currentIndexChanged.connect(self._on_source_changed)
@@ -444,6 +445,7 @@ class RandomUASettingCard(ExpandGroupSettingCard):
         layout.addWidget(self.ratioSlider)
 
         self.addGroupWidget(container)
+        self.setExpand(True)
 
     def isChecked(self):
         return self.switchButton.isChecked()

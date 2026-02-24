@@ -28,7 +28,7 @@ from wjx.network.browser import (
     ProxyConnectionError,
     TimeoutException,
 )
-from wjx.network.proxy import _mask_proxy_for_log, _proxy_is_responsive, handle_random_ip_submission
+from wjx.network.proxy import _proxy_is_responsive, handle_random_ip_submission
 from wjx.network.session_policy import (
     _discard_unresponsive_proxy,
     _record_bad_proxy_and_maybe_pause,
@@ -557,7 +557,7 @@ def run(
             if _handle_submission_failure(ctx, stop_signal):
                 break
 
-        except ProxyConnectionError as exc:
+        except ProxyConnectionError:
             driver_had_error = True
             if stop_signal.is_set():
                 break

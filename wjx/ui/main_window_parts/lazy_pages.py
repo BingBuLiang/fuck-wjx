@@ -181,8 +181,8 @@ class MainWindowLazyPagesMixin:
         changelog_action.triggered.connect(lambda: self._switch_to_more_page(self._get_changelog_page()))
         menu.addAction(changelog_action)
 
-        # 客服与支持
-        support_action = Action(FluentIcon.HELP, "客服与支持")
+        # 联系开发者
+        support_action = Action(FluentIcon.HELP, "联系开发者")
         support_action.triggered.connect(lambda: self._switch_to_more_page(self._get_support_page()))
         menu.addAction(support_action)
 

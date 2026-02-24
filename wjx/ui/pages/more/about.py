@@ -4,7 +4,6 @@ import webbrowser
 import os
 import sys
 from datetime import datetime
-import wjx.network.http_client as http_client
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
@@ -262,13 +261,19 @@ class AboutPage(ScrollArea):
         """处理更新检查结果（在主线程中执行）"""
         self._set_update_loading(False)
         win = self.window()
-        if update_info:
+        status = update_info.get("status", "unknown") if update_info else "unknown"
+        if status == "outdated":
             if hasattr(win, 'update_info'):
                 win.update_info = update_info  # type: ignore[union-attr]
             from wjx.utils.update.updater import show_update_notification
             show_update_notification(win)
-        else:
+        elif status == "latest":
             InfoBar.success("", f"当前已是最新版本 v{__VERSION__}", parent=win, position=InfoBarPosition.TOP, duration=3000)
+        elif status == "preview":
+            latest = update_info.get("latest_version", "?") if update_info else "?"
+            InfoBar.warning("", f"当前版本 v{__VERSION__} 高于远程最新版 v{latest}，属于预览版", parent=win, position=InfoBarPosition.TOP, duration=4000)
+        else:
+            InfoBar.warning("", "检查更新失败，请检查网络连接后重试", parent=win, position=InfoBarPosition.TOP, duration=4000)
 
     def _on_update_error(self, error_msg: str):
         """处理更新检查错误（在主线程中执行）"""

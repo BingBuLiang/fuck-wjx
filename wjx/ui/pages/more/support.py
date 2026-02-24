@@ -1,4 +1,4 @@
-"""客服与支持页面"""
+"""联系开发者页面"""
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from qfluentwidgets import ScrollArea, SubtitleLabel, CardWidget
 import logging

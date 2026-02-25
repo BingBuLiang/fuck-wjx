@@ -380,14 +380,21 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         self.switchButton.setChecked(checked)
 
     def _sync_ip_enabled(self, enabled: bool):
-        """开关联动：开启时启用展开内容，关闭时禁用（灰掉）。"""
+        """开关联动：开启时启用展开内容，关闭时仅灰掉地区/自定义API行。
+        代理源选择始终可用，方便用户在额度耗尽时切换到自定义代理源。
+        """
         from PySide6.QtWidgets import QGraphicsOpacityEffect
-        self._groupContainer.setEnabled(bool(enabled))
-        effect = self._groupContainer.graphicsEffect()
-        if effect is None:
-            effect = QGraphicsOpacityEffect(self._groupContainer)
-            self._groupContainer.setGraphicsEffect(effect)
-        effect.setOpacity(1.0 if enabled else 0.4)
+        self.areaRow.setEnabled(bool(enabled))
+        self.proxyCombo.setEnabled(True)
+        self.customApiRow.setEnabled(True)
+        # 清除容器级别的透明度，避免代理源行也变灰
+        self._groupContainer.setGraphicsEffect(None)
+        # 只对地区行加半透明效果（指定地区在开关关闭时无意义）
+        eff = self.areaRow.graphicsEffect()
+        if eff is None:
+            eff = QGraphicsOpacityEffect(self.areaRow)
+            self.areaRow.setGraphicsEffect(eff)
+        eff.setOpacity(1.0 if enabled else 0.4)
 
 
 class TimedModeSettingCard(SettingCard):

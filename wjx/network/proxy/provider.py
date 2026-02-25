@@ -2,6 +2,7 @@
 import json
 import logging
 import random
+import re
 import threading
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -46,6 +47,13 @@ PROXY_SOURCE_CUSTOM = "custom"  # 自定义代理源
 
 # 当前选择的代理源
 _current_proxy_source: str = PROXY_SOURCE_DEFAULT
+# 匹配 IPv4:端口，支持可选的协议头和 user:pass@ 认证前缀
+_IP_PORT_RE = re.compile(
+    r'(?:https?://)?'
+    r'(?:([^\s:@/,]+):([^\s:@/,]+)@)?'
+    r'((?:\d{1,3}\.){3}\d{1,3})'
+    r':(\d{2,5})'
+)
 _IPZAN_MINUTE_OPTIONS: Tuple[int, ...] = (1, 3, 5, 10, 15, 30)
 _proxy_occupy_minute: int = 1
 _IPZAN_POOL_ORDINARY = "ordinary"
@@ -488,6 +496,9 @@ def get_effective_proxy_api_url() -> str:
 
 
 def is_custom_proxy_api_active() -> bool:
+    """判断当前是否使用非默认代理源（不受 ipzan 额度限制）。"""
+    if _current_proxy_source != PROXY_SOURCE_DEFAULT:
+        return True
     return bool((_proxy_api_url_override or "").strip())
 
 
@@ -555,26 +566,23 @@ def _proxy_api_candidates(expected_count: int, proxy_url: Optional[str]) -> List
 
 
 def _extract_proxy_from_string(s: str) -> Optional[str]:
-    """从字符串中提取代理地址，支持多种格式"""
+    """从字符串中提取代理地址，用正则直接识别 IP:端口，不依赖格式约定"""
     if not isinstance(s, str):
         return None
-    s = s.strip()
-    if not s:
+    m = _IP_PORT_RE.search(s.strip())
+    if not m:
         return None
-    # 格式: "IP:端口,地区" 或 "IP:端口"
-    parts = s.split(",", 1)
-    addr = parts[0].strip()
-    # 验证是否是有效的 IP:端口 格式
-    if ":" in addr and not addr.startswith("http"):
-        return addr
-    return None
+    user, pwd, ip, port = m.group(1), m.group(2), m.group(3), m.group(4)
+    if user and pwd:
+        return f"{user}:{pwd}@{ip}:{port}"
+    return f"{ip}:{port}"
 
 
 def _extract_proxy_from_dict(obj: dict) -> Optional[str]:
     """从字典对象中提取代理地址"""
     if not isinstance(obj, dict):
         return None
-    # 尝试提取 ip + port
+    # 快速路径：尝试 ip + port 字段组合
     ip = str(obj.get("ip") or obj.get("IP") or obj.get("host") or "").strip()
     port = str(obj.get("port") or obj.get("Port") or obj.get("PORT") or "").strip()
     if ip and port:
@@ -583,6 +591,12 @@ def _extract_proxy_from_dict(obj: dict) -> Optional[str]:
         if username and password:
             return f"{username}:{password}@{ip}:{port}"
         return f"{ip}:{port}"
+    # 兜底：扫描所有字符串值，用正则识别 IP:端口（兼容 addr/proxy 等非标准字段名）
+    for v in obj.values():
+        if isinstance(v, str):
+            proxy = _extract_proxy_from_string(v)
+            if proxy:
+                return proxy
     return None
 
 

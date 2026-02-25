@@ -188,7 +188,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.quantity_edit = LineEdit(self)
         self.quantity_edit.setPlaceholderText("请输入份数")
         self.quantity_edit.setMaximumWidth(140)
-        self.quantity_edit.setValidator(QIntValidator(1, 999999, self))
+        self.quantity_edit.setValidator(QIntValidator(1, 9999, self))
         self.quantity_edit.textChanged.connect(self._on_quantity_changed)
 
         self.urgency_label = BodyLabel("紧急程度：", self)
@@ -761,6 +761,9 @@ class ContactForm(StatusPollingMixin, QWidget):
                 return
             if not quantity_text.isdigit() or int(quantity_text) <= 0:
                 InfoBar.warning("", "需求份数必须为正整数", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                return
+            if int(quantity_text) > 9999:
+                InfoBar.warning("", "需求份数不能超过 9999", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
             if not self._verify_code_requested:
                 InfoBar.warning("", "请先点击发送验证码", parent=self, position=InfoBarPosition.TOP, duration=2000)

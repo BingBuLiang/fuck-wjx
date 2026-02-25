@@ -37,7 +37,7 @@ class MainWindowLazyPagesMixin:
     def _init_navigation(self):
         self.addSubInterface(self.dashboard, FluentIcon.HOME, "概览", NavigationItemPosition.TOP)
         self.addSubInterface(self.runtime_page, FluentIcon.DEVELOPER_TOOLS, "运行参数", NavigationItemPosition.TOP)
-        self.addSubInterface(self.answer_rules_page, FluentIcon.PENCIL_INK, "作答规则", NavigationItemPosition.TOP)
+        self.addSubInterface(self.answer_rules_page, FluentIcon.DICTIONARY_ADD, "作答规则", NavigationItemPosition.TOP)
         self.addSubInterface(self._get_log_page(), FluentIcon.INFO, "日志", NavigationItemPosition.TOP)
         # 社区页面
         self.addSubInterface(self._get_community_page(), FluentIcon.CHAT, "社区", NavigationItemPosition.BOTTOM)

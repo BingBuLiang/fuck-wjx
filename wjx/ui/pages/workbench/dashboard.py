@@ -376,12 +376,9 @@ class DashboardPage(
 
     def _has_question_entries(self) -> bool:
         try:
-            return bool(self.question_page.table.rowCount())
+            return bool(self.question_page.get_entries())
         except Exception:
-            try:
-                return bool(self.question_page.get_entries())
-            except Exception:
-                return False
+            return False
 
     def _sync_start_button_state(self, running: Optional[bool] = None):
         if running is None:

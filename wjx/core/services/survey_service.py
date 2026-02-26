@@ -47,7 +47,12 @@ def parse_survey(url: str) -> Tuple[List[Dict[str, Any]], str]:
     if info is None:
         driver = None
         try:
-            driver, _ = create_playwright_driver(headless=True, user_agent=None)
+            driver, _ = create_playwright_driver(
+                headless=True,
+                user_agent=None,
+                persistent_browser=False,
+                transient_launch=True,
+            )
             driver.get(url)
             time.sleep(2.5)
             page_source = driver.page_source

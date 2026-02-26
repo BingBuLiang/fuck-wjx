@@ -13,7 +13,11 @@ from wjx.core.ai.runtime import AIRuntimeError
 from wjx.core.captcha.control import _handle_aliyun_captcha_detected
 from wjx.core.captcha.handler import AliyunCaptchaBypassError, EmptySurveySubmissionError, handle_aliyun_captcha
 from wjx.core.engine.answering import brush
-from wjx.core.engine.driver_factory import create_playwright_driver
+from wjx.core.engine.driver_factory import (
+    create_browser_manager,
+    create_playwright_driver,
+    shutdown_browser_manager,
+)
 from wjx.core.engine.full_simulation import _full_simulation_active, _wait_for_next_full_simulation_slot
 from wjx.core.engine.runtime_control import (
     _handle_submission_failure,
@@ -24,6 +28,7 @@ from wjx.core.engine.runtime_control import (
 from wjx.core.engine.submission import _is_device_quota_limit_page, _normalize_url_for_compare
 from wjx.core.task_context import TaskContext
 from wjx.network.browser import (
+    BrowserManager,
     BrowserDriver,
     ProxyConnectionError,
     TimeoutException,
@@ -80,6 +85,7 @@ class _BrowserSession:
         self.ctx = ctx
         self.gui_instance = gui_instance
         self.driver: Optional[BrowserDriver] = None
+        self._browser_manager: Optional[BrowserManager] = None
         self.proxy_address: Optional[str] = None
         self.sem_acquired = False
         self._browser_sem = ctx.get_browser_semaphore(max(1, int(ctx.num_threads or 1)))
@@ -87,17 +93,6 @@ class _BrowserSession:
     def _register_driver(self, instance: BrowserDriver) -> None:
         if self.gui_instance and hasattr(self.gui_instance, 'active_drivers'):
             self.gui_instance.active_drivers.append(instance)
-            try:
-                pids = set()
-                pid_single = getattr(instance, "browser_pid", None)
-                if pid_single:
-                    pids.add(int(pid_single))
-                pid_set = getattr(instance, "browser_pids", None)
-                if pid_set:
-                    pids.update(int(p) for p in pid_set)
-                self.gui_instance._launched_browser_pids.update(pids)
-            except Exception as exc:
-                log_suppressed_exception("_BrowserSession._register_driver collect pids", exc, level=logging.WARNING)
 
     def _unregister_driver(self, instance: BrowserDriver) -> None:
         if self.gui_instance and hasattr(self.gui_instance, 'active_drivers'):
@@ -105,21 +100,9 @@ class _BrowserSession:
                 self.gui_instance.active_drivers.remove(instance)
             except ValueError as exc:
                 log_suppressed_exception("_BrowserSession._unregister_driver remove", exc, level=logging.WARNING)
-            try:
-                pids = set()
-                pid_single = getattr(instance, "browser_pid", None)
-                if pid_single:
-                    pids.add(int(pid_single))
-                pid_set = getattr(instance, "browser_pids", None)
-                if pid_set:
-                    pids.update(int(p) for p in pid_set)
-                for pid in pids:
-                    self.gui_instance._launched_browser_pids.discard(int(pid))
-            except Exception as exc:
-                log_suppressed_exception("_BrowserSession._unregister_driver cleanup pids", exc, level=logging.WARNING)
 
     def dispose(self) -> None:
-        """释放浏览器资源，提交 PID 到批量清理队列。"""
+        """释放本轮浏览器资源（仅 context/page）。"""
         if not self.driver:
             if self.sem_acquired:
                 try:
@@ -138,24 +121,15 @@ class _BrowserSession:
                 self.sem_acquired = False
             return
 
-        pids_to_kill = set(getattr(self.driver, "browser_pids", set()))
-        playwright_instance = self.driver._playwright
-        self._unregister_driver(self.driver)
+        driver_instance = self.driver
+        self._unregister_driver(driver_instance)
         self.driver = None
 
-        cleanup_runner = getattr(self.gui_instance, "_cleanup_runner", None) if self.gui_instance else None
-        if cleanup_runner and pids_to_kill:
-            try:
-                cleanup_runner.submit_pid_cleanup(pids_to_kill)
-                logging.debug(f"已提交 {len(pids_to_kill)} 个 PID 到批量清理队列")
-            except Exception as exc:
-                log_suppressed_exception("_BrowserSession.dispose submit_pid_cleanup", exc, level=logging.WARNING)
-
         try:
-            playwright_instance.stop()
-            logging.debug("已停止 playwright 实例")
+            driver_instance.quit()
+            logging.debug("已关闭浏览器 context/page")
         except Exception as exc:
-            log_suppressed_exception("_BrowserSession.dispose playwright.stop", exc, level=logging.WARNING)
+            log_suppressed_exception("_BrowserSession.dispose driver.quit", exc, level=logging.WARNING)
 
         if self.sem_acquired:
             try:
@@ -164,6 +138,18 @@ class _BrowserSession:
                 logging.debug("已释放浏览器信号量")
             except Exception as exc:
                 log_suppressed_exception("_BrowserSession.dispose release semaphore", exc, level=logging.WARNING)
+
+    def shutdown(self) -> None:
+        """线程退出前关闭常驻底座 Browser。"""
+        self.dispose()
+        if self._browser_manager is not None:
+            try:
+                shutdown_browser_manager(self._browser_manager)
+                logging.debug("已关闭 BrowserManager 底座")
+            except Exception as exc:
+                log_suppressed_exception("_BrowserSession.shutdown manager.close", exc, level=logging.WARNING)
+            finally:
+                self._browser_manager = None
 
     def create_browser(
         self,
@@ -196,12 +182,20 @@ class _BrowserSession:
             logging.debug("已获取浏览器信号量")
 
         try:
+            if self._browser_manager is None:
+                self._browser_manager = create_browser_manager(
+                    headless=self.ctx.headless_mode,
+                    prefer_browsers=list(preferred_browsers) if preferred_browsers else None,
+                    window_position=(window_x_pos, window_y_pos),
+                )
             self.driver, active_browser = create_playwright_driver(
                 headless=self.ctx.headless_mode,
                 prefer_browsers=list(preferred_browsers) if preferred_browsers else None,
                 proxy_address=self.proxy_address,
                 user_agent=ua_value,
                 window_position=(window_x_pos, window_y_pos),
+                manager=self._browser_manager,
+                persistent_browser=True,
             )
         except Exception:
             if self.sem_acquired:
@@ -597,4 +591,4 @@ def run(
                 if stop_signal.wait(wait_seconds):
                     break
 
-    session.dispose()
+    session.shutdown()

@@ -1,12 +1,10 @@
 """浏览器驱动封装 - Playwright 浏览器实例创建与操作"""
 from __future__ import annotations
+
 import logging
-from wjx.utils.logging.log_utils import log_suppressed_exception
-
-
 import random
-import shutil
 import subprocess
+import threading
 import time
 import traceback
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
@@ -16,24 +14,33 @@ from playwright.sync_api import (
     Browser,
     BrowserContext,
     Page,
+    Playwright,
     TimeoutError as PlaywrightTimeoutError,
     sync_playwright,
 )
 
-import threading
-
-_PW_START_LOCK = threading.Lock()
-
-from wjx.utils.app.config import BROWSER_PREFERENCE, HEADLESS_WINDOW_SIZE, get_proxy_auth
 from wjx.network.proxy import (
+    PROXY_SOURCE_CUSTOM,
+    PROXY_SOURCE_DEFAULT,
     _normalize_proxy_address,
     get_proxy_source,
-    PROXY_SOURCE_DEFAULT,
-    PROXY_SOURCE_CUSTOM,
 )
+from wjx.utils.app.config import BROWSER_PREFERENCE, HEADLESS_WINDOW_SIZE, get_proxy_auth
+from wjx.utils.logging.log_utils import log_suppressed_exception
 
-_WMIC_AVAILABLE: Optional[bool] = None
-_WMIC_MISSING_LOGGED = False
+_PW_START_LOCK = threading.Lock()
+_EDGE_CLEAN_ARGS = [
+    "--disable-extensions",
+    "--disable-background-networking",
+]
+_BROWSER_DISCONNECT_MARKERS = (
+    "target page, context or browser has been closed",
+    "browser has been closed",
+    "browser closed",
+    "connection closed",
+    "not connected",
+    "has been disconnected",
+)
 
 
 def _format_exception_chain(exc: BaseException) -> str:
@@ -88,6 +95,263 @@ def _is_proxy_tunnel_error(exc: Exception) -> bool:
     if not message:
         return False
     return any(code in message for code in _PROXY_TUNNEL_ERRORS)
+
+
+def _is_browser_disconnected_error(exc: Exception) -> bool:
+    message = str(exc or "").lower()
+    if not message:
+        return False
+    return any(marker in message for marker in _BROWSER_DISCONNECT_MARKERS)
+
+
+def _parse_proxy_context_args(proxy_address: Optional[str]) -> Dict[str, Any]:
+    normalized_proxy = _normalize_proxy_address(proxy_address)
+    if not normalized_proxy:
+        return {}
+
+    proxy_settings: Dict[str, Any] = {"server": normalized_proxy}
+    try:
+        parsed = urlparse(normalized_proxy)
+        if parsed.scheme and parsed.hostname:
+            server = f"{parsed.scheme}://{parsed.hostname}"
+            if parsed.port:
+                server += f":{parsed.port}"
+            proxy_settings["server"] = server
+        if parsed.username:
+            proxy_settings["username"] = parsed.username
+        if parsed.password:
+            proxy_settings["password"] = parsed.password
+    except Exception as exc:
+        log_suppressed_exception("browser_driver._parse_proxy_context_args parse proxy", exc, level=logging.WARNING)
+
+    if get_proxy_source() in (PROXY_SOURCE_DEFAULT, PROXY_SOURCE_CUSTOM) and "username" not in proxy_settings:
+        try:
+            auth = get_proxy_auth()
+            username, password = auth.split(":", 1)
+            proxy_settings["username"] = username
+            proxy_settings["password"] = password
+        except Exception:
+            logging.debug("代理认证解析失败", exc_info=True)
+
+    return {"proxy": proxy_settings}
+
+
+def _build_context_args(
+    *,
+    headless: bool,
+    proxy_address: Optional[str],
+    user_agent: Optional[str],
+) -> Dict[str, Any]:
+    context_args: Dict[str, Any] = {}
+    context_args.update(_parse_proxy_context_args(proxy_address))
+    if user_agent:
+        context_args["user_agent"] = user_agent
+    if headless and HEADLESS_WINDOW_SIZE:
+        try:
+            width, height = [int(x) for x in HEADLESS_WINDOW_SIZE.split(",")]
+            context_args["viewport"] = {"width": width, "height": height}
+        except Exception as exc:
+            log_suppressed_exception("browser_driver._build_context_args parse headless size", exc, level=logging.WARNING)
+    return context_args
+
+
+def _build_launch_args(
+    *,
+    browser_name: str,
+    headless: bool,
+    window_position: Optional[Tuple[int, int]],
+    append_no_proxy: bool,
+) -> Dict[str, Any]:
+    launch_args: Dict[str, Any] = {"headless": headless, "args": []}
+    if browser_name == "edge":
+        launch_args["channel"] = "msedge"
+        launch_args["args"].extend(_EDGE_CLEAN_ARGS)
+    elif browser_name == "chrome":
+        launch_args["channel"] = "chrome"
+
+    if window_position and not headless:
+        x, y = window_position
+        launch_args["args"].append(f"--window-position={x},{y}")
+
+    if append_no_proxy:
+        launch_args["args"].append("--no-proxy-server")
+
+    return launch_args
+
+
+class BrowserManager:
+    """每个工作线程独立持有一个 Playwright + Browser 底座。"""
+
+    def __init__(
+        self,
+        *,
+        prefer_browsers: Optional[List[str]] = None,
+        headless: bool = False,
+        window_position: Optional[Tuple[int, int]] = None,
+    ):
+        self._lock = threading.RLock()
+        self._playwright: Optional[Playwright] = None
+        self._browser: Optional[Browser] = None
+        self._browser_name: Optional[str] = None
+        self._prefer_browsers = list(prefer_browsers or BROWSER_PREFERENCE)
+        self._headless = bool(headless)
+        self._window_position = window_position
+        self._closed = False
+
+    @property
+    def browser_name(self) -> str:
+        return str(self._browser_name or "")
+
+    def is_browser_alive(self) -> bool:
+        with self._lock:
+            browser = self._browser
+            if browser is None:
+                return False
+            try:
+                checker = getattr(browser, "is_connected", None)
+                if callable(checker):
+                    return bool(checker())
+            except Exception:
+                return False
+            # 旧版本 API 兜底：能读 contexts 认为还活着
+            try:
+                _ = browser.contexts
+                return True
+            except Exception:
+                return False
+
+    def ensure_browser(
+        self,
+        *,
+        prefer_browsers: Optional[List[str]] = None,
+        headless: Optional[bool] = None,
+        window_position: Optional[Tuple[int, int]] = None,
+        force_restart: bool = False,
+    ) -> Tuple[Browser, str]:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("BrowserManager 已关闭，不能继续创建浏览器会话")
+
+            if prefer_browsers:
+                self._prefer_browsers = list(prefer_browsers)
+            if headless is not None:
+                self._headless = bool(headless)
+            if window_position is not None:
+                self._window_position = window_position
+
+            if not force_restart and self.is_browser_alive():
+                assert self._browser is not None
+                return self._browser, str(self._browser_name or "")
+
+            self._shutdown_locked()
+            return self._launch_locked()
+
+    def restart_browser(
+        self,
+        *,
+        prefer_browsers: Optional[List[str]] = None,
+        headless: Optional[bool] = None,
+        window_position: Optional[Tuple[int, int]] = None,
+    ) -> Tuple[Browser, str]:
+        return self.ensure_browser(
+            prefer_browsers=prefer_browsers,
+            headless=headless,
+            window_position=window_position,
+            force_restart=True,
+        )
+
+    def new_context_session(
+        self,
+        *,
+        proxy_address: Optional[str],
+        user_agent: Optional[str],
+        headless: Optional[bool] = None,
+        prefer_browsers: Optional[List[str]] = None,
+        window_position: Optional[Tuple[int, int]] = None,
+    ) -> Tuple[BrowserContext, Page, str, Browser]:
+        browser, browser_name = self.ensure_browser(
+            prefer_browsers=prefer_browsers,
+            headless=headless,
+            window_position=window_position,
+            force_restart=False,
+        )
+        context_args = _build_context_args(
+            headless=self._headless if headless is None else bool(headless),
+            proxy_address=proxy_address,
+            user_agent=user_agent,
+        )
+        context = browser.new_context(**context_args)
+        page = context.new_page()
+        return context, page, browser_name, browser
+
+    def shutdown(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._shutdown_locked()
+
+    def _launch_locked(self) -> Tuple[Browser, str]:
+        candidates = list(self._prefer_browsers or BROWSER_PREFERENCE)
+        if not candidates:
+            candidates = list(BROWSER_PREFERENCE)
+
+        last_exc: Optional[Exception] = None
+        for browser_name in candidates:
+            pw: Optional[Playwright] = None
+            launch_args = _build_launch_args(
+                browser_name=browser_name,
+                headless=self._headless,
+                window_position=self._window_position,
+                # 常驻模式使用 context 级代理，避免 launch 级代理与后续会话冲突
+                append_no_proxy=False,
+            )
+            try:
+                with _PW_START_LOCK:
+                    pw = sync_playwright().start()
+                    browser = pw.chromium.launch(**launch_args)
+                self._playwright = pw
+                self._browser = browser
+                self._browser_name = browser_name
+                logging.debug("[Action Log] BrowserManager 启动底座成功：%s", browser_name)
+                return browser, browser_name
+            except Exception as exc:
+                last_exc = exc
+                logging.warning("BrowserManager 启动 %s 失败: %s", browser_name, exc)
+                logging.error(
+                    "[Action Log] BrowserManager 启动异常链(%s): %s",
+                    browser_name,
+                    _format_exception_chain(exc),
+                )
+                logging.error(
+                    "[Action Log] BrowserManager 启动堆栈(%s):\n%s",
+                    browser_name,
+                    "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+                )
+                if pw is not None:
+                    try:
+                        pw.stop()
+                    except Exception as stop_exc:
+                        log_suppressed_exception("BrowserManager._launch_locked pw.stop", stop_exc, level=logging.WARNING)
+                continue
+
+        raise RuntimeError(f"BrowserManager 无法启动任何浏览器: {last_exc}")
+
+    def _shutdown_locked(self) -> None:
+        browser = self._browser
+        playwright_instance = self._playwright
+        self._browser = None
+        self._playwright = None
+        self._browser_name = None
+
+        if browser is not None:
+            try:
+                browser.close()
+            except Exception as exc:
+                log_suppressed_exception("BrowserManager._shutdown_locked browser.close", exc, level=logging.WARNING)
+        if playwright_instance is not None:
+            try:
+                playwright_instance.stop()
+            except Exception as exc:
+                log_suppressed_exception("BrowserManager._shutdown_locked playwright.stop", exc, level=logging.WARNING)
 
 
 class PlaywrightElement:
@@ -182,21 +446,39 @@ class PlaywrightElement:
 
 
 class PlaywrightDriver:
-    def __init__(self, playwright, browser: Browser, context: BrowserContext, page: Page, browser_name: str):
-        self._playwright = playwright
-        self._browser = browser
+    def __init__(
+        self,
+        *,
+        context: BrowserContext,
+        page: Page,
+        browser_name: str,
+        browser: Optional[Browser] = None,
+        playwright_instance: Optional[Playwright] = None,
+        manager: Optional[BrowserManager] = None,
+        manager_owned: bool = False,
+    ):
         self._context = context
         self._page = page
+        self._browser = browser
+        self._playwright = playwright_instance
+        self._browser_manager = manager
+        self._manager_owned = manager_owned
         self.browser_name = browser_name
         self.session_id = f"pw-{int(time.time() * 1000)}-{random.randint(1000, 9999)}"
+        self.browser_pid = self._extract_browser_pid(browser)
+        self.browser_pids: Set[int] = {self.browser_pid} if self.browser_pid else set()
+        self._cleanup_done = False
+        self._cleanup_lock = threading.Lock()
+
+    @staticmethod
+    def _extract_browser_pid(browser: Optional[Browser]) -> Optional[int]:
+        if browser is None:
+            return None
         try:
             proc = getattr(browser, "process", None)
-            self.browser_pid = int(proc.pid) if proc and getattr(proc, "pid", None) else None
+            return int(proc.pid) if proc and getattr(proc, "pid", None) else None
         except Exception:
-            self.browser_pid = None
-        self.browser_pids: Set[int] = set()
-        self._cleanup_done = False  # 线程安全标志，避免重复清理
-        self._cleanup_lock = __import__('threading').Lock()
+            return None
 
     def find_element(self, by: str, value: str):
         handle = self._page.query_selector(_build_selector(by, value))
@@ -211,8 +493,6 @@ class PlaywrightDriver:
     def execute_script(self, script: str, *args):
         processed_args = [arg._handle if isinstance(arg, PlaywrightElement) else arg for arg in args]
         try:
-            # Playwright 的 page.evaluate 仅允许传入一个 arg；这里把所有参数打包成数组，
-            # 再通过 apply 将其展开成 function(){...} 的 arguments[0..n]，以兼容历史脚本写法。
             wrapper = (
                 "(args) => {"
                 "  const fn = function(){"
@@ -286,7 +566,6 @@ class PlaywrightDriver:
 
     def mark_cleanup_done(self) -> bool:
         """标记清理已完成，返回 True 表示可以执行清理，False 表示已被其他线程清理过。"""
-
         with self._cleanup_lock:
             if self._cleanup_done:
                 return False
@@ -294,18 +573,33 @@ class PlaywrightDriver:
             return True
 
     def quit(self) -> None:
-        """
-        遗留兼容方法，不推荐直接使用。
-        现代清理流程由 runner._dispose_driver() 统一管理。
-        """
+        """默认仅关闭 page/context；若驱动独占底座则附带关闭底座。"""
         try:
-            self._browser.close()
+            self._page.close()
         except Exception as exc:
-            log_suppressed_exception("browser_driver.PlaywrightDriver.quit browser.close", exc, level=logging.WARNING)
+            log_suppressed_exception("browser_driver.PlaywrightDriver.quit page.close", exc, level=logging.WARNING)
         try:
-            self._playwright.stop()
+            self._context.close()
         except Exception as exc:
-            log_suppressed_exception("browser_driver.PlaywrightDriver.quit playwright.stop", exc, level=logging.WARNING)
+            log_suppressed_exception("browser_driver.PlaywrightDriver.quit context.close", exc, level=logging.WARNING)
+
+        if self._manager_owned and self._browser_manager is not None:
+            try:
+                self._browser_manager.shutdown()
+            except Exception as exc:
+                log_suppressed_exception("browser_driver.PlaywrightDriver.quit manager.shutdown", exc, level=logging.WARNING)
+            return
+
+        if self._browser is not None and self._playwright is not None:
+            # 临时模式（parse_survey）仍需回收底座，避免泄漏进程
+            try:
+                self._browser.close()
+            except Exception as exc:
+                log_suppressed_exception("browser_driver.PlaywrightDriver.quit browser.close", exc, level=logging.WARNING)
+            try:
+                self._playwright.stop()
+            except Exception as exc:
+                log_suppressed_exception("browser_driver.PlaywrightDriver.quit playwright.stop", exc, level=logging.WARNING)
 
 
 BrowserDriver = PlaywrightDriver
@@ -320,7 +614,9 @@ def list_browser_pids() -> Set[int]:
         try:
             result = subprocess.run(
                 ["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
                 creationflags=_no_window,
             )
             for line in result.stdout.splitlines():
@@ -350,7 +646,8 @@ def graceful_terminate_process_tree(pids: Set[int], wait_seconds: float = 3.0) -
         try:
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 timeout=max(1.0, float(wait_seconds or 3.0)),
                 creationflags=_no_window,
             )
@@ -360,39 +657,95 @@ def graceful_terminate_process_tree(pids: Set[int], wait_seconds: float = 3.0) -
     return count
 
 
-def _collect_process_tree(root_pid: Optional[int]) -> Set[int]:
-    """收集给定 PID 及其子进程 PID，使用 wmic 查询子进程。"""
-    global _WMIC_AVAILABLE, _WMIC_MISSING_LOGGED
-    if not root_pid:
-        return set()
-    if _WMIC_AVAILABLE is None:
-        _WMIC_AVAILABLE = bool(shutil.which("wmic"))
-    if not _WMIC_AVAILABLE:
-        if not _WMIC_MISSING_LOGGED:
-            logging.info("[Action Log] 当前系统未提供 wmic，跳过子进程树补全。")
-            _WMIC_MISSING_LOGGED = True
-        return {int(root_pid)}
-    pids: Set[int] = {int(root_pid)}
-    _no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-    queue = [int(root_pid)]
-    while queue:
-        parent = queue.pop()
+def create_browser_manager(
+    *,
+    prefer_browsers: Optional[List[str]] = None,
+    headless: bool = False,
+    window_position: Optional[Tuple[int, int]] = None,
+) -> BrowserManager:
+    """创建每线程独立 BrowserManager。默认懒启动。"""
+    return BrowserManager(
+        prefer_browsers=prefer_browsers,
+        headless=headless,
+        window_position=window_position,
+    )
+
+
+def shutdown_browser_manager(manager: Optional[BrowserManager]) -> None:
+    if manager is None:
+        return
+    try:
+        manager.shutdown()
+    except Exception as exc:
+        log_suppressed_exception("browser_driver.shutdown_browser_manager", exc, level=logging.WARNING)
+
+
+def _create_transient_driver(
+    *,
+    headless: bool,
+    prefer_browsers: Optional[List[str]],
+    proxy_address: Optional[str],
+    user_agent: Optional[str],
+    window_position: Optional[Tuple[int, int]],
+) -> Tuple[BrowserDriver, str]:
+    candidates = prefer_browsers or list(BROWSER_PREFERENCE)
+    if not candidates:
+        candidates = list(BROWSER_PREFERENCE)
+
+    normalized_proxy = _normalize_proxy_address(proxy_address)
+    last_exc: Optional[Exception] = None
+
+    for browser_name in candidates:
+        pw: Optional[Playwright] = None
         try:
-            result = subprocess.run(
-                ["wmic", "process", "where", f"ParentProcessId={parent}", "get", "ProcessId"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=_no_window,
+            launch_args = _build_launch_args(
+                browser_name=browser_name,
+                headless=headless,
+                window_position=window_position,
+                append_no_proxy=not bool(normalized_proxy),
             )
-            for line in result.stdout.splitlines():
-                line = line.strip()
-                if line.isdigit():
-                    child_pid = int(line)
-                    if child_pid not in pids:
-                        pids.add(child_pid)
-                        queue.append(child_pid)
+            with _PW_START_LOCK:
+                pw = sync_playwright().start()
+                browser = pw.chromium.launch(**launch_args)
+
+            context_args = _build_context_args(
+                headless=headless,
+                proxy_address=normalized_proxy,
+                user_agent=user_agent,
+            )
+            context = browser.new_context(**context_args)
+            page = context.new_page()
+            driver = PlaywrightDriver(
+                context=context,
+                page=page,
+                browser_name=browser_name,
+                browser=browser,
+                playwright_instance=pw,
+                manager=None,
+                manager_owned=False,
+            )
+            return driver, browser_name
         except Exception as exc:
-            log_suppressed_exception("browser_driver._collect_process_tree wmic", exc, level=logging.WARNING)
-    return pids
+            last_exc = exc
+            logging.warning("启动临时 %s 浏览器失败: %s", browser_name, exc)
+            logging.error(
+                "[Action Log] 临时浏览器初始化异常链(%s): %s",
+                browser_name,
+                _format_exception_chain(exc),
+            )
+            logging.error(
+                "[Action Log] 临时浏览器初始化堆栈(%s):\n%s",
+                browser_name,
+                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            )
+            if pw is not None:
+                try:
+                    pw.stop()
+                except Exception as stop_exc:
+                    log_suppressed_exception("browser_driver._create_transient_driver pw.stop", stop_exc, level=logging.WARNING)
+            continue
+
+    raise RuntimeError(f"无法启动任何浏览器: {last_exc}")
 
 
 def create_playwright_driver(
@@ -402,145 +755,64 @@ def create_playwright_driver(
     proxy_address: Optional[str] = None,
     user_agent: Optional[str] = None,
     window_position: Optional[Tuple[int, int]] = None,
+    manager: Optional[BrowserManager] = None,
+    persistent_browser: bool = True,
+    transient_launch: bool = False,
 ) -> Tuple[BrowserDriver, str]:
-    candidates = prefer_browsers or list(BROWSER_PREFERENCE)
-    if not candidates:
-        candidates = list(BROWSER_PREFERENCE)
+    if transient_launch:
+        persistent_browser = False
 
-    normalized_proxy = _normalize_proxy_address(proxy_address)
+    if not persistent_browser:
+        return _create_transient_driver(
+            headless=headless,
+            prefer_browsers=prefer_browsers,
+            proxy_address=proxy_address,
+            user_agent=user_agent,
+            window_position=window_position,
+        )
+
+    manager_owned = False
+    manager_instance = manager
+    if manager_instance is None:
+        manager_instance = create_browser_manager(
+            prefer_browsers=prefer_browsers,
+            headless=headless,
+            window_position=window_position,
+        )
+        manager_owned = True
+
     last_exc: Optional[Exception] = None
-
-    for browser in candidates:
-        # 在锁外预先构建 launch_args，避免持锁时间过长
-        launch_args: Dict[str, Any] = {"headless": headless}
-        if browser == "edge":
-            launch_args["channel"] = "msedge"
-        elif browser == "chrome":
-            launch_args["channel"] = "chrome"
-        if "args" not in launch_args:
-            launch_args["args"] = []
-        if window_position and not headless:
-            x, y = window_position
-            launch_args["args"].append(f"--window-position={x},{y}")
-        if not normalized_proxy:
-            launch_args["args"].append("--no-proxy-server")
-
-        # pre_launch_pids 捕获、playwright 启动、浏览器启动必须在同一把锁内原子完成，
-        # 否则多线程并发时 after-pre 差值会混入其他线程的浏览器 PID，导致清理时误杀。
-        pw = None
+    for attempt in range(2):
         try:
-            with _PW_START_LOCK:
-                pre_launch_pids = list_browser_pids()
-                pw = sync_playwright().start()
-                browser_instance = pw.chromium.launch(**launch_args)
+            context, page, browser_name, browser = manager_instance.new_context_session(
+                proxy_address=proxy_address,
+                user_agent=user_agent,
+                headless=headless,
+                prefer_browsers=prefer_browsers,
+                window_position=window_position,
+            )
+            driver = PlaywrightDriver(
+                context=context,
+                page=page,
+                browser_name=browser_name,
+                browser=browser,
+                manager=manager_instance,
+                manager_owned=manager_owned,
+            )
+            return driver, browser_name
         except Exception as exc:
             last_exc = exc
-            logging.warning("启动 %s 的 Playwright 失败: %s", browser, exc)
-            logging.error(
-                "[Action Log] Playwright 启动异常链(%s): %s",
-                browser,
-                _format_exception_chain(exc),
-            )
-            logging.error(
-                "[Action Log] Playwright 启动堆栈(%s):\n%s",
-                browser,
-                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
-            )
-            if pw is not None:
+            if attempt == 0 and _is_browser_disconnected_error(exc):
+                logging.warning("检测到底座浏览器断开，尝试重建并重试一次: %s", exc)
                 try:
-                    pw.stop()
-                except Exception as e:
-                    log_suppressed_exception(
-                        "browser_driver.create_playwright_driver pw.stop on launch fail",
-                        e,
-                        level=logging.WARNING,
+                    manager_instance.restart_browser(
+                        prefer_browsers=prefer_browsers,
+                        headless=headless,
+                        window_position=window_position,
                     )
-            continue
+                    continue
+                except Exception as restart_exc:
+                    last_exc = restart_exc
+            break
 
-        try:
-
-            context_args: Dict[str, Any] = {}
-            if normalized_proxy:
-                proxy_settings: Dict[str, Any] = {"server": normalized_proxy}
-                try:
-                    parsed = urlparse(normalized_proxy)
-                    if parsed.scheme and parsed.hostname:
-                        server = f"{parsed.scheme}://{parsed.hostname}"
-                        if parsed.port:
-                            server += f":{parsed.port}"
-                        proxy_settings["server"] = server
-                    if parsed.username:
-                        proxy_settings["username"] = parsed.username
-                    if parsed.password:
-                        proxy_settings["password"] = parsed.password
-                except Exception as exc:
-                    log_suppressed_exception("browser_driver.create_playwright_driver parse proxy", exc, level=logging.WARNING)
-
-                if get_proxy_source() in (PROXY_SOURCE_DEFAULT, PROXY_SOURCE_CUSTOM) and "username" not in proxy_settings:
-                    try:
-                        auth = get_proxy_auth()
-                        username, password = auth.split(":", 1)
-                        proxy_settings["username"] = username
-                        proxy_settings["password"] = password
-                    except Exception:
-                        logging.debug("代理认证解析失败", exc_info=True)
-                
-                context_args["proxy"] = proxy_settings
-            if user_agent:
-                context_args["user_agent"] = user_agent
-            if headless and HEADLESS_WINDOW_SIZE:
-                try:
-                    width, height = [int(x) for x in HEADLESS_WINDOW_SIZE.split(",")]
-                    context_args["viewport"] = {"width": width, "height": height}
-                except Exception as exc:
-                    log_suppressed_exception("browser_driver.create_playwright_driver parse headless size", exc, level=logging.WARNING)
-
-            context = browser_instance.new_context(**context_args)
-            page = context.new_page()
-            driver = PlaywrightDriver(pw, browser_instance, context, page, browser)
-
-            collected_pids: Set[int] = set()
-            main_pid = getattr(driver, "browser_pid", None)
-            if main_pid:
-                collected_pids.update(_collect_process_tree(main_pid))
-            else:
-                # 增强 PID 捕获：使用多次重试和更长等待时间，确保能捕获到所有浏览器进程
-                try:
-                    max_attempts = 5
-                    for attempt in range(max_attempts):
-                        time.sleep(0.1 + attempt * 0.05)  # 递增等待：0.1s -> 0.35s
-                        after = list_browser_pids()
-                        diff = list(after - pre_launch_pids)[:10]
-                        if diff:
-                            collected_pids.update(diff)
-                            break
-                    # 尝试进一步补全子进程
-                    for pid in list(collected_pids):
-                        collected_pids.update(_collect_process_tree(pid))
-                    if not collected_pids:
-                        logging.warning("[Action Log] 多次尝试后仍未捕获浏览器 PID，清理可能不完整")
-                except Exception as exc:
-                    log_suppressed_exception("browser_driver.create_playwright_driver collect pid fallback", exc, level=logging.WARNING)
-
-            driver.browser_pids = collected_pids
-            logging.debug("[Action Log] 捕获浏览器 PID: %s", sorted(collected_pids) if collected_pids else "无")
-            return driver, browser
-        except Exception as exc:
-            last_exc = exc
-            logging.warning("启动 %s 浏览器失败: %s", browser, exc)
-            logging.error(
-                "[Action Log] 浏览器初始化异常链(%s): %s",
-                browser,
-                _format_exception_chain(exc),
-            )
-            logging.error(
-                "[Action Log] 浏览器初始化堆栈(%s):\n%s",
-                browser,
-                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
-            )
-            try:
-                pw.stop()
-            except Exception as exc:
-                log_suppressed_exception("browser_driver.create_playwright_driver pw.stop", exc, level=logging.WARNING)
-
-    raise RuntimeError(f"无法启动任何浏览器: {last_exc}")
+    raise RuntimeError(f"创建浏览器上下文失败: {last_exc}")

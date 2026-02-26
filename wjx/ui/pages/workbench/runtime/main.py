@@ -22,6 +22,7 @@ from wjx.ui.pages.workbench.runtime.cards import (
     TimedModeSettingCard,
 )
 from wjx.ui.widgets.setting_cards import SpinBoxSettingCard, SwitchSettingCard
+from wjx.ui.widgets.fail_threshold_card import FailThresholdSettingCard
 from wjx.utils.io.load_save import RuntimeConfig
 
 
@@ -74,6 +75,8 @@ class RuntimePage(ScrollArea):
         )
         self.fail_stop_card.setChecked(True)
 
+        self.fail_threshold_card = FailThresholdSettingCard(parent=run_group)
+
         self.pause_on_aliyun_card = SwitchSettingCard(
             FluentIcon.PAUSE,
             "触发智能验证自动暂停",
@@ -94,6 +97,7 @@ class RuntimePage(ScrollArea):
         run_group.addSettingCard(self.thread_card)
         run_group.addSettingCard(self.reliability_mode_card)
         run_group.addSettingCard(self.fail_stop_card)
+        run_group.addSettingCard(self.fail_threshold_card)
         run_group.addSettingCard(self.pause_on_aliyun_card)
         run_group.addSettingCard(self.headless_card)
         layout.addWidget(run_group)
@@ -170,6 +174,7 @@ class RuntimePage(ScrollArea):
         self.timed_switch.checkedChanged.connect(self._sync_timed_mode)
         self.timed_card.helpButton.clicked.connect(self._show_timed_mode_help)
         self.proxy_source_combo.currentIndexChanged.connect(self._on_proxy_source_changed)
+        self.fail_stop_switch.checkedChanged.connect(self._sync_fail_threshold)
 
     def _show_timed_mode_help(self):
         """显示定时模式说明"""
@@ -241,6 +246,13 @@ class RuntimePage(ScrollArea):
         except Exception as exc:
             log_suppressed_exception("_sync_timed_mode: self.interval_card.setEnabled(not enabled)", exc, level=logging.WARNING)
 
+    def _sync_fail_threshold(self, enabled: bool):
+        """失败过多自动停止开关切换时启用/禁用失败阈值设置"""
+        try:
+            self.fail_threshold_card.setEnabled(bool(enabled))
+        except Exception as exc:
+            log_suppressed_exception("_sync_fail_threshold: self.fail_threshold_card.setEnabled(bool(enabled))", exc, level=logging.WARNING)
+
     def update_config(self, cfg: RuntimeConfig):
         cfg.target = max(1, self.target_spin.value())
         cfg.threads = max(1, self.thread_spin.value())
@@ -254,6 +266,7 @@ class RuntimePage(ScrollArea):
         cfg.random_ua_enabled = self.random_ua_switch.isChecked()
         cfg.random_ua_ratios = self.random_ua_card.getRatios() if cfg.random_ua_enabled else {"wechat": 33, "mobile": 33, "pc": 34}
         cfg.fail_stop_enabled = self.fail_stop_switch.isChecked()
+        cfg.fail_threshold = self.fail_threshold_card.getValue()
         cfg.pause_on_aliyun_captcha = self.pause_on_aliyun_switch.isChecked()
         cfg.reliability_mode_enabled = self.reliability_mode_switch.isChecked()
         cfg.headless_mode = self.headless_card.switchButton.isChecked()
@@ -305,6 +318,8 @@ class RuntimePage(ScrollArea):
 
         self._sync_random_ua(self.random_ua_switch.isChecked())
         self.fail_stop_switch.setChecked(cfg.fail_stop_enabled)
+        self.fail_threshold_card.setValue(getattr(cfg, "fail_threshold", 0))
+        self._sync_fail_threshold(cfg.fail_stop_enabled)
         self.pause_on_aliyun_switch.setChecked(getattr(cfg, "pause_on_aliyun_captcha", True))
         self.reliability_mode_switch.setChecked(getattr(cfg, "reliability_mode_enabled", True))
         self.headless_card.setChecked(getattr(cfg, "headless_mode", False))

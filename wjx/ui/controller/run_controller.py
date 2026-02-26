@@ -488,7 +488,13 @@ class RunController(QObject):
 
     def _prepare_engine_state(self, config: RuntimeConfig, proxy_pool: List[str]) -> TaskContext:
         """构建本次任务的 TaskContext。"""
-        fail_threshold = max(1, math.ceil(config.target / 4) + 1)
+        # 使用用户配置的失败阈值，如果为0则自动计算
+        custom_threshold = getattr(config, "fail_threshold", 0)
+        if custom_threshold > 0:
+            fail_threshold = custom_threshold
+        else:
+            fail_threshold = max(1, math.ceil(config.target / 4) + 1)
+        
         config_title = str(getattr(config, "survey_title", "") or "")
         fallback_title = str(getattr(self, "survey_title", "") or "")
         survey_title = config_title or fallback_title

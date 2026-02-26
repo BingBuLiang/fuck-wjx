@@ -176,6 +176,7 @@ class RuntimeConfig:
     random_ua_keys: List[str] = field(default_factory=lambda: list(DEFAULT_RANDOM_UA_KEYS))
     random_ua_ratios: Dict[str, int] = field(default_factory=lambda: {"wechat": 33, "mobile": 33, "pc": 34})  # 设备类型占比
     fail_stop_enabled: bool = True
+    fail_threshold: int = 0  # 失败阈值（0表示自动计算：目标份数÷4+1）
     pause_on_aliyun_captcha: bool = True
     reliability_mode_enabled: bool = True  # 信效度模式开关（控制维度设置是否可用）
     headless_mode: bool = False
@@ -437,6 +438,7 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
         config.random_ua_ratios = {"wechat": 33, "mobile": 33, "pc": 34}
 
     config.fail_stop_enabled = bool(raw.get("fail_stop_enabled", True))
+    config.fail_threshold = _as_int(raw.get("fail_threshold"), 0)
     config.pause_on_aliyun_captcha = bool(raw.get("pause_on_aliyun_captcha", True))
     config.reliability_mode_enabled = bool(raw.get("reliability_mode_enabled", True))
     config.debug_mode = bool(raw.get("debug_mode", False))

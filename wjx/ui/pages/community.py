@@ -117,7 +117,7 @@ class CommunityPage(ScrollArea):
         left.addWidget(title)
 
         desc = BodyLabel(
-            "扫描二维码或搜索群号加入交流群。\n"
+            "扫描二维码加入QQ交流群。\n"
             "群内可获取版本更新推送、反馈使用中遇到的问题、\n"
             "以及与其他用户交流使用技巧和经验。",
             card,

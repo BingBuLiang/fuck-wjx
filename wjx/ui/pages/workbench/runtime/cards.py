@@ -1,10 +1,10 @@
 """运行参数页 - 专属设置卡片组件（随机IP、随机UA、定时模式等）"""
 import logging
-from typing import Optional
+from typing import Optional, List
 
-from PySide6.QtCore import Qt, QStringListModel
+from PySide6.QtCore import Qt, QStringListModel, QThread, QObject, Signal as QtSignal
 from PySide6.QtGui import QIntValidator
-from PySide6.QtWidgets import QCompleter, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCompleter, QHBoxLayout, QVBoxLayout, QWidget, QFrame
 from qfluentwidgets import (
     Action,
     BodyLabel,
@@ -83,6 +83,7 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         self.proxyCombo = ComboBox(self._groupContainer)
         self.proxyCombo.addItem("默认", userData="default")
         self.proxyCombo.addItem("皮卡丘代理站 (中国大陆)", userData="pikachu")
+        self.proxyCombo.addItem("快代理 (KuaiDaiLi)", userData="kuaidaili")
         self.proxyCombo.addItem("自定义", userData="custom")
         self.proxyCombo.setMinimumWidth(200)
         source_row.addWidget(source_label)
@@ -152,6 +153,12 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         self.customApiRow.hide()
         layout.addWidget(self.customApiRow)
 
+        # 快代理配置面板
+        from wjx.ui.pages.workbench.runtime.kuaidaili_panel import KuaidailiConfigPanel
+        self.kuaidailiPanel = KuaidailiConfigPanel(self._groupContainer)
+        self.kuaidailiPanel.hide()
+        layout.addWidget(self.kuaidailiPanel)
+
         self._area_updating = False
         self._area_data = []
         self._supported_area_codes = set()
@@ -178,6 +185,7 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         idx = self.proxyCombo.currentIndex()
         source = str(self.proxyCombo.itemData(idx)) if idx >= 0 else "default"
         self.customApiRow.setVisible(source == "custom")
+        self.kuaidailiPanel.setVisible(source == "kuaidaili")
         self.proxyTrialLink.setVisible(source == "custom")
         self.areaRow.setVisible(source == "default")
         if source != "default":

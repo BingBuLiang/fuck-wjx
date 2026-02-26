@@ -43,6 +43,7 @@ _quota_updating = False  # 标记是否正在后台更新
 # 代理源常量
 PROXY_SOURCE_DEFAULT = "default"  # 默认代理源
 PROXY_SOURCE_PIKACHU = "pikachu"  # 皮卡丘代理站
+PROXY_SOURCE_KUAIDAILI = "kuaidaili"  # 快代理
 PROXY_SOURCE_CUSTOM = "custom"  # 自定义代理源
 
 # 当前选择的代理源
@@ -831,6 +832,51 @@ def _fetch_new_proxy_batch(
     current_source = get_proxy_source()
     # 如果配置了自定义API覆盖，视为自定义代理源
     is_custom = current_source == PROXY_SOURCE_CUSTOM or is_custom_proxy_api_active()
+    
+    if current_source == PROXY_SOURCE_KUAIDAILI:
+        # 使用快代理
+        try:
+            from wjx.network.proxy.kuaidaili import (
+                KuaidailiAuth,
+                fetch_kuaidaili_proxies,
+            )
+            from wjx.utils.io.kuaidaili_credentials import load_kuaidaili_credentials
+            
+            # 加载快代理凭证
+            creds = load_kuaidaili_credentials()
+            if not creds.secret_id or not creds.secret_key:
+                raise RuntimeError("快代理凭证未配置，请在设置中填写 Secret ID 和 Secret Key")
+            
+            # 创建认证对象
+            auth = KuaidailiAuth(creds.secret_id, creds.secret_key)
+            
+            # 获取代理（使用token认证方式）
+            proxy_list = fetch_kuaidaili_proxies(
+                auth=auth,
+                count=expected_count,
+                auth_mode="token",
+                areas=None,  # 暂不支持地区筛选
+                timeout=10
+            )
+            
+            if not proxy_list:
+                raise RuntimeError("快代理未返回任何代理")
+            
+            # 格式化代理地址（添加认证信息）
+            formatted_proxies: List[str] = []
+            for proxy in proxy_list:
+                # 如果有用户名密码，添加到代理地址
+                if creds.proxy_username and creds.proxy_password:
+                    formatted_proxies.append(f"http://{creds.proxy_username}:{creds.proxy_password}@{proxy}")
+                else:
+                    formatted_proxies.append(f"http://{proxy}")
+            
+            logging.info(f"从快代理获取到 {len(formatted_proxies)} 个代理")
+            return formatted_proxies
+            
+        except Exception as exc:
+            logging.error(f"从快代理获取代理失败: {exc}")
+            raise RuntimeError(f"获取快代理失败: {exc}")
     
     if current_source == PROXY_SOURCE_PIKACHU:
         # 使用皮卡丘代理站

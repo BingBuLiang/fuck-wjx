@@ -3,6 +3,7 @@
 from wjx.network.proxy.provider import (
     PROXY_SOURCE_CUSTOM,
     PROXY_SOURCE_DEFAULT,
+    PROXY_SOURCE_KUAIDAILI,
     PROXY_SOURCE_PIKACHU,
     _fetch_new_proxy_batch,
     _format_status_payload,
@@ -33,6 +34,7 @@ from wjx.network.proxy.provider import (
 __all__ = [
     "PROXY_SOURCE_CUSTOM",
     "PROXY_SOURCE_DEFAULT",
+    "PROXY_SOURCE_KUAIDAILI",
     "PROXY_SOURCE_PIKACHU",
     "_fetch_new_proxy_batch",
     "_format_status_payload",

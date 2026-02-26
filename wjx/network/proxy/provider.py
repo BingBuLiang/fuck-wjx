@@ -385,7 +385,7 @@ def _is_area_quality_retry_payload(payload: Any) -> bool:
 
 
 def _handle_area_quality_failure(stop_signal: Optional[threading.Event] = None) -> None:
-    log_popup_error("地区代理不可用", "当前地区IP质量差，建议选择不限地区")
+    log_popup_error("地区代理不可用", "当前地区IP质量差，建议切换其他地区")
     if stop_signal:
         try:
             if not stop_signal.is_set():
@@ -882,7 +882,7 @@ def _fetch_new_proxy_batch(
                 if _is_area_quality_retry_payload(payload):
                     if notify_on_area_error:
                         _handle_area_quality_failure(stop_signal)
-                    raise AreaProxyQualityError("当前地区IP质量差，建议选择不限地区")
+                    raise AreaProxyQualityError("当前地区IP质量差，建议切换其他地区")
             parsed = _parse_proxy_payload(resp.text)
             candidates.extend(parsed)
             if candidates:

@@ -55,6 +55,10 @@ class SearchableComboBox(EditableComboBox):
         super()._onComboTextChanged(text)
 
 
+# 直辖市省级编码：这些地区用"市辖区"代替"全省/全市"
+_MUNICIPALITY_PROVINCE_CODES = {"110000", "120000", "310000", "500000"}
+
+
 class RandomIPSettingCard(ExpandGroupSettingCard):
     """随机IP设置卡 - 包含代理源选择"""
 
@@ -217,7 +221,9 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
 
     def _populate_cities(self, province_code: str, preferred_city_code: Optional[str] = None) -> None:
         self.cityCombo.clear()
-        if province_code and province_code in self._supported_area_codes:
+        is_municipality = province_code in _MUNICIPALITY_PROVINCE_CODES
+        # 直辖市不显示"全省/全市"，直接用"市辖区"代表全市
+        if not is_municipality and province_code and province_code in self._supported_area_codes:
             self.cityCombo.addItem("全省/全市", userData=province_code)
         cities = self._cities_by_province.get(province_code, [])
         for city in cities:
@@ -230,6 +236,9 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
             idx = self.cityCombo.findData(preferred_city_code)
             if idx >= 0:
                 self.cityCombo.setCurrentIndex(idx)
+            elif is_municipality and self.cityCombo.count() > 0:
+                # 直辖市找不到 preferred_city_code（如省级码110000）时，回退到第一项（市辖区）
+                self.cityCombo.setCurrentIndex(0)
 
     def _on_province_changed(self):
         if self._area_updating:

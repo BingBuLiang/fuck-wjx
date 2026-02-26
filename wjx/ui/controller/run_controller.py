@@ -6,7 +6,7 @@ import logging
 import copy
 from urllib.parse import urlparse
 import threading
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QObject, Signal, QTimer, QCoreApplication
 
@@ -81,7 +81,6 @@ class EngineGuiAdapter:
     ):
         self.random_ip_enabled_var = BoolVar(False)
         self.active_drivers: List[Any] = []
-        self._launched_browser_pids: Set[int] = set()
         self._dispatcher = dispatcher
         self._async_dispatcher = async_dispatcher or dispatcher
         self._stop_signal = stop_signal
@@ -151,48 +150,11 @@ class EngineGuiAdapter:
         return None
 
     def cleanup_browsers(self) -> None:
-        """异步清理所有浏览器实例，立即返回不阻塞 GUI 线程
-
-        这是兜底清理函数，会强制终止所有残留的浏览器进程。
-        即使工作线程已经提交了清理任务，这里也会再次确保清理干净。
-
-        优化策略：
-        1. 立即刷新批量清理队列（不等待去抖延迟）
-        2. 使用批量 taskkill 清理残留 PID
-        3. 不再尝试调用 playwright.stop()（避免线程安全问题）
-        """
+        """兜底清理：只清理跟踪引用，不在非工作线程中直接操作 Playwright。"""
         drivers = list(self.active_drivers or [])
         self.active_drivers.clear()
-        pids_to_wait: Set[int] = set(self._launched_browser_pids or set())
-        self._launched_browser_pids.clear()
-
-        # 收集所有需要清理的 PID
-        for driver in drivers:
-            try:
-                pid_single = getattr(driver, "browser_pid", None)
-                if pid_single:
-                    pids_to_wait.add(int(pid_single))
-                pid_set = getattr(driver, "browser_pids", None)
-                if pid_set:
-                    pids_to_wait.update(int(p) for p in pid_set)
-            except Exception:
-                logging.debug("收集浏览器 PID 失败，跳过当前 driver", exc_info=True)
-
-        # 【优化 1】异步提交残留 PID 到批量清理队列（立即返回）
-        if pids_to_wait and self._cleanup_runner:
-            try:
-                self._cleanup_runner.submit_pid_cleanup(pids_to_wait)
-                logging.debug(f"[兜底清理] 已提交 {len(pids_to_wait)} 个残留 PID 到批量清理队列")
-            except Exception:
-                logging.debug("提交残留 PID 失败", exc_info=True)
-
-        # 【优化 2】立即触发批量清理（异步执行，不阻塞）
-        if self._cleanup_runner:
-            try:
-                self._cleanup_runner.flush_pending_pids()
-                logging.debug("[兜底清理] 已触发批量清理（异步）")
-            except Exception:
-                logging.debug("触发批量清理失败", exc_info=True)
+        if drivers:
+            logging.debug("[兜底清理] 已清理 %d 个 driver 跟踪引用，底座关闭由工作线程负责", len(drivers))
 
 
 

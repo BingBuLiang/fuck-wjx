@@ -12,6 +12,10 @@ control/
 ipzanAPI_doc.md
 AGENTS.md
 CLAUDE.md
+docx/
+logs/
+stats/
+tests/
 
 # 编译环境
 /build/

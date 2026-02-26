@@ -2,20 +2,20 @@
 import threading
 from typing import Deque, List, Optional
 
-import wjx.core.state as state
 import wjx.modes.duration_control as duration_control
+from wjx.core.task_context import TaskContext
 from wjx.modes.duration_control import DURATION_CONTROL_STATE as _DURATION_CONTROL_STATE
 
 
-def _sync_full_sim_state_from_globals() -> None:
-    """确保时长控制全局变量与模块状态保持一致（主要在 GUI/运行线程之间传递配置时使用）。"""
-    _DURATION_CONTROL_STATE.enabled = bool(state.duration_control_enabled)
-    _DURATION_CONTROL_STATE.estimated_seconds = int(state.duration_control_estimated_seconds or 0)
-    _DURATION_CONTROL_STATE.total_duration_seconds = int(state.duration_control_total_duration_seconds or 0)
+def _sync_full_sim_state_from_ctx(ctx: TaskContext) -> None:
+    """将 TaskContext 中的时长控制配置同步到模块状态。"""
+    _DURATION_CONTROL_STATE.enabled = bool(ctx.duration_control_enabled)
+    _DURATION_CONTROL_STATE.estimated_seconds = int(ctx.duration_control_estimated_seconds or 0)
+    _DURATION_CONTROL_STATE.total_duration_seconds = int(ctx.duration_control_total_duration_seconds or 0)
 
 
-def _full_simulation_active() -> bool:
-    _sync_full_sim_state_from_globals()
+def _full_simulation_active(ctx: TaskContext) -> bool:
+    _sync_full_sim_state_from_ctx(ctx)
     return bool(_DURATION_CONTROL_STATE.active())
 
 
@@ -40,6 +40,11 @@ def _build_per_question_delay_plan(question_count: int, target_seconds: float) -
     return _DURATION_CONTROL_STATE.build_per_question_delay_plan(question_count, target_seconds)
 
 
-def _simulate_answer_duration_delay(stop_signal: Optional[threading.Event] = None) -> bool:
-    # 委托到模块实现，传入当前配置范围以避免模块依赖全局变量
-    return duration_control.simulate_answer_duration_delay(stop_signal, state.answer_duration_range_seconds)
+def _simulate_answer_duration_delay(
+    ctx: TaskContext,
+    stop_signal: Optional[threading.Event] = None,
+) -> bool:
+    """委托到模块实现，从 ctx 获取配置范围。"""
+    return duration_control.simulate_answer_duration_delay(
+        stop_signal, ctx.answer_duration_range_seconds
+    )

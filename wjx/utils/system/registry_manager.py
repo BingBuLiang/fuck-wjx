@@ -6,7 +6,6 @@
 
 import logging
 import sys
-from typing import Optional
 
 # 只在 Windows 平台导入 winreg
 if sys.platform == "win32":
@@ -21,6 +20,8 @@ class RegistryManager:
     REGISTRY_KEY = "RandomIPSubmitCount"
     REGISTRY_KEY_LIMIT = "RandomIPQuotaLimit"
     REGISTRY_KEY_CARD_VERIFIED = "CardVerified"
+    REGISTRY_KEY_EXTRA_VERIFIED = "CardExtraVerified"
+    REGISTRY_KEY_CONFETTI_PLAYED = "ConfettiPlayed"
     
     @staticmethod
     def read_submit_count() -> int:
@@ -122,6 +123,64 @@ class RegistryManager:
             hkey = winreg.HKEY_CURRENT_USER
             key = winreg.CreateKeyEx(hkey, RegistryManager.REGISTRY_PATH, 0, winreg.KEY_WRITE)
             winreg.SetValueEx(key, RegistryManager.REGISTRY_KEY_CARD_VERIFIED, 0, winreg.REG_DWORD, int(verified))
+            winreg.CloseKey(key)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def is_extra_quota_verified() -> bool:
+        """检查是否已通过"申请更多额度"二次验证"""
+        if winreg is None:
+            return False
+        try:
+            hkey = winreg.HKEY_CURRENT_USER
+            with winreg.OpenKey(hkey, RegistryManager.REGISTRY_PATH) as key:
+                value, _ = winreg.QueryValueEx(key, RegistryManager.REGISTRY_KEY_EXTRA_VERIFIED)
+                return bool(int(value))
+        except FileNotFoundError:
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def set_extra_quota_verified(verified: bool) -> bool:
+        """设置二次验证状态"""
+        if winreg is None:
+            return False
+        try:
+            hkey = winreg.HKEY_CURRENT_USER
+            key = winreg.CreateKeyEx(hkey, RegistryManager.REGISTRY_PATH, 0, winreg.KEY_WRITE)
+            winreg.SetValueEx(key, RegistryManager.REGISTRY_KEY_EXTRA_VERIFIED, 0, winreg.REG_DWORD, int(verified))
+            winreg.CloseKey(key)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def is_confetti_played() -> bool:
+        """检查彩带动画是否已播放过"""
+        if winreg is None:
+            return False
+        try:
+            hkey = winreg.HKEY_CURRENT_USER
+            with winreg.OpenKey(hkey, RegistryManager.REGISTRY_PATH) as key:
+                value, _ = winreg.QueryValueEx(key, RegistryManager.REGISTRY_KEY_CONFETTI_PLAYED)
+                return bool(int(value))
+        except FileNotFoundError:
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def set_confetti_played(played: bool) -> bool:
+        """设置彩带动画播放状态"""
+        if winreg is None:
+            return False
+        try:
+            hkey = winreg.HKEY_CURRENT_USER
+            key = winreg.CreateKeyEx(hkey, RegistryManager.REGISTRY_PATH, 0, winreg.KEY_WRITE)
+            winreg.SetValueEx(key, RegistryManager.REGISTRY_KEY_CONFETTI_PLAYED, 0, winreg.REG_DWORD, int(played))
             winreg.CloseKey(key)
             return True
         except Exception:

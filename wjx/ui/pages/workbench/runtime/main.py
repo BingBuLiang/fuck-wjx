@@ -1,35 +1,27 @@
 """运行参数设置页面"""
-from typing import Dict, List, Optional
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon, QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
-    CheckBox,
     FluentIcon,
-    ModelComboBox,
     PopupTeachingTip,
     ScrollArea,
-    SettingCard,
     SettingCardGroup,
     TeachingTipTailPosition,
 )
 
 from wjx.ui.controller import RunController
-from wjx.ui.pages.workbench.runtime_ai import RuntimeAISection
-from wjx.ui.pages.workbench.runtime_cards import (
+from wjx.ui.pages.workbench.runtime.ai import RuntimeAISection
+from wjx.ui.pages.workbench.runtime.cards import (
     RandomIPSettingCard,
     RandomUASettingCard,
     TimeRangeSettingCard,
     TimedModeSettingCard,
 )
 from wjx.ui.widgets.setting_cards import SpinBoxSettingCard, SwitchSettingCard
-from wjx.ui.pages.workbench.runtime_dialogs import pick_time_value
-from wjx.utils.app.runtime_paths import _get_resource_path
 from wjx.utils.io.load_save import RuntimeConfig
 
 
@@ -38,43 +30,17 @@ class RuntimePage(ScrollArea):
 
 
 
-    BROWSER_OPTION_MAP = {
-        "auto": {
-            "text": "自动",
-            "preference": [],
-            "hint": "优先 Edge，缺失回落 Chrome/Chromium",
-        },
-        "edge": {
-            "text": "Edge",
-            "preference": ["edge"],
-            "hint": "仅使用 Edge",
-        },
-        "chrome": {
-            "text": "Chrome",
-            "preference": ["chrome", "edge", "chromium"],
-            "hint": "优先 Chrome，缺失回落 Edge/Chromium",
-        },
-        "chromium": {
-            "text": "Chromium",
-            "preference": ["chromium", "edge", "chrome"],
-            "hint": "内置 Chromium（无需系统浏览器）",
-        },
-    }
-
     def __init__(self, controller: RunController, parent=None):
         super().__init__(parent)
         self.controller = controller
-        self._browser_icons = self._load_browser_icons()
         self.view = QWidget(self)
         self.setWidget(self.view)
         self.setWidgetResizable(True)
         self.enableTransparentBackground()
         self.view.setObjectName("settings_view")
-        self.ua_checkboxes: Dict[str, CheckBox] = {}
         self._build_ui()
         self._bind_events()
         self._sync_random_ua(self.random_ua_card.isChecked())
-        self._sync_browser_icon()
 
     def _build_ui(self):
         layout = QVBoxLayout(self.view)
@@ -92,47 +58,16 @@ class RuntimePage(ScrollArea):
             FluentIcon.APPLICATION, "并发浏览器", "同时运行的浏览器数量 (1-12)",
             min_val=1, max_val=12, default=2, parent=run_group
         )
-        self.browser_card = SettingCard(
-            FluentIcon.GLOBE,
-            "调用浏览器",
-            "选择用于自动化的浏览器，Edge 缺失时可改用 Chrome 或内置 Chromium",
-            parent=run_group,
-        )
-
-        # 使用 ModelComboBox 以支持图标显示
-        self.browser_combo = ModelComboBox(self.browser_card)
-        self.browser_combo.setFixedWidth(170)
-        self.browser_combo.setStyleSheet(
-            "QPushButton { padding-left: 14px; padding-right: 12px; text-align: left; }"
-        )
-
-        # 创建 Model 并添加带图标的项
-        browser_model = QStandardItemModel()
-        for key, option in self.BROWSER_OPTION_MAP.items():
-            icon = self._browser_icons.get(key)
-            text = option.get("text", key)
-            hint = option.get("hint")
-
-            item = QStandardItem(text)
-            if icon and not icon.isNull():
-                item.setIcon(icon)
-            if hint:
-                item.setToolTip(hint)
-            item.setData(key, Qt.ItemDataRole.UserRole)
-            browser_model.appendRow(item)
-
-        self.browser_combo.setModel(browser_model)
-
-        self.browser_card.hBoxLayout.addWidget(
-            self.browser_combo,
-            0,
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
-        )
-        self.browser_card.hBoxLayout.addSpacing(16)
-        self.browser_combo.currentIndexChanged.connect(self._sync_browser_icon)
         spin_width = self.target_card.suggestSpinBoxWidthForDigits(4)
         self.target_card.setSpinBoxWidth(spin_width)
         self.thread_card.setSpinBoxWidth(spin_width)
+
+        self.reliability_mode_card = SwitchSettingCard(
+            FluentIcon.CERTIFICATE, "提升问卷信效度", "启用后量表/矩阵/评价题将共享答题倾向，针对信效度优化作答策略",
+            parent=run_group
+        )
+        self.reliability_mode_card.setChecked(True)
+
         self.fail_stop_card = SwitchSettingCard(
             FluentIcon.CANCEL, "失败过多自动停止", "连续失败次数过多时自动停止运行",
             parent=run_group
@@ -147,18 +82,27 @@ class RuntimePage(ScrollArea):
         )
         self.pause_on_aliyun_card.setChecked(True)
 
+        self.headless_card = SwitchSettingCard(
+            FluentIcon.SPEED_HIGH,
+            "无头模式",
+            "开启后浏览器在后台运行，不显示窗口，可提高并发性能",
+            parent=run_group,
+        )
+        self.headless_card.setChecked(False)
+
         run_group.addSettingCard(self.target_card)
         run_group.addSettingCard(self.thread_card)
-        run_group.addSettingCard(self.browser_card)
+        run_group.addSettingCard(self.reliability_mode_card)
         run_group.addSettingCard(self.fail_stop_card)
         run_group.addSettingCard(self.pause_on_aliyun_card)
+        run_group.addSettingCard(self.headless_card)
         layout.addWidget(run_group)
 
         # ========== 时间控制组 ==========
         time_group = SettingCardGroup("时间控制", self.view)
         # 在标题后添加小字提示（保持原标题字号）
         time_hint = BodyLabel("（其实问卷星官方并不会因为你提交过快就封你号）", time_group)
-        time_hint.setStyleSheet("color: blue; font-size: 12px;")
+        time_hint.setStyleSheet("color: green; font-size: 12px;")
         # 创建水平布局放置标题和提示
         title_container = QWidget(time_group)
         title_h_layout = QHBoxLayout(title_container)
@@ -173,17 +117,17 @@ class RuntimePage(ScrollArea):
         time_group.vBoxLayout.insertWidget(0, title_container)
 
         self.interval_card = TimeRangeSettingCard(
-            FluentIcon.HISTORY, "提交间隔", "两次提交之间的等待时间范围",
+            FluentIcon.HISTORY, "提交间隔", "两次提交之间的等待时间",
             max_seconds=300,
             parent=time_group
         )
         self.answer_card = TimeRangeSettingCard(
-            FluentIcon.STOP_WATCH, "作答时长", "模拟作答所需的时间范围",
+            FluentIcon.STOP_WATCH, "作答时长", "设置单份作答消耗的时间",
             max_seconds=120,
             parent=time_group
         )
         self.timed_card = TimedModeSettingCard(
-            FluentIcon.SPEED_HIGH, "定时模式", "启用后忽略时间设置，在开放后立即提交",
+            FluentIcon.RINGER, "定时模式", "启用后忽略时间设置，在开放后立即提交",
             parent=time_group
         )
 
@@ -197,7 +141,6 @@ class RuntimePage(ScrollArea):
 
         self.random_ip_card = RandomIPSettingCard(parent=feature_group)
         self.random_ua_card = RandomUASettingCard(parent=feature_group)
-        self.ua_checkboxes = self.random_ua_card.checkboxes
 
         feature_group.addSettingCard(self.random_ip_card)
         feature_group.addSettingCard(self.random_ua_card)
@@ -214,6 +157,7 @@ class RuntimePage(ScrollArea):
         self.thread_spin = self.thread_card.spinBox
         self.fail_stop_switch = self.fail_stop_card.switchButton
         self.pause_on_aliyun_switch = self.pause_on_aliyun_card.switchButton
+        self.reliability_mode_switch = self.reliability_mode_card.switchButton
         self.timed_switch = self.timed_card.switchButton
         self.random_ip_switch = self.random_ip_card.switchButton
         self.random_ua_switch = self.random_ua_card.switchButton
@@ -222,7 +166,7 @@ class RuntimePage(ScrollArea):
 
     def _bind_events(self):
         self.random_ip_switch.checkedChanged.connect(self._on_random_ip_toggled)
-        self.random_ua_switch.checkedChanged.connect(self._sync_random_ua)
+        self.random_ua_switch.checkedChanged.connect(self._on_random_ua_toggled)
         self.timed_switch.checkedChanged.connect(self._sync_timed_mode)
         self.timed_card.helpButton.clicked.connect(self._show_timed_mode_help)
         self.proxy_source_combo.currentIndexChanged.connect(self._on_proxy_source_changed)
@@ -259,6 +203,15 @@ class RuntimePage(ScrollArea):
             finally:
                 self.random_ip_switch.blockSignals(False)
 
+    def _on_random_ua_toggled(self, enabled: bool):
+        main_win = self.window()
+        dashboard = getattr(main_win, "dashboard", None)
+        if dashboard is not None and hasattr(dashboard, "random_ua_cb"):
+            dashboard.random_ua_cb.blockSignals(True)
+            dashboard.random_ua_cb.setChecked(enabled)
+            dashboard.random_ua_cb.blockSignals(False)
+        self._sync_random_ua(enabled)
+
     def _on_proxy_source_changed(self):
         """代理源选择变化时更新设置"""
         idx = self.proxy_source_combo.currentIndex()
@@ -288,87 +241,10 @@ class RuntimePage(ScrollArea):
         except Exception as exc:
             log_suppressed_exception("_sync_timed_mode: self.interval_card.setEnabled(not enabled)", exc, level=logging.WARNING)
 
-    def _load_browser_icons(self) -> Dict[str, QIcon]:
-        icons: Dict[str, QIcon] = {}
-        candidates = {
-            "edge": [
-                "assets/browser-icons/edge.png",
-                "assets/browser-icons/edge.svg",
-            ],
-            "chrome": [
-                "assets/browser-icons/chrome.png",
-                "assets/browser-icons/chrome.svg",
-            ],
-            "chromium": [
-                "assets/browser-icons/chromium.png",
-                "assets/browser-icons/chromium.svg",
-            ],
-        }
-        for key, rel_paths in candidates.items():
-            for rel_path in rel_paths:
-                try:
-                    abs_path = _get_resource_path(rel_path)
-                    icon = QIcon(abs_path)
-                    if icon and not icon.isNull():
-                        icons[key] = icon
-                        break
-                except Exception:
-                    continue
-        return icons
-
-    def _get_selected_browser_preference(self) -> List[str]:
-        idx = self.browser_combo.currentIndex()
-        key = str(self.browser_combo.itemData(idx)) if idx >= 0 else "auto"
-        option = self.BROWSER_OPTION_MAP.get(key) or self.BROWSER_OPTION_MAP["auto"]
-        prefs = option.get("preference") or []
-        return list(prefs)
-
-    def _apply_browser_preference(self, prefs: Optional[List[str]]) -> None:
-        normalized = [str(x or "").strip().lower() for x in (prefs or []) if str(x or "").strip()]
-        target_key = "auto" if not normalized else None
-        if normalized:
-            for key, option in self.BROWSER_OPTION_MAP.items():
-                option_pref = [str(p).lower() for p in option.get("preference") or []]
-                if normalized == option_pref:
-                    target_key = key
-                    break
-            if target_key is None:
-                first = normalized[0]
-                for key, option in self.BROWSER_OPTION_MAP.items():
-                    option_pref = option.get("preference") or []
-                    if option_pref and str(option_pref[0]).lower() == first:
-                        target_key = key
-                        break
-        if target_key is None:
-            target_key = "auto"
-        idx = self.browser_combo.findData(target_key)
-        if idx >= 0:
-            self.browser_combo.setCurrentIndex(idx)
-        elif self.browser_combo.count() > 0:
-            self.browser_combo.setCurrentIndex(0)
-        self._sync_browser_icon()
-
-    def _sync_browser_icon(self):
-        """让当前选中项的图标显示在下拉框按钮上"""
-        idx = self.browser_combo.currentIndex()
-        key = str(self.browser_combo.itemData(idx)) if idx >= 0 else ""
-        icon = self._browser_icons.get(key)
-        if (not icon or icon.isNull()) and idx >= 0:
-            # 兜底：用显示文本匹配图标（防止 userData 丢失）
-            text_key = (self.browser_combo.itemText(idx) or "").strip().lower()
-            icon = self._browser_icons.get(text_key)
-        if icon and not icon.isNull():
-            self.browser_combo.setIcon(icon)
-            self.browser_combo.setIconSize(QSize(20, 20))
-        else:
-            self.browser_combo.setIcon(QIcon())
-
-
-
     def update_config(self, cfg: RuntimeConfig):
         cfg.target = max(1, self.target_spin.value())
         cfg.threads = max(1, self.thread_spin.value())
-        cfg.browser_preference = self._get_selected_browser_preference()
+        cfg.browser_preference = []  # 固定使用默认顺序：Edge → Chrome → Chromium
         interval_min, interval_max = self.interval_card.getRange()
         cfg.submit_interval = (interval_min, interval_max)
         answer_min, answer_max = self.answer_card.getRange()
@@ -376,9 +252,11 @@ class RuntimePage(ScrollArea):
         cfg.timed_mode_enabled = self.timed_switch.isChecked()
         cfg.random_ip_enabled = self.random_ip_switch.isChecked()
         cfg.random_ua_enabled = self.random_ua_switch.isChecked()
-        cfg.random_ua_keys = [k for k, cb in self.ua_checkboxes.items() if cb.isChecked()] if cfg.random_ua_enabled else []
+        cfg.random_ua_ratios = self.random_ua_card.getRatios() if cfg.random_ua_enabled else {"wechat": 33, "mobile": 33, "pc": 34}
         cfg.fail_stop_enabled = self.fail_stop_switch.isChecked()
         cfg.pause_on_aliyun_captcha = self.pause_on_aliyun_switch.isChecked()
+        cfg.reliability_mode_enabled = self.reliability_mode_switch.isChecked()
+        cfg.headless_mode = self.headless_card.switchButton.isChecked()
         try:
             idx = self.proxy_source_combo.currentIndex()
             source = str(self.proxy_source_combo.itemData(idx)) if idx >= 0 else "default"
@@ -396,10 +274,6 @@ class RuntimePage(ScrollArea):
     def apply_config(self, cfg: RuntimeConfig):
         self.target_spin.setValue(max(1, cfg.target))
         self.thread_spin.setValue(max(1, cfg.threads))
-        try:
-            self._apply_browser_preference(getattr(cfg, "browser_preference", None))
-        except Exception as exc:
-            log_suppressed_exception("apply_config: self._apply_browser_preference(getattr(cfg, \"browser_preference\", None))", exc, level=logging.WARNING)
 
         interval_min = max(0, cfg.submit_interval[0])
         interval_max = max(interval_min, cfg.submit_interval[1])
@@ -415,15 +289,25 @@ class RuntimePage(ScrollArea):
         self.random_ip_switch.blockSignals(True)
         self.random_ip_switch.setChecked(cfg.random_ip_enabled)
         self.random_ip_switch.blockSignals(False)
+        self.random_ip_card._sync_ip_enabled(cfg.random_ip_enabled)
         self.random_ua_switch.setChecked(cfg.random_ua_enabled)
-        self._sync_browser_icon()
 
-        active = set(cfg.random_ua_keys or [])
-        for key, cb in self.ua_checkboxes.items():
-            cb.setChecked((not active and key == "pc_web") or key in active)
+        # 应用UA占比配置
+        try:
+            ratios = getattr(cfg, "random_ua_ratios", None)
+            if ratios and isinstance(ratios, dict):
+                self.random_ua_card.setRatios(ratios)
+            else:
+                self.random_ua_card.setRatios({"wechat": 33, "mobile": 33, "pc": 34})
+        except Exception as exc:
+            log_suppressed_exception("apply_config: self.random_ua_card.setRatios(ratios)", exc, level=logging.WARNING)
+            self.random_ua_card.setRatios({"wechat": 33, "mobile": 33, "pc": 34})
+
         self._sync_random_ua(self.random_ua_switch.isChecked())
         self.fail_stop_switch.setChecked(cfg.fail_stop_enabled)
         self.pause_on_aliyun_switch.setChecked(getattr(cfg, "pause_on_aliyun_captcha", True))
+        self.reliability_mode_switch.setChecked(getattr(cfg, "reliability_mode_enabled", True))
+        self.headless_card.setChecked(getattr(cfg, "headless_mode", False))
 
         try:
             proxy_source = getattr(cfg, "proxy_source", "default")

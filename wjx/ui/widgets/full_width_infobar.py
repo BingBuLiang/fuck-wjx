@@ -42,14 +42,14 @@ class FullWidthInfoBar(InfoBar):
         parent.installEventFilter(self)
         self._parent_filter_installed = True
 
-    def eventFilter(self, obj, event):
-        if obj is self.parentWidget() and event.type() in (
+    def eventFilter(self, obj, e):
+        if obj is self.parentWidget() and e.type() in (
             QEvent.Type.Resize,
             QEvent.Type.LayoutRequest,
             QEvent.Type.Show,
         ):
             self._adjustText()
-        return super().eventFilter(obj, event)
+        return super().eventFilter(obj, e)
 
     def _schedule_deferred_sync(self) -> None:
         for delay in (0, 30, 120):

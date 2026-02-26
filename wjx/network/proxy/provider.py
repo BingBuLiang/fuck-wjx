@@ -1,24 +1,22 @@
 """随机 IP / 代理管理 - 获取和切换代理 IP"""
 import json
 import logging
-import os
 import random
 import re
 import threading
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from typing import Any, Callable, List, Optional, Set
+from typing import Any, Callable, List, Optional, Set, Tuple
 
 import wjx.network.http_client as http_client
 from wjx.utils.app.config import (
     CARD_VALIDATION_ENDPOINT,
-    CONTACT_API_URL,
     DEFAULT_HTTP_HEADERS,
     PIKACHU_PROXY_API,
     PROXY_HEALTH_CHECK_TIMEOUT,
     PROXY_HEALTH_CHECK_URL,
     PROXY_MAX_PROXIES,
-    PROXY_REMOTE_URL,
+    get_proxy_remote_url,
     STATUS_ENDPOINT,
 )
 from wjx.utils.logging.log_utils import (
@@ -36,7 +34,7 @@ STATUS_TIMEOUT_SECONDS = 5
 _quota_limit_dialog_shown = False
 _cached_default_quota: Optional[int] = None  # 缓存从API获取的默认额度
 _cached_default_quota_timestamp: float = 0.0  # 缓存时间戳
-_DEFAULT_QUOTA_CACHE_TTL = 1800  # 缓存有效期：30分钟（秒），从1小时改为30分钟
+_DEFAULT_QUOTA_CACHE_TTL = 1800  # 缓存有效期
 _DEFAULT_QUOTA_API_ENDPOINT = "https://api-wjx.hungrym0.top/api/default"  # 默认额度API端点
 _proxy_api_url_override: Optional[str] = None
 _proxy_area_code_override: Optional[str] = None
@@ -49,6 +47,44 @@ PROXY_SOURCE_CUSTOM = "custom"  # 自定义代理源
 
 # 当前选择的代理源
 _current_proxy_source: str = PROXY_SOURCE_DEFAULT
+# 匹配 IPv4:端口，支持可选的协议头和 user:pass@ 认证前缀
+_IP_PORT_RE = re.compile(
+    r'(?:https?://)?'
+    r'(?:([^\s:@/,]+):([^\s:@/,]+)@)?'
+    r'((?:\d{1,3}\.){3}\d{1,3})'
+    r':(\d{2,5})'
+)
+_IPZAN_MINUTE_OPTIONS: Tuple[int, ...] = (1, 3, 5, 10, 15, 30)
+_proxy_occupy_minute: int = 1
+_IPZAN_POOL_ORDINARY = "ordinary"
+_IPZAN_POOL_QUALITY = "quality"
+# 历史已支持的“省级随机”编码，继续走 ordinary
+_IPZAN_ORDINARY_PROVINCE_CODES: Set[str] = {
+    "110000",
+    "120000",
+    "130000",
+    "140000",
+    "150000",
+    "210000",
+    "220000",
+    "230000",
+    "320000",
+    "330000",
+    "340000",
+    "350000",
+    "360000",
+    "370000",
+    "410000",
+    "420000",
+    "430000",
+    "440000",
+    "460000",
+    "500000",
+    "510000",
+    "610000",
+    "620000",
+    "640000",
+}
 
 
 class AreaProxyQualityError(RuntimeError):
@@ -64,6 +100,58 @@ def set_proxy_source(source: str) -> None:
 def get_proxy_source() -> str:
     """获取当前代理源"""
     return _current_proxy_source
+
+
+def _to_non_negative_int(value: Any, default: int = 0) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        return max(0, int(default))
+    return max(0, parsed)
+
+
+def _map_answer_seconds_to_ipzan_minute(total_seconds: int) -> int:
+    """将作答时长（秒）映射为 ipzan minute 参数。"""
+    seconds = max(0, int(total_seconds))
+    if seconds < 60:
+        return 1
+    if seconds <= 180:
+        return 3
+    if seconds <= 300:
+        return 5
+    if seconds <= 600:
+        return 10
+    if seconds <= 900:
+        return 15
+    return 30
+
+
+def set_proxy_occupy_minute_by_answer_duration(answer_duration_range_seconds: Optional[Tuple[int, int]]) -> int:
+    """根据作答时长区间更新 ipzan 的 minute 参数。"""
+    global _proxy_occupy_minute
+
+    min_seconds = 0
+    max_seconds = 0
+    if isinstance(answer_duration_range_seconds, (list, tuple)):
+        if len(answer_duration_range_seconds) >= 1:
+            min_seconds = _to_non_negative_int(answer_duration_range_seconds[0], 0)
+        if len(answer_duration_range_seconds) >= 2:
+            max_seconds = _to_non_negative_int(answer_duration_range_seconds[1], min_seconds)
+        else:
+            max_seconds = min_seconds
+    max_seconds = max(max_seconds, min_seconds)
+
+    minute = _map_answer_seconds_to_ipzan_minute(max_seconds)
+    if minute not in _IPZAN_MINUTE_OPTIONS:
+        minute = 1
+    _proxy_occupy_minute = minute
+    logging.debug(
+        "已根据作答时长更新代理 minute=%s（min=%s秒, max=%s秒）",
+        minute,
+        min_seconds,
+        max_seconds,
+    )
+    return minute
 
 
 def _fetch_cn_http_proxies_from_pikachu() -> List[str]:
@@ -297,7 +385,7 @@ def _is_area_quality_retry_payload(payload: Any) -> bool:
 
 
 def _handle_area_quality_failure(stop_signal: Optional[threading.Event] = None) -> None:
-    log_popup_error("地区代理不可用", "当前地区IP质量差，建议选择不限地区")
+    log_popup_error("地区代理不可用", "当前地区IP质量差，建议切换其他地区")
     if stop_signal:
         try:
             if not stop_signal.is_set():
@@ -326,8 +414,64 @@ def _apply_area_to_proxy_url(url: str, area_code: Optional[str]) -> str:
     return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
 
 
+def _is_province_level_area_code(area_code: str) -> bool:
+    return bool(area_code) and len(area_code) == 6 and area_code.isdigit() and area_code.endswith("0000")
+
+
+def _resolve_ipzan_pool_by_area(area_code: Optional[str]) -> Optional[str]:
+    normalized_area = _normalize_area_code(area_code)
+    if not normalized_area:
+        # 不限地区时保持默认 URL 的 pool，不做覆盖
+        return None
+    if _is_province_level_area_code(normalized_area) and normalized_area in _IPZAN_ORDINARY_PROVINCE_CODES:
+        return _IPZAN_POOL_ORDINARY
+    return _IPZAN_POOL_QUALITY
+
+
+def _is_ipzan_core_extract_url(url: str) -> bool:
+    try:
+        split = urlsplit(url)
+    except Exception:
+        return False
+    host = str(split.netloc or "").lower()
+    path = str(split.path or "").lower()
+    return host.endswith("ipzan.com") and "core-extract" in path
+
+
+def _apply_minute_to_proxy_url(url: str, minute: int) -> str:
+    if not _is_ipzan_core_extract_url(url):
+        return url
+    try:
+        split = urlsplit(url)
+    except Exception:
+        return url
+
+    safe_minute = int(minute)
+    if safe_minute not in _IPZAN_MINUTE_OPTIONS:
+        safe_minute = 1
+
+    query_items = [(k, v) for k, v in parse_qsl(split.query, keep_blank_values=True) if k.lower() != "minute"]
+    query_items.append(("minute", str(safe_minute)))
+    query = urlencode(query_items, doseq=True)
+    return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
+
+
+def _apply_pool_to_proxy_url(url: str, pool: Optional[str]) -> str:
+    if not pool or not _is_ipzan_core_extract_url(url):
+        return url
+    try:
+        split = urlsplit(url)
+    except Exception:
+        return url
+
+    query_items = [(k, v) for k, v in parse_qsl(split.query, keep_blank_values=True) if k.lower() != "pool"]
+    query_items.append(("pool", pool))
+    query = urlencode(query_items, doseq=True)
+    return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
+
+
 def get_default_proxy_area_code() -> str:
-    url = (PROXY_REMOTE_URL or "").strip()
+    url = get_proxy_remote_url().strip()
     if not url:
         return ""
     try:
@@ -342,13 +486,19 @@ def get_default_proxy_area_code() -> str:
 
 def get_effective_proxy_api_url() -> str:
     override = (_proxy_api_url_override or "").strip()
-    url = override or PROXY_REMOTE_URL
+    url = override or get_proxy_remote_url()
     if get_proxy_source() != PROXY_SOURCE_DEFAULT:
         return url
-    return _apply_area_to_proxy_url(url, _proxy_area_code_override)
+    url = _apply_area_to_proxy_url(url, _proxy_area_code_override)
+    pool = _resolve_ipzan_pool_by_area(_proxy_area_code_override)
+    url = _apply_pool_to_proxy_url(url, pool)
+    return _apply_minute_to_proxy_url(url, _proxy_occupy_minute)
 
 
 def is_custom_proxy_api_active() -> bool:
+    """判断当前是否使用非默认代理源（不受 ipzan 额度限制）。"""
+    if _current_proxy_source != PROXY_SOURCE_DEFAULT:
+        return True
     return bool((_proxy_api_url_override or "").strip())
 
 
@@ -402,6 +552,8 @@ def _format_status_payload(payload: Any) -> tuple[str, str]:
 
 def _proxy_api_candidates(expected_count: int, proxy_url: Optional[str]) -> List[str]:
     url = proxy_url or get_effective_proxy_api_url()
+    if get_proxy_source() == PROXY_SOURCE_DEFAULT:
+        url = _apply_minute_to_proxy_url(url, _proxy_occupy_minute)
     if not url:
         raise RuntimeError("随机IP接口未配置，请先在界面中填写或在 .env 中设置 RANDOM_IP_API_URL")
     if "{num}" in url:
@@ -414,26 +566,23 @@ def _proxy_api_candidates(expected_count: int, proxy_url: Optional[str]) -> List
 
 
 def _extract_proxy_from_string(s: str) -> Optional[str]:
-    """从字符串中提取代理地址，支持多种格式"""
+    """从字符串中提取代理地址，用正则直接识别 IP:端口，不依赖格式约定"""
     if not isinstance(s, str):
         return None
-    s = s.strip()
-    if not s:
+    m = _IP_PORT_RE.search(s.strip())
+    if not m:
         return None
-    # 格式: "IP:端口,地区" 或 "IP:端口"
-    parts = s.split(",", 1)
-    addr = parts[0].strip()
-    # 验证是否是有效的 IP:端口 格式
-    if ":" in addr and not addr.startswith("http"):
-        return addr
-    return None
+    user, pwd, ip, port = m.group(1), m.group(2), m.group(3), m.group(4)
+    if user and pwd:
+        return f"{user}:{pwd}@{ip}:{port}"
+    return f"{ip}:{port}"
 
 
 def _extract_proxy_from_dict(obj: dict) -> Optional[str]:
     """从字典对象中提取代理地址"""
     if not isinstance(obj, dict):
         return None
-    # 尝试提取 ip + port
+    # 快速路径：尝试 ip + port 字段组合
     ip = str(obj.get("ip") or obj.get("IP") or obj.get("host") or "").strip()
     port = str(obj.get("port") or obj.get("Port") or obj.get("PORT") or "").strip()
     if ip and port:
@@ -442,6 +591,12 @@ def _extract_proxy_from_dict(obj: dict) -> Optional[str]:
         if username and password:
             return f"{username}:{password}@{ip}:{port}"
         return f"{ip}:{port}"
+    # 兜底：扫描所有字符串值，用正则识别 IP:端口（兼容 addr/proxy 等非标准字段名）
+    for v in obj.values():
+        if isinstance(v, str):
+            proxy = _extract_proxy_from_string(v)
+            if proxy:
+                return proxy
     return None
 
 
@@ -727,7 +882,7 @@ def _fetch_new_proxy_batch(
                 if _is_area_quality_retry_payload(payload):
                     if notify_on_area_error:
                         _handle_area_quality_failure(stop_signal)
-                    raise AreaProxyQualityError("当前地区IP质量差，建议选择不限地区")
+                    raise AreaProxyQualityError("当前地区IP质量差，建议切换其他地区")
             parsed = _parse_proxy_payload(resp.text)
             candidates.extend(parsed)
             if candidates:

@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from wjx.utils.app.config import DEFAULT_RANDOM_UA_KEYS, USER_AGENT_PRESETS, BROWSER_PREFERENCE
+from wjx.core.questions.consistency import normalize_rule_dict
 from wjx.network.proxy import normalize_random_ip_enabled_value
 
 if TYPE_CHECKING:
@@ -56,6 +57,8 @@ def get_assets_directory() -> str:
 __all__ = [
     "_sanitize_filename",
     "_select_user_agent_from_keys",
+    "_select_user_agent_from_ratios",
+    "build_default_config_filename",
     "RuntimeConfig",
     "serialize_question_entry",
     "deserialize_question_entry",
@@ -91,6 +94,48 @@ def _select_user_agent_from_keys(selected_keys: List[str]) -> Tuple[Optional[str
     return preset.get("ua"), preset.get("label")
 
 
+def _select_user_agent_from_ratios(ratios: Dict[str, int]) -> Tuple[Optional[str], Optional[str]]:
+    """
+    根据设备类型占比选择 User-Agent
+
+    Args:
+        ratios: 设备类型占比字典，格式为 {"wechat": 33, "mobile": 33, "pc": 34}
+                - wechat: 微信访问（安卓微信）
+                - mobile: 手机访问（安卓手机浏览器）
+                - pc: 链接访问（电脑网页端）
+
+    Returns:
+        (ua, label) 元组
+    """
+    # 映射设备类型到UA预设键
+    device_to_ua_keys = {
+        "wechat": ["wechat_android"],
+        "mobile": ["mobile_android"],
+        "pc": ["pc_web"],
+    }
+
+    # 先按占比选择设备类型
+    weighted_devices = []
+    for device_type, weight in ratios.items():
+        if weight > 0:
+            weighted_devices.extend([device_type] * weight)
+
+    if not weighted_devices:
+        return None, None
+
+    # 随机选择设备类型
+    device_type = random.choice(weighted_devices)
+
+    # 从该设备类型的UA键中随机选一个
+    ua_keys = device_to_ua_keys.get(device_type, [])
+    if not ua_keys:
+        return None, None
+
+    key = random.choice(ua_keys)
+    preset = USER_AGENT_PRESETS.get(key) or {}
+    return preset.get("ua"), preset.get("label")
+
+
 def _ensure_configs_dir() -> str:
     """Ensure the configs directory exists and return its path."""
     base = get_runtime_directory()
@@ -103,9 +148,18 @@ def _default_config_path() -> str:
     return os.path.join(get_runtime_directory(), "config.json")
 
 
+def build_default_config_filename(survey_title: Optional[str] = None) -> str:
+    """生成默认配置文件名（不包含时间戳）"""
+    title = _sanitize_filename(survey_title or "")
+    if title:
+        return f"{title}.json"
+    return "wjx_config.json"
+
+
 @dataclass
 class RuntimeConfig:
     url: str = ""
+    survey_title: str = ""
     target: int = 1
     threads: int = 1
     browser_preference: List[str] = field(default_factory=list)
@@ -120,8 +174,11 @@ class RuntimeConfig:
     proxy_area_code: Optional[str] = None
     random_ua_enabled: bool = False
     random_ua_keys: List[str] = field(default_factory=lambda: list(DEFAULT_RANDOM_UA_KEYS))
+    random_ua_ratios: Dict[str, int] = field(default_factory=lambda: {"wechat": 33, "mobile": 33, "pc": 34})  # 设备类型占比
     fail_stop_enabled: bool = True
     pause_on_aliyun_captcha: bool = True
+    reliability_mode_enabled: bool = True  # 信效度模式开关（控制维度设置是否可用）
+    headless_mode: bool = False
     debug_mode: bool = False
     ai_enabled: bool = False
     ai_provider: str = "deepseek"
@@ -129,6 +186,7 @@ class RuntimeConfig:
     ai_base_url: str = ""
     ai_model: str = ""
     ai_system_prompt: str = ""
+    answer_rules: List[Dict[str, Any]] = field(default_factory=list)
     question_entries: List[QuestionEntry] = field(default_factory=list)
     questions_info: Optional[List[Dict[str, Any]]] = field(default_factory=list)
     _ai_config_present: bool = field(default=False, init=False, repr=False)
@@ -187,9 +245,12 @@ def serialize_question_entry(entry: QuestionEntry) -> Dict[str, Any]:
         "question_num": entry.question_num,
         "question_title": getattr(entry, "question_title", None),
         "ai_enabled": bool(getattr(entry, "ai_enabled", False)),
+        "text_random_mode": str(getattr(entry, "text_random_mode", "none") or "none"),
         "option_fill_texts": entry.option_fill_texts,
         "fillable_option_indices": entry.fillable_option_indices,
         "is_location": getattr(entry, "is_location", False),
+        "is_reverse": bool(getattr(entry, "is_reverse", False)),
+        "row_reverse_flags": list(getattr(entry, "row_reverse_flags", []) or []),
     }
 
 
@@ -237,6 +298,8 @@ def deserialize_question_entry(data: Dict[str, Any]) -> "QuestionEntry":
     custom_weights = data.get("custom_weights")
     if mode_raw == "custom" and _prob_config_is_unset(probabilities) and _custom_weights_has_positive(custom_weights):
         probabilities = custom_weights
+    if mode_raw == "custom" and (custom_weights is None or custom_weights == []) and isinstance(probabilities, list):
+        custom_weights = list(probabilities)
     return QuestionEntry(
         question_type=data.get("question_type") or "text",
         probabilities=probabilities,
@@ -248,9 +311,12 @@ def deserialize_question_entry(data: Dict[str, Any]) -> "QuestionEntry":
         question_num=data.get("question_num"),
         question_title=data.get("question_title"),
         ai_enabled=bool(data.get("ai_enabled", False)),
+        text_random_mode=str(data.get("text_random_mode") or "none"),
         option_fill_texts=data.get("option_fill_texts"),
         fillable_option_indices=data.get("fillable_option_indices"),
         is_location=bool(data.get("is_location")),
+        is_reverse=bool(data.get("is_reverse", False)),
+        row_reverse_flags=[bool(v) for v in (data.get("row_reverse_flags") or [])],
     )
 
 
@@ -308,6 +374,7 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
 
     config = RuntimeConfig()
     config.url = str(raw.get("url") or "")
+    config.survey_title = str(raw.get("survey_title") or "")
     config.target = _as_int(raw.get("target") or raw.get("target_num") or 1, 1)
     config.threads = _as_int(raw.get("threads") or raw.get("num_threads") or 1, 1)
     config.browser_preference = _browser_pref_list(raw.get("browser_preference") or raw.get("preferred_browser"))
@@ -351,9 +418,35 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     config.random_ua_enabled = bool(raw.get("random_ua_enabled") if "random_ua_enabled" in raw else legacy_ua.get("enabled"))
     selected_ua_keys = raw.get("random_ua_keys") if "random_ua_keys" in raw else legacy_ua.get("selected")
     config.random_ua_keys = _filter_valid_user_agent_keys(selected_ua_keys or [])
+
+    # random UA ratios: 设备类型占比配置
+    raw_ratios = raw.get("random_ua_ratios")
+    if isinstance(raw_ratios, dict):
+        # 验证占比总和是否为100
+        total = sum(_as_int(v, 0) for v in raw_ratios.values())
+        if total == 100:
+            config.random_ua_ratios = {
+                "wechat": _as_int(raw_ratios.get("wechat"), 33),
+                "mobile": _as_int(raw_ratios.get("mobile"), 33),
+                "pc": _as_int(raw_ratios.get("pc"), 34),
+            }
+        else:
+            # 占比不合法，使用默认值
+            config.random_ua_ratios = {"wechat": 33, "mobile": 33, "pc": 34}
+    else:
+        config.random_ua_ratios = {"wechat": 33, "mobile": 33, "pc": 34}
+
     config.fail_stop_enabled = bool(raw.get("fail_stop_enabled", True))
     config.pause_on_aliyun_captcha = bool(raw.get("pause_on_aliyun_captcha", True))
+    config.reliability_mode_enabled = bool(raw.get("reliability_mode_enabled", True))
     config.debug_mode = bool(raw.get("debug_mode", False))
+    config.answer_rules = []
+    raw_rules = raw.get("answer_rules")
+    if isinstance(raw_rules, list):
+        for item in raw_rules:
+            normalized_rule = normalize_rule_dict(item)
+            if normalized_rule:
+                config.answer_rules.append(normalized_rule)
 
     ai_keys = {
         "ai_enabled",

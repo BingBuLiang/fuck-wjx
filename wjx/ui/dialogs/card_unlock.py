@@ -1,5 +1,4 @@
 """卡密解锁对话框"""
-import os
 import webbrowser
 from typing import Optional, Callable
 import logging
@@ -10,7 +9,8 @@ from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLineEdit
 from qfluentwidgets import (
     BodyLabel,
-    SubtitleLabel,
+    TitleLabel,
+    StrongBodyLabel,
     CardWidget,
     PushButton,
     PrimaryPushButton,
@@ -27,7 +27,6 @@ from qfluentwidgets import (
 
 from wjx.ui.widgets import StatusPollingMixin
 from wjx.network.proxy import get_status, _format_status_payload
-from wjx.utils.io.load_save import get_assets_directory
 from wjx.utils.app.version import ISSUE_FEEDBACK_URL
 from wjx.ui.pages.more.donate import DonatePage
 
@@ -70,8 +69,9 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self._validateFinished.connect(self._on_validate_finished)
-        self.setWindowTitle("随机IP额度限制")
-        self.resize(820, 600)
+        self.setWindowTitle("获取大额随机 IP 额度")
+        self.resize(720, 520)
+        self.setMinimumSize(600, 480)
         
         # 初始化状态轮询 Mixin
         self._init_status_polling(status_fetcher, status_formatter)
@@ -83,93 +83,123 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
         self._validation_quota: Optional[int] = None
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(32, 28, 32, 28)
+        layout.setSpacing(24)
 
-        title = SubtitleLabel("解锁大额随机IP提交额度", self)
-        layout.addWidget(title)
+        # --- 1. 标题和描述 ---
+        header_layout = QVBoxLayout()
+        header_layout.setSpacing(12)
+        
+        title_row = QHBoxLayout()
+        title_row.setSpacing(12)
+        title_icon = IconWidget(FluentIcon.EXPRESSIVE_INPUT_ENTRY, self)
+        title_icon.setFixedSize(28, 28)
+        title = TitleLabel("解锁大额随机 IP 提交额度", self)
+        title_row.addWidget(title_icon)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        header_layout.addLayout(title_row)
 
         desc = BodyLabel(
-            "作者只是一个大一小登，但是由于ip池及开发成本较高，用户量大，问卷份数要求多，"
-            "加上学业压力，导致长期如此无偿经营困难……",
+            "作者只是一名大一学生，由于 IP 池及开发成本高昂，且用户群体日益庞大、"
+            "问卷份数要求增长，单凭个人力量长期维护已十分困难…… 如果该功能帮到了您，"
+            "可否打赏支持😭🙏",
             self,
         )
         desc.setWordWrap(True)
-        layout.addWidget(desc)
+        header_layout.addWidget(desc)
+        layout.addLayout(header_layout)
 
-        # 步骤说明卡片
+        # --- 2. 步骤说明卡片 ---
         steps_card = CardWidget(self)
         steps_layout = QVBoxLayout(steps_card)
-        steps_layout.setContentsMargins(12, 10, 12, 10)
-        steps_layout.setSpacing(4)
+        steps_layout.setContentsMargins(24, 20, 24, 20)
+        steps_layout.setSpacing(12)
         
-        step1 = BodyLabel("1. 捐助任意金额（🥹多少都行）", steps_card)
-        step2 = BodyLabel("2. 在「联系」中找到开发者，并留下联系邮箱", steps_card)
-        step3 = BodyLabel("3. 输入卡密后即可解锁大额随机IP提交额度，不够用可继续免费申请", steps_card)
-        step4 = BodyLabel("4. 你也可以通过自己的口才白嫖卡密（误）", steps_card)
+        steps_title = StrongBodyLabel("获取与验证指南", steps_card)
+        steps_layout.addWidget(steps_title)
+        
+        step1 = BodyLabel("1. 赞助支持（🥹 任意金额，全凭心意，非常感激）", steps_card)
+        step2 = BodyLabel("2. 在「联系」中找到开发者并留言，附上您的联系邮箱", steps_card)
+        step3 = BodyLabel("3. 大概等一会收到到卡密邮件后在此处进行验证", steps_card)
+        step4 = BodyLabel("4. 暂无条件的用户也可凭借口才与开发者友好交流获取😁（误）", steps_card)
         step4.setStyleSheet("color: #888; text-decoration: line-through;")
         
-        steps_layout.addWidget(step1)
-        steps_layout.addWidget(step2)
-        steps_layout.addWidget(step3)
-        steps_layout.addWidget(step4)
+        for step in (step1, step2, step3, step4):
+            steps_layout.addWidget(step)
+            
         layout.addWidget(steps_card)
 
-        thanks = BodyLabel("感谢您的支持与理解！", self)
-        layout.addWidget(thanks)
-
-        # 在线状态行（带加载动画）
+        # --- 3. 联系方式与在线状态 ---
+        support_row = QHBoxLayout()
+        support_row.setSpacing(12)
+        
+        self.contact_btn = PushButton("前往申请", self, FluentIcon.CHAT)
+        self.donate_btn = PushButton("赞助支持", self, FluentIcon.HEART)
+        support_row.addWidget(self.contact_btn)
+        support_row.addWidget(self.donate_btn)
+        
+        support_row.addSpacing(16)
+        
+        # 状态区
         status_row = QHBoxLayout()
-        status_row.setSpacing(8)
+        status_row.setSpacing(6)
         self.status_spinner = IndeterminateProgressRing(self)
         self.status_spinner.setFixedSize(16, 16)
         self.status_spinner.setStrokeWidth(2)
         self.status_icon = IconWidget(FluentIcon.INFO, self)
         self.status_icon.setFixedSize(16, 16)
         self.status_icon.hide()
-        self.status_label = BodyLabel("作者当前在线状态：获取中...", self)
+        self.status_label = BodyLabel("获取在线状态中...", self)
         self.status_label.setStyleSheet("color:#BA8303;")
         status_row.addWidget(self.status_spinner)
         status_row.addWidget(self.status_icon)
         status_row.addWidget(self.status_label)
-        status_row.addStretch(1)
-        layout.addLayout(status_row)
+        
+        support_row.addLayout(status_row)
+        support_row.addStretch(1)
+        layout.addLayout(support_row)
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
-        self.contact_btn = PushButton("联系", self, FluentIcon.MESSAGE)
-        self.donate_btn = PushButton("捐助", self, FluentIcon.HEART)
-        btn_row.addWidget(self.contact_btn)
-        btn_row.addWidget(self.donate_btn)
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
+        # 增加弹性空间，避免小窗口时拥挤
+        layout.addStretch(1)
 
-        layout.addWidget(BodyLabel("请输入卡密：", self))
+        # --- 4. 卡密输入区 ---
+        input_layout = QVBoxLayout()
+        input_layout.setSpacing(8)
+        
+        input_label = StrongBodyLabel("申请后在此处粘贴卡密：", self)
+        input_layout.addWidget(input_label)
+        
         self.card_edit = PasswordLineEdit(self)
-        self.card_edit.setPlaceholderText("输入卡密后点击「验证」")
-        # 修改眼睛按钮为点击切换模式（而非按住模式）
-        self._setup_toggle_password_button()
+        self.card_edit.setPlaceholderText("验证成功后长期有效，更新版本不受影响")
+        self.card_edit.setClearButtonEnabled(True)
         # 为卡密输入框添加右键菜单
+        self._setup_toggle_password_button()
         self.card_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.card_edit.customContextMenuRequested.connect(self._show_card_edit_menu)
-        layout.addWidget(self.card_edit)
+        input_layout.addWidget(self.card_edit)
+        
+        layout.addLayout(input_layout)
 
+        # --- 5. 底部动作按钮 ---
         action_row = QHBoxLayout()
         action_row.addStretch(1)
-        self.cancel_btn = PushButton("取消", self)
-        self.ok_btn = PrimaryPushButton("验证", self, FluentIcon.COMPLETED)
-        # 验证按钮旁的转圈动画（放在右边）
+        
+        self.cancel_btn = PushButton("稍后再说", self)
+        self.ok_btn = PrimaryPushButton("验证卡密", self, FluentIcon.COMPLETED)
         self.validate_spinner = IndeterminateProgressRing(self)
-        self.validate_spinner.setFixedSize(20, 20)
+        self.validate_spinner.setFixedSize(18, 18)
         self.validate_spinner.setStrokeWidth(2)
         self.validate_spinner.hide()
+        
         action_row.addWidget(self.cancel_btn)
-        action_row.addWidget(self.ok_btn)
         action_row.addWidget(self.validate_spinner)
+        action_row.addWidget(self.ok_btn)
         layout.addLayout(action_row)
 
         self.cancel_btn.clicked.connect(self.reject)
         self.ok_btn.clicked.connect(self._on_validate_clicked)
+        self.card_edit.returnPressed.connect(self._on_validate_clicked)
         self.contact_btn.clicked.connect(contact_handler if callable(contact_handler) else self._open_contact)
         self.donate_btn.clicked.connect(self._open_donate)
 

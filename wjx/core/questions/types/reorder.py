@@ -3,7 +3,7 @@ import logging
 import random
 import re
 import time
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 from wjx.network.browser import By, BrowserDriver
 from wjx.core.questions.utils import extract_text_from_element
@@ -370,10 +370,8 @@ def reorder(driver: BrowserDriver, current: int) -> None:
             return
         if _is_rank_selected(item):
             return
-        success = False
         for _ in range(2):
             if _robust_click_rank_item(option_idx):
-                success = True
                 break
             time.sleep(0.05)
         _ = rank

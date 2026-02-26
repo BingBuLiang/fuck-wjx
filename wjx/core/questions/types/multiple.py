@@ -4,7 +4,7 @@ import logging
 import math
 import random
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from wjx.network.browser import By, BrowserDriver, NoSuchElementException
 from wjx.utils.app.config import (
@@ -27,7 +27,6 @@ from wjx.core.questions.utils import (
     extract_text_from_element,
 )
 from wjx.core.persona.context import apply_persona_boost, record_answer
-from wjx.core.stats.collector import stats_collector
 
 # 缓存检测到的多选限制
 _DETECTED_MULTI_LIMITS: Dict[Tuple[str, int], Optional[int]] = {}
@@ -344,15 +343,16 @@ def multiple(driver: BrowserDriver, current: int, index: int, multiple_prob_conf
         option_texts.append(extract_text_from_element(elem))
 
     if selection_probabilities == -1 or (isinstance(selection_probabilities, list) and len(selection_probabilities) == 1 and selection_probabilities[0] == -1):
-        num_to_select = random.randint(min_required, max_allowed)
-        selected_indices = random.sample(range(len(option_elements)), num_to_select)
+        pool = list(range(len(option_elements)))
+        max_select = min(max_allowed, len(pool))
+        num_to_select = random.randint(min_required, max_select)
+        selected_indices = random.sample(pool, num_to_select)
         for option_idx in selected_indices:
             selector = f"#div{current} > div.ui-controlgroup > div:nth-child({option_idx + 1})"
             driver.find_element(By.CSS_SELECTOR, selector).click()
             fill_value = get_fill_text_from_config(fill_entries, option_idx)
             fill_option_additional_text(driver, current, option_idx, fill_value)
         # 记录统计数据
-        stats_collector.record_multiple_choice(current, selected_indices)
         # 记录作答上下文
         selected_texts = [option_texts[i] for i in selected_indices if i < len(option_texts)]
         record_answer(current, "multiple", selected_indices=selected_indices, selected_texts=selected_texts)
@@ -400,7 +400,6 @@ def multiple(driver: BrowserDriver, current: int, index: int, multiple_prob_conf
                 "第%d题（多选）：所有选项概率都 <= 0，已跳过本题作答；请在配置中至少保留一个 > 0%% 的选项。",
                 current,
             )
-        stats_collector.record_multiple_choice(current, [])
         return
     while sum(selection_mask) == 0 and attempts < max_attempts:
         selection_mask = [1 if random.random() < (prob / 100.0) else 0 for prob in selection_probabilities]
@@ -446,7 +445,6 @@ def multiple(driver: BrowserDriver, current: int, index: int, multiple_prob_conf
         fill_option_additional_text(driver, current, option_idx, fill_value)
 
     # 记录统计数据
-    stats_collector.record_multiple_choice(current, selected_indices)
 
     # 记录作答上下文
     selected_texts = [option_texts[i] for i in selected_indices if i < len(option_texts)]

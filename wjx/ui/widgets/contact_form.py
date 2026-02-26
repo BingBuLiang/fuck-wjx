@@ -2,7 +2,7 @@
 import re
 import threading
 from datetime import datetime
-from typing import Optional, Callable, Any, cast
+from typing import Optional, Callable, cast
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QFileDialog,
     QLabel,
-    QScrollArea,
 )
 from qfluentwidgets import (
     BodyLabel,
@@ -37,7 +36,7 @@ from qfluentwidgets import (
 from wjx.ui.widgets.status_polling_mixin import StatusPollingMixin
 from wjx.ui.helpers.image_attachments import ImageAttachmentManager
 import wjx.network.http_client as http_client
-from wjx.utils.app.config import CONTACT_API_URL
+from wjx.utils.app.config import CONTACT_API_URL, EMAIL_VERIFY_ENDPOINT
 from wjx.utils.app.version import __VERSION__
 
 
@@ -100,6 +99,7 @@ class ContactForm(StatusPollingMixin, QWidget):
 
     _statusLoaded = Signal(str, str)  # text, color
     _sendFinished = Signal(bool, str)  # success, message
+    _verifyCodeFinished = Signal(bool, str, str)  # success, message, email
 
     sendSucceeded = Signal()
     cancelRequested = Signal()
@@ -116,55 +116,97 @@ class ContactForm(StatusPollingMixin, QWidget):
     ):
         super().__init__(parent)
         self._sendFinished.connect(self._on_send_finished)
+        self._verifyCodeFinished.connect(self._on_verify_code_finished)
         self._init_status_polling(status_fetcher, status_formatter)
         self._attachments = ImageAttachmentManager(max_count=3, max_size_bytes=10 * 1024 * 1024)
         self._current_message_type: str = ""
         self._current_has_email: bool = False
+        self._verify_code_requested: bool = False
+        self._verify_code_requested_email: str = ""
+        self._verify_code_sending: bool = False
+        self._cooldown_timer: Optional[QTimer] = None
+        self._cooldown_remaining: int = 0
         self._polling_started = False
         self._auto_clear_on_success = auto_clear_on_success
         self._manage_polling = manage_polling
 
         wrapper = QVBoxLayout(self)
         wrapper.setContentsMargins(0, 0, 0, 0)
-        wrapper.setSpacing(12)
+        wrapper.setSpacing(16)
 
+        # 顶部表单区
         form_layout = QVBoxLayout()
-        form_layout.setSpacing(10)
+        form_layout.setSpacing(12)
         form_layout.setContentsMargins(0, 0, 0, 0)
-        self.email_label = BodyLabel("您的邮箱（选填，如果希望收到回复的话）：", self)
-        form_layout.addWidget(self.email_label)
-        self.email_edit = PasteOnlyLineEdit(self)
-        self.email_edit.setPlaceholderText("name@example.com")
-        form_layout.addWidget(self.email_edit)
 
-        form_layout.addWidget(BodyLabel("消息类型（可选）：", self))
+        LABEL_WIDTH = 75
+
+        # 1. 消息类型
+        type_row = QHBoxLayout()
+        self.type_label_static = BodyLabel("消息类型：", self)
+        self.type_label_static.setFixedWidth(LABEL_WIDTH)
         self.type_combo = ComboBox(self)
         self.base_options = ["报错反馈", "卡密获取", "新功能建议", "纯聊天"]
         for item in self.base_options:
             self.type_combo.addItem(item, item)
-        form_layout.addWidget(self.type_combo)
+        self.type_combo.setMinimumWidth(160)
+        type_row.addWidget(self.type_label_static)
+        type_row.addWidget(self.type_combo)
+        type_row.addStretch(1)
+        form_layout.addLayout(type_row)
 
-        # 金额输入行（仅卡密获取时显示）
+        # 2. 邮箱 + 验证码（同一行）
+        email_row = QHBoxLayout()
+        self.email_label = BodyLabel("联系邮箱：", self)
+        self.email_label.setFixedWidth(LABEL_WIDTH)
+        self.email_edit = PasteOnlyLineEdit(self)
+        self.email_edit.setPlaceholderText("name@example.com")
+        email_row.addWidget(self.email_label)
+        email_row.addWidget(self.email_edit)
+
+        self.verify_code_edit = LineEdit(self)
+        self.verify_code_edit.setPlaceholderText("6位验证码")
+        self.verify_code_edit.setMaxLength(6)
+        self.verify_code_edit.setValidator(QIntValidator(0, 999999, self))
+        self.verify_code_edit.setMaximumWidth(120)
+
+        self.send_verify_btn = PushButton("发送验证码", self)
+        self.verify_send_spinner = IndeterminateProgressRing(self)
+        self.verify_send_spinner.setFixedSize(16, 16)
+        self.verify_send_spinner.setStrokeWidth(2)
+        self.verify_send_spinner.hide()
+
+        email_row.addSpacing(4)
+        email_row.addWidget(self.send_verify_btn)
+        email_row.addWidget(self.verify_send_spinner)
+        email_row.addWidget(self.verify_code_edit)
+        form_layout.addLayout(email_row)
+
+        self.verify_code_edit.hide()
+        self.send_verify_btn.hide()
+        self.verify_send_spinner.hide()
+
+        # 4. 卡密参数
         self.amount_row = QHBoxLayout()
-        self.amount_label = BodyLabel("捐(施)助(舍)的金额：￥", self)
+        self.amount_label = BodyLabel("捐(施)助(舍)金额：￥", self)
         self.amount_edit = LineEdit(self)
-        self.amount_edit.setPlaceholderText("请输入金额")
-        self.amount_edit.setMaximumWidth(200)
-        validator = QDoubleValidator(0.0, 999999.99, 2, self)
+        self.amount_edit.setPlaceholderText("🙏😭🙏")
+        self.amount_edit.setMaximumWidth(100)
+        validator = QDoubleValidator(0.0, 9999.99, 2, self)
         validator.setNotation(QDoubleValidator.Notation.StandardNotation)
         self.amount_edit.setValidator(validator)
         self.amount_edit.textChanged.connect(self._on_amount_changed)
 
         self.quantity_label = BodyLabel("大概需求份数：", self)
         self.quantity_edit = LineEdit(self)
-        self.quantity_edit.setPlaceholderText("请输入份数")
-        self.quantity_edit.setMaximumWidth(140)
-        self.quantity_edit.setValidator(QIntValidator(1, 999999, self))
+        self.quantity_edit.setPlaceholderText("1~9999")
+        self.quantity_edit.setMaximumWidth(110)
+        self.quantity_edit.setValidator(QIntValidator(1, 9999, self))
         self.quantity_edit.textChanged.connect(self._on_quantity_changed)
 
         self.urgency_label = BodyLabel("紧急程度：", self)
         self.urgency_combo = ComboBox(self)
-        self.urgency_combo.setMaximumWidth(140)
+        self.urgency_combo.setMaximumWidth(100)
         for urgency in ["低", "中", "高", "紧急"]:
             self.urgency_combo.addItem(urgency, urgency)
         urgency_default_index = self.urgency_combo.findText("中")
@@ -174,12 +216,15 @@ class ContactForm(StatusPollingMixin, QWidget):
 
         self.amount_row.addWidget(self.amount_label)
         self.amount_row.addWidget(self.amount_edit)
+        self.amount_row.addSpacing(16)
         self.amount_row.addWidget(self.quantity_label)
         self.amount_row.addWidget(self.quantity_edit)
+        self.amount_row.addSpacing(16)
         self.amount_row.addWidget(self.urgency_label)
         self.amount_row.addWidget(self.urgency_combo)
-        self.amount_row.addStretch()
+        self.amount_row.addStretch(1)
         form_layout.addLayout(self.amount_row)
+
         self.amount_label.hide()
         self.amount_edit.hide()
         self.quantity_label.hide()
@@ -187,53 +232,60 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.urgency_label.hide()
         self.urgency_combo.hide()
 
-        self.message_label = BodyLabel("请输入您的消息：", self)
-        form_layout.addWidget(self.message_label)
+        # 第二部分：消息内容
+        msg_layout = QVBoxLayout()
+        msg_layout.setSpacing(6)
+        msg_label_row = QHBoxLayout()
+        self.message_label = BodyLabel("消息内容：", self)
+        msg_label_row.addWidget(self.message_label)
+        msg_label_row.addStretch(1)
+
         self.message_edit = PasteOnlyPlainTextEdit(self, self._on_context_paste)
-        self.message_edit.setPlaceholderText("请描述问题、需求或留言…")
-        self.message_edit.setMinimumHeight(180)
-        form_layout.addWidget(self.message_edit, 1)
+        self.message_edit.setPlaceholderText("请详细描述您的问题、需求或留言…")
+        self.message_edit.setMinimumHeight(140)
         self.message_edit.installEventFilter(self)
 
-        # 图片附件区域
+        msg_layout.addLayout(msg_label_row)
+        msg_layout.addWidget(self.message_edit, 1)
+
+        # 第三部分：图片附件
         attachments_box = QVBoxLayout()
         attachments_box.setSpacing(6)
-        attachments_box.addWidget(BodyLabel("图片附件（最多3张，单张≤10MB，仅图片）：", self))
 
         attach_toolbar = QHBoxLayout()
-        self.attach_add_btn = PushButton("选择图片", self)
-        self.attach_clear_btn = PushButton("清空附件", self)
-        attach_hint = BodyLabel("支持 Ctrl+V 粘贴图片", self)
+        attach_title = BodyLabel("图片附件 (最多3张，支持Ctrl+V粘贴，单张≤10MB):", self)
+
+        self.attach_add_btn = PushButton(FluentIcon.ADD, "添加图片", self)
+        self.attach_clear_btn = PushButton(FluentIcon.DELETE, "清空附件", self)
+
+        attach_toolbar.addWidget(attach_title)
+        attach_toolbar.addStretch(1)
         attach_toolbar.addWidget(self.attach_add_btn)
         attach_toolbar.addWidget(self.attach_clear_btn)
-        attach_toolbar.addStretch(1)
-        attach_toolbar.addWidget(attach_hint)
+
         attachments_box.addLayout(attach_toolbar)
 
-        self.attach_list_layout = QVBoxLayout()
-        self.attach_list_layout.setSpacing(8)
+        self.attach_list_layout = QHBoxLayout()
+        self.attach_list_layout.setSpacing(12)
+        self.attach_list_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
         self.attach_list_container = QWidget(self)
         self.attach_list_container.setLayout(self.attach_list_layout)
 
-        self.attach_scroll = QScrollArea(self)
-        self.attach_scroll.setWidgetResizable(True)
-        self.attach_scroll.setWidget(self.attach_list_container)
-        self.attach_scroll.setMinimumHeight(140)
-        self.attach_scroll.setMaximumHeight(240)
-        self.attach_scroll.setVisible(False)
-
         self.attach_placeholder = BodyLabel("暂无附件", self)
         self.attach_placeholder.setStyleSheet("color: #888; padding: 6px;")
-        self.attach_placeholder.setFixedHeight(32)
 
-        attachments_box.addWidget(self.attach_scroll)
+        attachments_box.addWidget(self.attach_list_container)
         attachments_box.addWidget(self.attach_placeholder)
-        form_layout.addLayout(attachments_box)
-        self._render_attachments_ui()
 
-        # 将表单内容整体加入外层布局
+        # 组装表单、消息、附件
         wrapper.addLayout(form_layout)
+        wrapper.addLayout(msg_layout, 1) # 给消息框最大的 stretch
+        wrapper.addLayout(attachments_box)
+
+        # 第四部分：底部状态与按钮
+        bottom_layout = QHBoxLayout()
+        bottom_layout.setContentsMargins(0, 8, 0, 0)
 
         status_row = QHBoxLayout()
         status_row.setSpacing(8)
@@ -248,11 +300,9 @@ class ContactForm(StatusPollingMixin, QWidget):
         status_row.addWidget(self.status_spinner)
         status_row.addWidget(self.status_icon)
         status_row.addWidget(self.online_label)
-        status_row.addStretch(1)
-        wrapper.addLayout(status_row)
 
         btn_row = QHBoxLayout()
-        btn_row.addStretch(1)
+        btn_row.setSpacing(10)
         self.cancel_btn: Optional[PushButton] = None
         if show_cancel_button:
             self.cancel_btn = PushButton("取消", self)
@@ -262,9 +312,13 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.send_spinner.setFixedSize(20, 20)
         self.send_spinner.setStrokeWidth(3)
         self.send_spinner.hide()
-        btn_row.addWidget(self.send_btn)
         btn_row.addWidget(self.send_spinner)
-        wrapper.addLayout(btn_row)
+        btn_row.addWidget(self.send_btn)
+
+        bottom_layout.addLayout(status_row)
+        bottom_layout.addStretch(1)
+        bottom_layout.addLayout(btn_row)
+        wrapper.addLayout(bottom_layout)
 
         self.type_combo.currentIndexChanged.connect(lambda _: self._on_type_changed())
         QTimer.singleShot(0, self._on_type_changed)
@@ -274,6 +328,7 @@ class ContactForm(StatusPollingMixin, QWidget):
                 self.type_combo.setCurrentIndex(idx)
 
         self.send_btn.clicked.connect(self._on_send_clicked)
+        self.send_verify_btn.clicked.connect(self._on_send_verify_clicked)
         self.attach_add_btn.clicked.connect(self._on_choose_files)
         self.attach_clear_btn.clicked.connect(self._on_clear_attachments)
         if self.cancel_btn is not None:
@@ -308,6 +363,7 @@ class ContactForm(StatusPollingMixin, QWidget):
     def closeEvent(self, event):
         """关闭事件：停止轮询、关闭所有 InfoBar 并断开信号"""
         self.stop_status_polling()
+        self._stop_cooldown()
 
         # 关闭所有可能存在的 InfoBar，避免其内部线程导致崩溃
         self._close_all_infobars()
@@ -315,6 +371,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         # 断开所有信号连接以避免回调析构警告
         try:
             self._sendFinished.disconnect()
+            self._verifyCodeFinished.disconnect()
             self._statusLoaded.disconnect()
         except Exception as exc:
             log_suppressed_exception("closeEvent: disconnect signals", exc, level=logging.WARNING)
@@ -362,39 +419,48 @@ class ContactForm(StatusPollingMixin, QWidget):
         """重新渲染附件列表。"""
         while self.attach_list_layout.count():
             item = self.attach_list_layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget:
                 widget.deleteLater()
 
         if not self._attachments.attachments:
-            self.attach_scroll.setVisible(False)
+            self.attach_list_container.setVisible(False)
             self.attach_placeholder.setVisible(True)
+            self.attach_clear_btn.setEnabled(False)
             return
 
-        self.attach_scroll.setVisible(True)
+        self.attach_list_container.setVisible(True)
         self.attach_placeholder.setVisible(False)
+        self.attach_clear_btn.setEnabled(True)
 
         for idx, att in enumerate(self._attachments.attachments):
-            row_widget = QWidget(self)
-            row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(6, 6, 6, 6)
-            row_layout.setSpacing(10)
+            card_widget = QWidget(self)
+            card_layout = QVBoxLayout(card_widget)
+            card_layout.setContentsMargins(0, 0, 0, 0)
+            card_layout.setSpacing(6)
 
             thumb_label = QLabel(self)
             thumb_label.setFixedSize(96, 96)
             thumb_label.setScaledContents(True)
+            thumb_label.setStyleSheet("border: 1px solid #E0E0E0; border-radius: 4px;")
             if att.pixmap and not att.pixmap.isNull():
                 thumb_label.setPixmap(att.pixmap)
-            row_layout.addWidget(thumb_label)
-
-            info_label = BodyLabel(f"{att.name} ({round(len(att.data) / 1024, 1)} KB)", self)
-            row_layout.addWidget(info_label, 1)
+            card_layout.addWidget(thumb_label)
+            
+            size_label = BodyLabel(f"{round(len(att.data) / 1024, 1)} KB", self)
+            size_label.setStyleSheet("color: #666; font-size: 11px;")
+            size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            card_layout.addWidget(size_label)
 
             remove_btn = PushButton("移除", self)
+            remove_btn.setFixedWidth(96)
             remove_btn.clicked.connect(lambda _=False, i=idx: self._remove_attachment(i))
-            row_layout.addWidget(remove_btn)
+            card_layout.addWidget(remove_btn)
 
-            self.attach_list_layout.addWidget(row_widget)
+            self.attach_list_layout.addWidget(card_widget)
+        self.attach_list_layout.addStretch(1)
 
     def _remove_attachment(self, index: int):
         self._attachments.remove_at(index)
@@ -439,25 +505,6 @@ class ContactForm(StatusPollingMixin, QWidget):
     def _on_type_changed(self):
         current_type = self.type_combo.currentText()
 
-        # 动态添加/移除"白嫖卡密"选项
-        has_whitepiao = False
-        whitepiao_idx = -1
-        for i in range(self.type_combo.count()):
-            if self.type_combo.itemText(i) == "白嫖卡密（？）":
-                has_whitepiao = True
-                whitepiao_idx = i
-                break
-
-        self.type_combo.blockSignals(True)
-        try:
-            if current_type == "卡密获取" and not has_whitepiao:
-                self.type_combo.addItem("白嫖卡密（？）")
-            elif current_type not in ("卡密获取", "白嫖卡密（？）") and has_whitepiao:
-                if whitepiao_idx >= 0:
-                    self.type_combo.removeItem(whitepiao_idx)
-        finally:
-            self.type_combo.blockSignals(False)
-
         # 控制金额行显示/隐藏
         if current_type == "卡密获取":
             self.amount_label.show()
@@ -466,18 +513,11 @@ class ContactForm(StatusPollingMixin, QWidget):
             self.quantity_edit.show()
             self.urgency_label.show()
             self.urgency_combo.show()
-            self.email_label.setText("您的邮箱（必填）：")
-            self.message_label.setText("请输入您的消息：")
+            self.verify_code_edit.show()
+            self.send_verify_btn.show()
+            self.email_edit.setPlaceholderText("name@example.com")
+            self.message_label.setText("消息内容：")
             self._sync_card_request_message_meta()
-        elif current_type == "白嫖卡密（？）":
-            self.amount_label.hide()
-            self.amount_edit.hide()
-            self.quantity_label.hide()
-            self.quantity_edit.hide()
-            self.urgency_label.hide()
-            self.urgency_combo.hide()
-            self.email_label.setText("您的邮箱（必填）：")
-            self.message_label.setText("请输入白嫖话术：")
         else:
             self.amount_label.hide()
             self.amount_edit.hide()
@@ -485,8 +525,121 @@ class ContactForm(StatusPollingMixin, QWidget):
             self.quantity_edit.hide()
             self.urgency_label.hide()
             self.urgency_combo.hide()
-            self.email_label.setText("您的邮箱（选填，如果希望收到回复的话）：")
-            self.message_label.setText("请输入您的消息：")
+            self.verify_code_edit.hide()
+            self.send_verify_btn.hide()
+            self.verify_send_spinner.hide()
+            self.verify_code_edit.clear()
+            self._verify_code_requested = False
+            self._verify_code_requested_email = ""
+            self._verify_code_sending = False
+            self._stop_cooldown()
+            self.email_edit.setPlaceholderText("name@example.com")
+            self.message_label.setText("消息内容：")
+
+    def _set_verify_code_sending(self, sending: bool):
+        self._verify_code_sending = sending
+        self.send_verify_btn.setEnabled(not sending)
+        self.send_verify_btn.setText("发送中..." if sending else "发送验证码")
+        self.verify_send_spinner.setVisible(sending)
+
+    def _start_cooldown(self):
+        """发送成功后启动30秒冷却，期间按钮不可点击并显示倒计时。"""
+        self._cooldown_remaining = 30
+        self.send_verify_btn.setEnabled(False)
+        self.send_verify_btn.setText(f"重新发送({self._cooldown_remaining}s)")
+        self._cooldown_timer = QTimer(self)
+        self._cooldown_timer.setInterval(1000)
+        self._cooldown_timer.timeout.connect(self._on_cooldown_tick)
+        self._cooldown_timer.start()
+
+    def _on_cooldown_tick(self):
+        self._cooldown_remaining -= 1
+        if self._cooldown_remaining <= 0:
+            if self._cooldown_timer is not None:
+                self._cooldown_timer.stop()
+            self._cooldown_timer = None
+            self.send_verify_btn.setEnabled(True)
+            self.send_verify_btn.setText("发送验证码")
+        else:
+            self.send_verify_btn.setText(f"重新发送({self._cooldown_remaining}s)")
+
+    def _stop_cooldown(self):
+        """停止冷却计时器并重置按钮状态。"""
+        if self._cooldown_timer is not None:
+            self._cooldown_timer.stop()
+            self._cooldown_timer = None
+        self._cooldown_remaining = 0
+        self.send_verify_btn.setEnabled(True)
+        self.send_verify_btn.setText("发送验证码")
+
+    def _on_send_verify_clicked(self):
+        if self._verify_code_sending:
+            return
+
+        email = (self.email_edit.text() or "").strip()
+        if not email:
+            InfoBar.warning("", "请先填写邮箱地址", parent=self, position=InfoBarPosition.TOP, duration=2000)
+            return
+        if not self._validate_email(email):
+            InfoBar.warning("", "邮箱格式不正确，请先检查", parent=self, position=InfoBarPosition.TOP, duration=2000)
+            return
+
+        if not EMAIL_VERIFY_ENDPOINT:
+            InfoBar.error("", "验证码接口未配置", parent=self, position=InfoBarPosition.TOP, duration=2500)
+            return
+
+        self._verify_code_requested = False
+        self._verify_code_requested_email = ""
+        self._set_verify_code_sending(True)
+
+        def _send_verify():
+            try:
+                resp = http_client.post(
+                    EMAIL_VERIFY_ENDPOINT,
+                    headers={"Content-Type": "application/json"},
+                    json={"email": email},
+                    timeout=10,
+                )
+                data = None
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = None
+
+                if resp.status_code == 200 and isinstance(data, dict) and bool(data.get("ok")):
+                    self._verifyCodeFinished.emit(True, "", email)
+                    return
+
+                if isinstance(data, dict):
+                    error_msg = str(data.get("error") or f"发送失败：{resp.status_code}")
+                else:
+                    error_msg = f"发送失败：{resp.status_code}"
+                self._verifyCodeFinished.emit(False, error_msg, email)
+            except Exception as exc:
+                self._verifyCodeFinished.emit(False, f"发送失败：{exc}", email)
+
+        threading.Thread(target=_send_verify, daemon=True).start()
+
+    def _on_verify_code_finished(self, success: bool, error_msg: str, email: str):
+        self._set_verify_code_sending(False)
+
+        if success:
+            self._verify_code_requested = True
+            self._verify_code_requested_email = email
+            InfoBar.success("", "验证码已发送，请查收并输入验证码", parent=self, position=InfoBarPosition.TOP, duration=2200)
+            self._start_cooldown()
+            return
+
+        self._verify_code_requested = False
+        self._verify_code_requested_email = ""
+        normalized = (error_msg or "").strip().lower()
+        if normalized == "invalid request":
+            ui_msg = "邮箱参数无效，请检查邮箱后重试"
+        elif normalized == "send mail failed":
+            ui_msg = "邮件发送失败，请稍后重试"
+        else:
+            ui_msg = error_msg or "验证码发送失败，请稍后重试"
+        InfoBar.error("", ui_msg, parent=self, position=InfoBarPosition.TOP, duration=2500)
 
     def _on_amount_changed(self, text: str):
         """金额输入框文本改变时同步卡密获取的元信息到消息框"""
@@ -508,8 +661,8 @@ class ContactForm(StatusPollingMixin, QWidget):
         while idx < len(lines):
             line = lines[idx]
             if (
-                line.startswith("捐(施)助(舍)的金额：￥")
-                or line.startswith("大概需求份数：")
+                line.startswith("捐助金额：￥")
+                or line.startswith("需求份数：")
                 or line.startswith("紧急程度：")
             ):
                 idx += 1
@@ -531,9 +684,9 @@ class ContactForm(StatusPollingMixin, QWidget):
 
         meta_lines = []
         if amount_text:
-            meta_lines.append(f"捐(施)助(舍)的金额：￥{amount_text}")
+            meta_lines.append(f"捐助金额：￥{amount_text}")
         if quantity_text:
-            meta_lines.append(f"大概需求份数：{quantity_text}份")
+            meta_lines.append(f"需求份数：{quantity_text}份")
         if (amount_text or quantity_text) and urgency_text:
             meta_lines.append(f"紧急程度：{urgency_text}")
 
@@ -576,7 +729,7 @@ class ContactForm(StatusPollingMixin, QWidget):
 
         mtype = self.type_combo.currentText() or "报错反馈"
 
-        if mtype in ("卡密获取", "白嫖卡密（？）"):
+        if mtype == "卡密获取":
             try:
                 from wjx.utils.system.registry_manager import RegistryManager
                 if RegistryManager.read_submit_count() <= 0:
@@ -591,6 +744,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         if mtype == "卡密获取":
             amount_text = (self.amount_edit.text() or "").strip()
             quantity_text = (self.quantity_edit.text() or "").strip()
+            verify_code = (self.verify_code_edit.text() or "").strip()
 
             if not amount_text:
                 InfoBar.warning("", "请输入捐助金额", parent=self, position=InfoBarPosition.TOP, duration=2000)
@@ -601,11 +755,23 @@ class ContactForm(StatusPollingMixin, QWidget):
             if not quantity_text.isdigit() or int(quantity_text) <= 0:
                 InfoBar.warning("", "需求份数必须为正整数", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
+            if int(quantity_text) > 9999:
+                InfoBar.warning("", "需求份数不能超过 9999", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                return
+            if not self._verify_code_requested:
+                InfoBar.warning("", "请先点击发送验证码", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                return
+            if email != self._verify_code_requested_email:
+                InfoBar.warning("", "邮箱已变更，请重新发送验证码", parent=self, position=InfoBarPosition.TOP, duration=2200)
+                return
+            if verify_code != "114514":
+                InfoBar.warning("", "验证码错误，请重试", parent=self, position=InfoBarPosition.TOP, duration=2200)
+                return
             self._sync_card_request_message_meta()
 
         message = (self.message_edit.toPlainText() or "").strip()
         if mtype == "卡密获取":
-            if not message or not message.startswith("捐(施)助(舍)的金额：￥"):
+            if not message or not message.startswith("捐助金额：￥"):
                 InfoBar.warning("", "请输入捐助金额", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
         else:
@@ -613,8 +779,8 @@ class ContactForm(StatusPollingMixin, QWidget):
                 InfoBar.warning("", "请输入消息内容", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
 
-        if mtype in ("卡密获取", "白嫖卡密（？）") and not email:
-            InfoBar.warning("", f"{mtype}必须填写邮箱地址", parent=self, position=InfoBarPosition.TOP, duration=2000)
+        if mtype == "卡密获取" and not email:
+            InfoBar.warning("", "卡密获取必须填写邮箱地址", parent=self, position=InfoBarPosition.TOP, duration=2000)
             return
 
         if mtype == "卡密获取":
@@ -628,7 +794,7 @@ class ContactForm(StatusPollingMixin, QWidget):
             if not confirm_email_box.exec():
                 return
 
-        if mtype not in ("卡密获取", "白嫖卡密（？）") and not email:
+        if mtype != "卡密获取" and not email:
             confirm_box = MessageBox(
                 "未填写邮箱",
                 "当前未输入邮箱地址，开发者可能无法联系你回复处理进度。是否继续发送？",
@@ -705,20 +871,19 @@ class ContactForm(StatusPollingMixin, QWidget):
 
         if success:
             current_type = getattr(self, "_current_message_type", "")
-            if current_type == "白嫖卡密（？）":
-                msg = "白嫖成功！已自动解锁ip额度"
-            elif current_type == "卡密获取":
+            if current_type == "卡密获取":
                 msg = "发送成功！请留意邮件信息！"
             else:
                 msg = "消息已成功发送！"
             if getattr(self, "_current_has_email", False):
                 msg += " 开发者将于6小时内回复"
             InfoBar.success("", msg, parent=self, position=InfoBarPosition.TOP, duration=2500)
-            if current_type == "白嫖卡密（？）":
-                self._apply_whitepiao_unlock()
             if self._auto_clear_on_success:
                 self.amount_edit.clear()
                 self.quantity_edit.clear()
+                self.verify_code_edit.clear()
+                self._verify_code_requested = False
+                self._verify_code_requested_email = ""
                 urgency_default_index = self.urgency_combo.findText("中")
                 if urgency_default_index >= 0:
                     self.urgency_combo.setCurrentIndex(urgency_default_index)
@@ -739,60 +904,4 @@ class ContactForm(StatusPollingMixin, QWidget):
         if isinstance(win, QWidget) and hasattr(win, "controller"):
             return win
         return None
-
-    def _apply_whitepiao_unlock(self):
-        try:
-            from wjx.network.proxy import refresh_ip_counter_display
-            from wjx.utils.system.registry_manager import RegistryManager
-        except Exception:
-            return
-
-        # 仅做本地额度叠加，避免在 GUI 线程触发同步网络请求
-        current_limit = int(RegistryManager.read_quota_limit(0) or 0)
-        RegistryManager.write_quota_limit(current_limit + 200)
-
-        host = self._find_controller_host()
-        controller = getattr(host, "controller", None)
-        adapter = getattr(controller, "adapter", None)
-        if adapter:
-            try:
-                adapter.random_ip_enabled_var.set(True)
-            except Exception as exc:
-                log_suppressed_exception("_apply_whitepiao_unlock: adapter.random_ip_enabled_var.set(True)", exc, level=logging.WARNING)
-            refresh_ip_counter_display(adapter)
-
-        dashboard = host if hasattr(host, "random_ip_cb") else getattr(host, "dashboard", None)
-        if dashboard and hasattr(dashboard, "random_ip_cb"):
-            try:
-                dashboard_obj = cast(Any, dashboard)
-                dashboard_obj.random_ip_cb.blockSignals(True)
-                dashboard_obj.random_ip_cb.setChecked(True)
-            except Exception as exc:
-                log_suppressed_exception("_apply_whitepiao_unlock: dashboard_obj = cast(Any, dashboard)", exc, level=logging.WARNING)
-            finally:
-                try:
-                    dashboard_obj = cast(Any, dashboard)
-                    dashboard_obj.random_ip_cb.blockSignals(False)
-                except Exception as exc:
-                    log_suppressed_exception("_apply_whitepiao_unlock: dashboard_obj = cast(Any, dashboard)", exc, level=logging.WARNING)
-
-        runtime_page = None
-        if hasattr(host, "runtime_page"):
-            runtime_page = cast(Any, host).runtime_page
-        elif dashboard is not None and hasattr(dashboard, "runtime_page"):
-            runtime_page = cast(Any, dashboard).runtime_page
-        if runtime_page and hasattr(runtime_page, "random_ip_switch"):
-            try:
-                runtime_page_obj = cast(Any, runtime_page)
-                runtime_page_obj.random_ip_switch.blockSignals(True)
-                runtime_page_obj.random_ip_switch.setChecked(True)
-            except Exception as exc:
-                log_suppressed_exception("_apply_whitepiao_unlock: runtime_page_obj = cast(Any, runtime_page)", exc, level=logging.WARNING)
-            finally:
-                try:
-                    runtime_page_obj = cast(Any, runtime_page)
-                    runtime_page_obj.random_ip_switch.blockSignals(False)
-                except Exception as exc:
-                    log_suppressed_exception("_apply_whitepiao_unlock: runtime_page_obj = cast(Any, runtime_page)", exc, level=logging.WARNING)
-
 

@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import math
+import random
 import threading
 import logging
 
 import wjx.network.http_client as http_client
 from wjx.utils.logging.log_utils import log_suppressed_exception
+from wjx.utils.system.registry_manager import RegistryManager
 
-from PySide6.QtCore import Qt, QPointF, QDate, QDateTime, QTime, Signal, QRectF, QPropertyAnimation, QEasingCurve, Property, QTimer
+from PySide6.QtCore import Qt, QPoint, QPointF, QDate, QDateTime, QTime, Signal, QRectF, QPropertyAnimation, QEasingCurve, Property, QTimer, QByteArray
+from typing import Any
 from PySide6.QtCharts import QChart, QLineSeries, QChartView, QValueAxis, QDateTimeAxis
 from PySide6.QtGui import QPainter, QPen, QColor
 from PySide6.QtWidgets import (
@@ -16,7 +19,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QSizePolicy,
-    QGraphicsBlurEffect,
 )
 from qfluentwidgets import (
     ScrollArea,
@@ -31,6 +33,95 @@ from qfluentwidgets import (
     isDarkTheme,
     themeColor,
 )
+
+class ConfettiOverlay(QWidget):
+    """礼炮彩带动画覆盖层，透明背景、鼠标穿透，只播放一次。"""
+
+    _COLORS = [
+        QColor(255, 75, 75),
+        QColor(255, 210, 0),
+        QColor(60, 180, 255),
+        QColor(60, 220, 110),
+        QColor(200, 90, 255),
+        QColor(255, 130, 0),
+        QColor(255, 90, 170),
+        QColor(0, 215, 195),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(None)  # 顶层窗口，不挂父控件，避免子控件透明属性崩溃
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)  # 顶层窗口才能安全使用
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._particles: list = []
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+        self.hide()
+
+    def launch(self):
+        self._particles.clear()
+        w, h = self.width(), self.height()
+        for cannon_x, base_angle in [(w * 0.15, 65), (w * 0.85, 115)]:
+            for _ in range(90):
+                angle_rad = math.radians(base_angle + random.uniform(-28, 28))
+                speed = random.uniform(10, 22)
+                self._particles.append({
+                    'x': float(cannon_x), 'y': float(h),
+                    'vx': math.cos(angle_rad) * speed,
+                    'vy': -math.sin(angle_rad) * speed,
+                    'angle': random.uniform(0, 360),
+                    'av': random.uniform(-9, 9),
+                    'color': random.choice(self._COLORS),
+                    'w': random.uniform(7, 13),
+                    'h': random.uniform(3, 7),
+                    'life': 1.0,
+                    'decay': random.uniform(0.005, 0.010),
+                })
+        self.show()
+        self.raise_()
+        self._timer.start()
+
+    def _tick(self):
+        alive = []
+        for p in self._particles:
+            p['vy'] += 0.32
+            p['vx'] *= 0.992
+            p['x'] += p['vx']
+            p['y'] += p['vy']
+            p['angle'] += p['av']
+            p['life'] -= p['decay']
+            if p['life'] > 0:
+                alive.append(p)
+        self._particles = alive
+        if not self._particles:
+            self._timer.stop()
+            self.hide()
+        else:
+            self.update()
+
+    def paintEvent(self, event):
+        if not self._particles:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        for p in self._particles:
+            painter.save()
+            painter.translate(p['x'], p['y'])
+            painter.rotate(p['angle'])
+            c = QColor(p['color'])
+            c.setAlphaF(min(1.0, p['life'] * 1.8))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(c)
+            hw, hh = p['w'] / 2, p['h'] / 2
+            painter.drawRect(int(-hw), int(-hh), int(p['w']), int(p['h']))
+            painter.restore()
+        painter.end()
+
 
 def _compute_monotone_slopes(xs, ys):
     n = len(xs)
@@ -75,7 +166,7 @@ class ChartOverlay(QWidget):
         self.plot_area = QRectF()
         self._opacity = 0.0
         self._curve_y_fn = curve_y_fn
-        self._anim = QPropertyAnimation(self, b"opacity", self)
+        self._anim = QPropertyAnimation(self, QByteArray(b"opacity"), self)
         self._anim.setDuration(180)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._smooth_timer = QTimer(self)
@@ -84,7 +175,7 @@ class ChartOverlay(QWidget):
 
     def _get_opacity(self): return self._opacity
     def _set_opacity(self, v): self._opacity = v; self.update()
-    opacity = Property(float, _get_opacity, _set_opacity)
+    opacity = Property(float, _get_opacity, _set_opacity)  # type: ignore[call-arg]
 
     def _smooth_step(self):
         dx = self._target_x - self._current_x
@@ -264,7 +355,8 @@ class InteractiveChartView(QChartView):
                 closest_p = p
                 closest_view_pos = view_pos
                 
-        if closest_p:
+        if closest_p is not None:
+            assert closest_view_pos is not None
             # 用于约束实线垂直上下高度的边界矩形，同样映射到当前物理视图
             top_left = self.mapFromScene(self.chart().mapToScene(plot_area.topLeft()))
             bottom_right = self.mapFromScene(self.chart().mapToScene(plot_area.bottomRight()))
@@ -285,6 +377,7 @@ class InteractiveChartView(QChartView):
 class IpUsagePage(ScrollArea):
     _dataLoaded = Signal(list, str)
     _ipBalanceLoaded = Signal(float)
+    _ENABLE_CONFETTI = True
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -292,6 +385,13 @@ class IpUsagePage(ScrollArea):
         self._ipBalanceLoaded.connect(self._on_ip_balance_loaded)
         self._load_requested_once = False
         self._last_load_failed = False
+        self._load_scheduled = False
+        self._confetti_overlay: ConfettiOverlay | None = None
+        self._confetti_played = RegistryManager.is_confetti_played()
+        self._confetti_pending = False
+        self._confetti_retry_timer = QTimer(self)
+        self._confetti_retry_timer.setSingleShot(True)
+        self._confetti_retry_timer.timeout.connect(self._try_launch_confetti)
         self._loading = False
         self._point_meta: dict[int, tuple[str, int]] = {}
         self._data_points: list = []
@@ -301,6 +401,19 @@ class IpUsagePage(ScrollArea):
         self.setWidgetResizable(True)
         self.enableTransparentBackground()
         self._build_ui()
+
+    def _dispose_confetti_overlay(self) -> None:
+        overlay = self._confetti_overlay
+        if overlay is None:
+            return
+        try:
+            overlay.hide()
+            overlay.close()
+            overlay.deleteLater()
+        except Exception as exc:
+            log_suppressed_exception("_dispose_confetti_overlay", exc, level=logging.WARNING)
+        finally:
+            self._confetti_overlay = None
 
     def _build_ui(self):
         layout = QVBoxLayout(self.view)
@@ -356,9 +469,6 @@ class IpUsagePage(ScrollArea):
         layout.addWidget(card)
         layout.addStretch(1)
 
-        self._page_blur_effect = QGraphicsBlurEffect(self.view)
-        self._page_blur_effect.setBlurRadius(8.0)
-
         self._loading_overlay = QWidget(self.viewport())
         self._loading_overlay.setStyleSheet("background-color: rgba(255, 255, 255, 175);")
         overlay_layout = QVBoxLayout(self._loading_overlay)
@@ -367,7 +477,7 @@ class IpUsagePage(ScrollArea):
         overlay_layout.addStretch(1)
         self._loading_ring = IndeterminateProgressRing(self._loading_overlay)
         self._loading_ring.setFixedSize(44, 44)
-        self._loading_ring.setStrokeWidth(3.4)
+        self._loading_ring.setStrokeWidth(3)
         overlay_layout.addWidget(self._loading_ring, 0, Qt.AlignmentFlag.AlignHCenter)
         overlay_layout.addWidget(
             BodyLabel("正在加载 IP 使用记录...", self._loading_overlay),
@@ -396,6 +506,7 @@ class IpUsagePage(ScrollArea):
     def _on_data_loaded(self, records: list, error: str):
         self._set_loading(False)
         self._last_load_failed = bool(error)
+
         if error:
             InfoBar.error("", f"获取失败：{error}", parent=self.window(), position=InfoBarPosition.TOP, duration=4000)
             self._date_label.setText("加载失败，请切换页面后重试")
@@ -479,7 +590,7 @@ class IpUsagePage(ScrollArea):
         self._date_label.setText(f"{points[0][2]} ~ {points[-1][2]}")
 
     @staticmethod
-    def _to_int(raw: object) -> int:
+    def _to_int(raw: Any) -> int:
         try:
             return int(raw)
         except Exception:
@@ -518,12 +629,19 @@ class IpUsagePage(ScrollArea):
     def _set_loading(self, loading: bool) -> None:
         self._loading = bool(loading)
         if loading:
-            self.view.setGraphicsEffect(self._page_blur_effect)
             self._update_overlay_geometry()
             self._loading_overlay.show()
         else:
             self._loading_overlay.hide()
-            self.view.setGraphicsEffect(None)
+
+    def _trigger_load_if_needed(self) -> None:
+        self._load_scheduled = False
+        if self._loading:
+            return
+        if (not self._load_requested_once) or self._last_load_failed:
+            self._load_requested_once = True
+            self._load_data()
+            self._load_ip_balance()
 
     def _update_chart_height(self) -> None:
         viewport_height = max(self.viewport().height(), 480)
@@ -531,7 +649,8 @@ class IpUsagePage(ScrollArea):
         self._chart_view.setMinimumHeight(target_height)
 
     def _update_overlay_geometry(self) -> None:
-        self._loading_overlay.setGeometry(self.viewport().rect())
+        rect = self.viewport().rect()
+        self._loading_overlay.setGeometry(rect)
         self._loading_overlay.raise_()
 
     def resizeEvent(self, event):
@@ -543,7 +662,65 @@ class IpUsagePage(ScrollArea):
         super().showEvent(event)
         self._update_chart_height()
         self._update_overlay_geometry()
-        if (not self._load_requested_once) or self._last_load_failed:
-            self._load_requested_once = True
-            self._load_data()
-            self._load_ip_balance()
+        self._confetti_played = RegistryManager.is_confetti_played()
+        # 首次进入页面立即触发彩带
+        if self._ENABLE_CONFETTI and (not self._confetti_played) and (not self._confetti_pending):
+            self._confetti_pending = True
+            self._schedule_confetti_launch(100)
+        if not self._load_scheduled:
+            self._load_scheduled = True
+            QTimer.singleShot(0, self._trigger_load_if_needed)
+
+    def _schedule_confetti_launch(self, delay_ms: int) -> None:
+        if not self._confetti_pending:
+            return
+        if self._confetti_retry_timer.isActive():
+            return
+        self._confetti_retry_timer.start(max(0, int(delay_ms)))
+
+    def _try_launch_confetti(self):
+        if not self._ENABLE_CONFETTI:
+            self._confetti_pending = False
+            self._dispose_confetti_overlay()
+            return
+        if not self._confetti_pending:
+            return
+        if self._loading or (not self.isVisible()):
+            self._confetti_retry_timer.start(80)
+            return
+        top = self.window()
+        if top is None:
+            self._confetti_retry_timer.start(80)
+            return
+        size = top.size()
+        if size.width() <= 0 or size.height() <= 0:
+            self._confetti_retry_timer.start(80)
+            return
+        # 懒创建：独立顶层窗口，WA_TranslucentBackground 只对顶层窗口安全
+        if self._confetti_overlay is None:
+            self._confetti_overlay = ConfettiOverlay()
+        # 用全局坐标覆盖主窗口区域
+        from PySide6.QtCore import QRect
+        global_rect = QRect(top.mapToGlobal(QPoint(0, 0)), size)
+        try:
+            self._confetti_overlay.setGeometry(global_rect)
+            self._confetti_overlay.launch()
+        except Exception as exc:
+            log_suppressed_exception("_try_launch_confetti", exc, level=logging.WARNING)
+            self._dispose_confetti_overlay()
+            self._confetti_pending = False
+            return
+        self._confetti_pending = False
+        self._confetti_played = True
+        RegistryManager.set_confetti_played(True)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._load_scheduled = False
+        self._confetti_retry_timer.stop()
+        self._dispose_confetti_overlay()
+
+    def closeEvent(self, event):
+        self._confetti_retry_timer.stop()
+        self._dispose_confetti_overlay()
+        super().closeEvent(event)

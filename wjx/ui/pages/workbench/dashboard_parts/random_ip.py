@@ -6,7 +6,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import QDialog
 from qfluentwidgets import FluentIcon
 
@@ -51,6 +51,7 @@ class DashboardRandomIPMixin:
         _last_ip_balance_fetch_ts: float
         _ip_balance_fetch_interval_sec: float
         _debug_reset_in_progress: bool
+        _debug_reset_started_at: float
         _debugResetFinished: Any  # PySide6.QtCore.Signal，Mixin 中无法精确声明描述符类型
         _ipBalanceChecked: Any   # 同上
 
@@ -72,8 +73,9 @@ class DashboardRandomIPMixin:
             return
 
         self._debug_reset_in_progress = True
+        self._debug_reset_started_at = time.monotonic()
         self.url_edit.clear()
-        self._toast("正在后台重置随机IP额度...", "info", duration=-1, show_progress=True)
+        self._toast("正在重置随机IP额度...", "info", duration=-1, show_progress=True)
 
         thread = threading.Thread(
             target=self._run_debug_reset_worker,
@@ -97,6 +99,7 @@ class DashboardRandomIPMixin:
             RegistryManager.write_quota_limit(default_quota)
             RegistryManager.set_card_verified(False)
             RegistryManager.set_extra_quota_verified(False)
+            RegistryManager.set_confetti_played(False)
             payload["ok"] = True
             payload["quota"] = int(default_quota)
         except Exception as exc:
@@ -106,8 +109,17 @@ class DashboardRandomIPMixin:
             self._debugResetFinished.emit(payload)
 
     def _on_debug_reset_finished(self, payload: Any) -> None:
-        self._debug_reset_in_progress = False
         data = payload if isinstance(payload, dict) else {}
+        min_loading_ms = 300
+        elapsed_ms = int(max(0.0, time.monotonic() - float(getattr(self, "_debug_reset_started_at", 0.0))) * 1000)
+        delay_ms = max(0, min_loading_ms - elapsed_ms)
+        if delay_ms > 0:
+            QTimer.singleShot(delay_ms, lambda d=data: self._apply_debug_reset_result(d))
+            return
+        self._apply_debug_reset_result(data)
+
+    def _apply_debug_reset_result(self, data: Dict[str, Any]) -> None:
+        self._debug_reset_in_progress = False
         success = bool(data.get("ok"))
         quota = data.get("quota")
 

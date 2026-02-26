@@ -114,6 +114,7 @@ class DashboardPage(
         self._last_ip_balance_fetch_ts = 0.0
         self._ip_balance_fetch_interval_sec = 30.0
         self._debug_reset_in_progress = False
+        self._debug_reset_started_at = 0.0
         self._clipboard_parse_ticket = 0
         self._build_ui()
         self.config_drawer = ConfigDrawer(self, self._load_config_from_path)

@@ -16,7 +16,8 @@ docx/
 logs/
 stats/
 tests/
-
+demo/
+.kiro
 # 编译环境
 /build/
 /dist/

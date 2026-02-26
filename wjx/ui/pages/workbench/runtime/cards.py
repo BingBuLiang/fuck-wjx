@@ -504,7 +504,7 @@ class RandomUASettingCard(ExpandGroupSettingCard):
 
 
 class TimeRangeSettingCard(SettingCard):
-    """时间设置卡 - 使用单个秒数输入框"""
+    """时间范围设置卡 - 使用最小值和最大值输入框（单位：秒）"""
 
     def __init__(self, icon, title, content, max_seconds: int = 300, parent=None):
         super().__init__(icon, title, content, parent)
@@ -516,30 +516,51 @@ class TimeRangeSettingCard(SettingCard):
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(8)
 
-        self.value_edit = LineEdit(self._input_container)
-        self.value_edit.setPlaceholderText("秒数")
-        self.value_edit.setFixedWidth(100)
-        self.value_edit.setValidator(QIntValidator(0, max_seconds, self.value_edit))
-        self.value_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.value_edit.customContextMenuRequested.connect(self._show_value_edit_menu)
+        # 最小值输入框
+        self.min_edit = LineEdit(self._input_container)
+        self.min_edit.setPlaceholderText("最小值")
+        self.min_edit.setFixedWidth(80)
+        self.min_edit.setValidator(QIntValidator(0, max_seconds, self.min_edit))
+        self.min_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.min_edit.customContextMenuRequested.connect(lambda pos: self._show_edit_menu(self.min_edit, pos))
 
+        # 波浪线分隔符
+        separator_label = BodyLabel("~", self._input_container)
+        separator_label.setStyleSheet("color: #606060;")
+
+        # 最大值输入框
+        self.max_edit = LineEdit(self._input_container)
+        self.max_edit.setPlaceholderText("最大值")
+        self.max_edit.setFixedWidth(80)
+        self.max_edit.setValidator(QIntValidator(0, max_seconds, self.max_edit))
+        self.max_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.max_edit.customContextMenuRequested.connect(lambda pos: self._show_edit_menu(self.max_edit, pos))
+
+        # 单位标签
         sec_label = BodyLabel("秒", self._input_container)
         sec_label.setStyleSheet("color: #606060;")
 
-        input_layout.addWidget(self.value_edit)
+        input_layout.addWidget(self.min_edit)
+        input_layout.addWidget(separator_label)
+        input_layout.addWidget(self.max_edit)
         input_layout.addWidget(sec_label)
 
-        self.value_edit.editingFinished.connect(self._normalize_inputs)
-        self.setValue(0)
+        self.min_edit.editingFinished.connect(self._normalize_inputs)
+        self.max_edit.editingFinished.connect(self._normalize_inputs)
+        
+        # 设置默认值
+        self.setRange(0, 0)
 
         self.hBoxLayout.addWidget(self._input_container, 0, Qt.AlignmentFlag.AlignRight)
         self.hBoxLayout.addSpacing(16)
 
     def setEnabled(self, enabled):
         super().setEnabled(enabled)
-        self.value_edit.setEnabled(enabled)
+        self.min_edit.setEnabled(enabled)
+        self.max_edit.setEnabled(enabled)
 
     def _parse_int(self, text: str, fallback: int) -> int:
+        """解析整数，限制在有效范围内"""
         text = str(text or "").strip()
         if not text:
             return fallback
@@ -554,49 +575,64 @@ class TimeRangeSettingCard(SettingCard):
         return value
 
     def _normalize_inputs(self):
-        self.value_edit.setText(str(self.getValue()))
+        """规范化输入：确保最小值 <= 最大值"""
+        min_val = self._parse_int(self.min_edit.text(), 0)
+        max_val = self._parse_int(self.max_edit.text(), 0)
+        
+        # 确保最小值不大于最大值
+        if min_val > max_val:
+            min_val, max_val = max_val, min_val
+        
+        self.min_edit.setText(str(min_val))
+        self.max_edit.setText(str(max_val))
 
-    def _show_value_edit_menu(self, pos):
-        menu = RoundMenu(parent=self.value_edit)
+    def _show_edit_menu(self, line_edit: LineEdit, pos):
+        """显示输入框右键菜单"""
+        menu = RoundMenu(parent=line_edit)
 
         cut_action = Action(FluentIcon.CUT, "剪切", parent=menu)
-        cut_action.setEnabled(not self.value_edit.isReadOnly() and self.value_edit.hasSelectedText())
-        cut_action.triggered.connect(self.value_edit.cut)
+        cut_action.setEnabled(not line_edit.isReadOnly() and line_edit.hasSelectedText())
+        cut_action.triggered.connect(line_edit.cut)
         menu.addAction(cut_action)
 
         copy_action = Action(FluentIcon.COPY, "复制", parent=menu)
-        copy_action.setEnabled(self.value_edit.hasSelectedText())
-        copy_action.triggered.connect(self.value_edit.copy)
+        copy_action.setEnabled(line_edit.hasSelectedText())
+        copy_action.triggered.connect(line_edit.copy)
         menu.addAction(copy_action)
 
         paste_action = Action(FluentIcon.PASTE, "粘贴", parent=menu)
-        paste_action.setEnabled(not self.value_edit.isReadOnly())
-        paste_action.triggered.connect(self.value_edit.paste)
+        paste_action.setEnabled(not line_edit.isReadOnly())
+        paste_action.triggered.connect(line_edit.paste)
         menu.addAction(paste_action)
 
         select_all_action = Action(FluentIcon.CHECKBOX, "全选", parent=menu)
-        select_all_action.setEnabled(bool(self.value_edit.text()))
-        select_all_action.triggered.connect(self.value_edit.selectAll)
+        select_all_action.setEnabled(bool(line_edit.text()))
+        select_all_action.triggered.connect(line_edit.selectAll)
         menu.addAction(select_all_action)
 
-        menu.exec(self.value_edit.mapToGlobal(pos))
-
-    def getValue(self) -> int:
-        """获取当前秒数"""
-        return self._parse_int(self.value_edit.text(), 0)
-
-    def setValue(self, value: int):
-        """设置当前秒数"""
-        value = max(0, min(int(value), self.max_seconds))
-        self.value_edit.setText(str(value))
+        menu.exec(line_edit.mapToGlobal(pos))
 
     def getRange(self) -> tuple:
-        """兼容调用方：返回 (秒数, 秒数)"""
-        sec = self.getValue()
-        return sec, sec
+        """获取当前时间范围（秒）：返回 (最小值, 最大值)"""
+        min_val = self._parse_int(self.min_edit.text(), 0)
+        max_val = self._parse_int(self.max_edit.text(), 0)
+        
+        # 确保最小值不大于最大值
+        if min_val > max_val:
+            min_val, max_val = max_val, min_val
+        
+        return min_val, max_val
 
     def setRange(self, min_sec: int, max_sec: int):
-        """兼容调用方：仅使用 min_sec 作为固定秒数"""
-        self.setValue(min_sec)
+        """设置时间范围（秒）"""
+        min_sec = max(0, min(int(min_sec), self.max_seconds))
+        max_sec = max(0, min(int(max_sec), self.max_seconds))
+        
+        # 确保最小值不大于最大值
+        if min_sec > max_sec:
+            min_sec, max_sec = max_sec, min_sec
+        
+        self.min_edit.setText(str(min_sec))
+        self.max_edit.setText(str(max_sec))
 
 

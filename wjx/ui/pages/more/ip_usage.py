@@ -713,6 +713,31 @@ class IpUsagePage(ScrollArea):
         self._confetti_pending = False
         self._confetti_played = True
         RegistryManager.set_confetti_played(True)
+        # 彩蛋奖励：额度 +200，并弹出提示
+        try:
+            new_limit = RegistryManager.read_quota_limit() + 200
+            RegistryManager.write_quota_limit(new_limit)
+            # 立即刷新主页额度显示，无需重启
+            from wjx.network.proxy import refresh_ip_counter_display
+            win = self.window()
+            controller = getattr(win, "controller", None) if win is not None else None
+            if controller is not None and hasattr(controller, "adapter"):
+                refresh_ip_counter_display(controller.adapter)
+        except Exception as exc:
+            log_suppressed_exception("confetti_bonus_quota", exc, level=logging.WARNING)
+        QTimer.singleShot(400, self._show_easter_egg_infobar)
+
+    def _show_easter_egg_infobar(self):
+        try:
+            InfoBar.success(
+                title="",
+                content="🎉恭喜发现彩蛋，额度+200",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+                duration=5000,
+            )
+        except Exception as exc:
+            log_suppressed_exception("_show_easter_egg_infobar", exc, level=logging.WARNING)
 
     def hideEvent(self, event):
         super().hideEvent(event)

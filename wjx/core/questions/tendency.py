@@ -95,9 +95,12 @@ def get_tendency_index(
     if option_count <= 0:
         return 0
 
-    # 未分组 → 纯随机/纯概率，不做一致性约束
+    # 未分组 → 纯随机/纯概率，不做一致性约束，但仍需处理反向题
     if _is_ungrouped(dimension):
-        return _random_by_probabilities(option_count, probabilities)
+        result = _random_by_probabilities(option_count, probabilities)
+        if is_reverse:
+            return (option_count - 1) - result
+        return result
 
     # 获取该维度的基准偏好
     assert dimension is not None  # 已通过 _is_ungrouped 过滤，此处 dimension 必为 str
@@ -109,14 +112,11 @@ def get_tendency_index(
     base = bases.get(dimension)
 
     if base is None:
-        # 该维度首次遇到：生成原始基准并存入（不翻转，翻转只在返回时动态应用）
+        # 该维度首次遇到：生成原始基准并存入，然后跌落到统一的一致性约束逻辑
         base = _generate_base_index(option_count, probabilities)
         bases[dimension] = base
-        if is_reverse:
-            return (option_count - 1) - base
-        return base
 
-    # 后续调用：反向题翻转基准后再应用一致性约束
+    # 首题与后续题统一走一致性约束（±1 波动），反向题翻转基准后再应用
     effective_base = base
     if is_reverse:
         effective_base = (option_count - 1) - min(base, option_count - 1)

@@ -16,6 +16,7 @@ docx/
 logs/
 stats/
 tests/
+demo/
 
 # 编译环境
 /build/

@@ -109,11 +109,11 @@ def get_tendency_index(
     base = bases.get(dimension)
 
     if base is None:
-        # 该维度首次遇到：生成基准偏好并存入
+        # 该维度首次遇到：生成原始基准并存入（不翻转，翻转只在返回时动态应用）
         base = _generate_base_index(option_count, probabilities)
-        if is_reverse:
-            base = (option_count - 1) - base
         bases[dimension] = base
+        if is_reverse:
+            return (option_count - 1) - base
         return base
 
     # 后续调用：反向题翻转基准后再应用一致性约束

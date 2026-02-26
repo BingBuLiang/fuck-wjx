@@ -22,6 +22,8 @@ class AnswerRule:
     target_question_num: int
     action_mode: str
     target_option_indices: List[int]
+    condition_row_index: Optional[int] = None  # 矩阵题条件行（0-based），None 表示非矩阵题
+    target_row_index: Optional[int] = None     # 矩阵题目标行（0-based），None 表示非矩阵题
 
 
 def _to_int(value: Any, default: int = 0) -> int:
@@ -62,10 +64,23 @@ def normalize_rule_dict(raw: Any) -> Optional[Dict[str, Any]]:
     target_option_indices = _to_int_list(raw.get("target_option_indices"))
     if not condition_option_indices or not target_option_indices:
         return None
+    # 矩阵题行索引（可选）
+    condition_row_index: Optional[int] = None
+    target_row_index: Optional[int] = None
+    raw_cri = raw.get("condition_row_index")
+    if raw_cri is not None:
+        cri = _to_int(raw_cri, -1)
+        if cri >= 0:
+            condition_row_index = cri
+    raw_tri = raw.get("target_row_index")
+    if raw_tri is not None:
+        tri = _to_int(raw_tri, -1)
+        if tri >= 0:
+            target_row_index = tri
     rule_id = str(raw.get("id") or "").strip() or (
         f"rule-{condition_question_num}-{target_question_num}-{len(condition_option_indices)}-{len(target_option_indices)}"
     )
-    return {
+    result: Dict[str, Any] = {
         "id": rule_id,
         "condition_question_num": condition_question_num,
         "condition_mode": condition_mode,
@@ -74,13 +89,28 @@ def normalize_rule_dict(raw: Any) -> Optional[Dict[str, Any]]:
         "action_mode": action_mode,
         "target_option_indices": target_option_indices,
     }
+    if condition_row_index is not None:
+        result["condition_row_index"] = condition_row_index
+    if target_row_index is not None:
+        result["target_row_index"] = target_row_index
+    return result
 
 
 def _normalize_rule(raw: Any) -> Optional[AnswerRule]:
     normalized = normalize_rule_dict(raw)
     if not normalized:
         return None
-    return AnswerRule(**normalized)
+    return AnswerRule(
+        id=normalized["id"],
+        condition_question_num=normalized["condition_question_num"],
+        condition_mode=normalized["condition_mode"],
+        condition_option_indices=normalized["condition_option_indices"],
+        target_question_num=normalized["target_question_num"],
+        action_mode=normalized["action_mode"],
+        target_option_indices=normalized["target_option_indices"],
+        condition_row_index=normalized.get("condition_row_index"),
+        target_row_index=normalized.get("target_row_index"),
+    )
 
 
 def reset_consistency_context(answer_rules: Optional[Sequence[Dict[str, Any]]] = None) -> None:
@@ -122,7 +152,11 @@ def _is_rule_triggered(rule: AnswerRule) -> bool:
     record = answered.get(rule.condition_question_num)
     if record is None:
         return False
-    selected_indices = set(_to_int_list(getattr(record, "selected_indices", [])))
+    # 矩阵题：从行级答案中取选中索引
+    if rule.condition_row_index is not None:
+        selected_indices = set(_to_int_list(record.row_answers.get(rule.condition_row_index, [])))
+    else:
+        selected_indices = set(_to_int_list(getattr(record, "selected_indices", [])))
     condition_set = set(rule.condition_option_indices)
     if not condition_set:
         return False
@@ -133,10 +167,12 @@ def _is_rule_triggered(rule: AnswerRule) -> bool:
     return False
 
 
-def _pick_latest_triggered_rule(question_number: int) -> Optional[AnswerRule]:
+def _pick_latest_triggered_rule(question_number: int, row_index: Optional[int] = None) -> Optional[AnswerRule]:
     selected_rule: Optional[AnswerRule] = None
     for rule in _get_answer_rules():
         if rule.target_question_num != question_number:
+            continue
+        if rule.target_row_index != row_index:
             continue
         if _is_rule_triggered(rule):
             # 冲突按列表顺序覆盖：越靠后越优先
@@ -184,15 +220,22 @@ def apply_single_like_consistency(
     probabilities: Sequence[float],
     question_number: int,
 ) -> List[float]:
-    """
-    对单选/下拉题的权重进行规则约束。
-
-    说明：
-    - 仅使用规则列表中“最后一条命中的规则”作为最终约束。
-    - 约束后如果全为 0，会自动回退到原概率并记录 warning。
-    """
+    """对单选/下拉/量表题的权重进行规则约束。"""
     base_probabilities = _sanitize_probabilities(probabilities)
-    rule = _pick_latest_triggered_rule(question_number)
+    rule = _pick_latest_triggered_rule(question_number, row_index=None)
+    if rule is None:
+        return base_probabilities
+    return _apply_rule(base_probabilities, rule)
+
+
+def apply_matrix_row_consistency(
+    probabilities: Sequence[float],
+    question_number: int,
+    row_index: int,
+) -> List[float]:
+    """对矩阵题指定行的权重进行规则约束。"""
+    base_probabilities = _sanitize_probabilities(probabilities)
+    rule = _pick_latest_triggered_rule(question_number, row_index=row_index)
     if rule is None:
         return base_probabilities
     return _apply_rule(base_probabilities, rule)

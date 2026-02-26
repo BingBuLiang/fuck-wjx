@@ -23,6 +23,7 @@ class AnsweredQuestion:
     selected_indices: List[int] = field(default_factory=list)   # 选中的选项索引
     selected_texts: List[str] = field(default_factory=list)     # 选中的选项文本
     text_answer: str = ""       # 填空题答案
+    row_answers: Dict[int, List[int]] = field(default_factory=dict)  # 矩阵题行级答案：行索引(0-based) -> 选项索引列表
 
 
 # ── 线程局部上下文 ──────────────────────────────────────────
@@ -44,19 +45,29 @@ def record_answer(
     selected_indices: Optional[List[int]] = None,
     selected_texts: Optional[List[str]] = None,
     text_answer: str = "",
+    row_index: Optional[int] = None,
 ) -> None:
-    """记录一道题的作答结果。"""
+    """记录一道题的作答结果。row_index 非 None 时表示矩阵题的行级记录。"""
     ctx = getattr(_thread_local, "answered", None)
     if ctx is None:
         _thread_local.answered = {}
         ctx = _thread_local.answered
-    ctx[question_num] = AnsweredQuestion(
-        question_num=question_num,
-        question_type=question_type,
-        selected_indices=selected_indices or [],
-        selected_texts=selected_texts or [],
-        text_answer=text_answer,
-    )
+    if row_index is not None:
+        # 矩阵题行级记录：更新或新建该题的记录
+        if question_num not in ctx:
+            ctx[question_num] = AnsweredQuestion(
+                question_num=question_num,
+                question_type=question_type,
+            )
+        ctx[question_num].row_answers[row_index] = selected_indices or []
+    else:
+        ctx[question_num] = AnsweredQuestion(
+            question_num=question_num,
+            question_type=question_type,
+            selected_indices=selected_indices or [],
+            selected_texts=selected_texts or [],
+            text_answer=text_answer,
+        )
 
 
 def get_answered() -> Dict[int, AnsweredQuestion]:

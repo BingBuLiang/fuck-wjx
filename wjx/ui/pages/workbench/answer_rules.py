@@ -31,7 +31,8 @@ from qfluentwidgets import (
 from wjx.core.questions.consistency import normalize_rule_dict
 
 
-_ALLOWED_TYPE_CODES = {"3", "7"}  # 单选 / 下拉
+_ALLOWED_TYPE_CODES = {"3", "5", "6", "7"}  # 单选 / 量表 / 矩阵 / 下拉
+_TYPE_CODE_LABELS = {"3": "单选题", "5": "量表题", "6": "矩阵题", "7": "下拉题"}
 _CONDITION_MODE_LABELS = {
     "selected": "选择了以下选项",
     "not_selected": "未选择以下选项",
@@ -76,9 +77,12 @@ def _normalize_question_type_code(value: Any) -> str:
 def _build_question_label(question: Dict[str, Any]) -> str:
     q_num = _to_int(question.get("num"), 0)
     title = str(question.get("title") or "").strip()
+    type_code = _normalize_question_type_code(question.get("type_code"))
+    type_label = _TYPE_CODE_LABELS.get(type_code, "")
+    suffix = f" [{type_label}]" if type_label else ""
     if title:
-        return f"第{q_num}题：{title}"
-    return f"第{q_num}题"
+        return f"第{q_num}题：{title}{suffix}"
+    return f"第{q_num}题{suffix}"
 
 
 def _clear_layout(layout: QVBoxLayout) -> None:
@@ -130,6 +134,9 @@ class AnswerRuleDialog(QDialog):
             type_code = _normalize_question_type_code(item.get("type_code"))
             if type_code not in _ALLOWED_TYPE_CODES:
                 continue
+            # 量表题(type_code="5")中的评价题不支持规则配置
+            if type_code == "5" and item.get("is_rating"):
+                continue
             self._question_map[q_num] = item
 
     def _build_ui(self) -> None:
@@ -163,6 +170,17 @@ class AnswerRuleDialog(QDialog):
         self._fill_question_combo(self.condition_question_combo)
         condition_question_row.addWidget(self.condition_question_combo, 1)
         condition_layout.addLayout(condition_question_row)
+
+        self._condition_row_widget = QWidget(self._condition_card)
+        condition_row_row = QHBoxLayout(self._condition_row_widget)
+        condition_row_row.setContentsMargins(0, 0, 0, 0)
+        condition_row_row.addWidget(BodyLabel("条件行", self._condition_card))
+        condition_row_row.addSpacing(8)
+        self.condition_row_combo = ComboBox(self._condition_card)
+        self.condition_row_combo.setMinimumWidth(560)
+        condition_row_row.addWidget(self.condition_row_combo, 1)
+        self._condition_row_widget.hide()
+        condition_layout.addWidget(self._condition_row_widget)
 
         condition_type_row = QHBoxLayout()
         condition_type_row.addWidget(BodyLabel("条件类型", self._condition_card))
@@ -200,6 +218,17 @@ class AnswerRuleDialog(QDialog):
         self._fill_question_combo(self.target_question_combo)
         target_question_row.addWidget(self.target_question_combo, 1)
         action_layout.addLayout(target_question_row)
+
+        self._target_row_widget = QWidget(self._action_card)
+        target_row_row = QHBoxLayout(self._target_row_widget)
+        target_row_row.setContentsMargins(0, 0, 0, 0)
+        target_row_row.addWidget(BodyLabel("目标行", self._action_card))
+        target_row_row.addSpacing(8)
+        self.target_row_combo = ComboBox(self._action_card)
+        self.target_row_combo.setMinimumWidth(560)
+        target_row_row.addWidget(self.target_row_combo, 1)
+        self._target_row_widget.hide()
+        action_layout.addWidget(self._target_row_widget)
 
         action_type_row = QHBoxLayout()
         action_type_row.addWidget(BodyLabel("动作类型", self._action_card))
@@ -246,10 +275,12 @@ class AnswerRuleDialog(QDialog):
         self.ok_btn.clicked.connect(self._on_confirm_clicked)
         self.condition_question_combo.currentIndexChanged.connect(self._on_condition_question_changed)
         self.target_question_combo.currentIndexChanged.connect(self._on_target_question_changed)
+        self.condition_row_combo.currentIndexChanged.connect(self._on_condition_row_changed)
+        self.target_row_combo.currentIndexChanged.connect(self._on_target_row_changed)
 
     def _apply_initial_rule(self) -> None:
-        self._render_condition_options([], None)
-        self._render_target_options([], None)
+        self._render_condition_options([], None, None)
+        self._render_target_options([], None, None)
         if not self._rule_data:
             return
         condition_num = _to_int(self._rule_data.get("condition_question_num"), -1)
@@ -258,6 +289,14 @@ class AnswerRuleDialog(QDialog):
         action_mode = str(self._rule_data.get("action_mode") or "must_select").strip()
         condition_indices = _to_int_list(self._rule_data.get("condition_option_indices"))
         target_indices = _to_int_list(self._rule_data.get("target_option_indices"))
+        raw_cri = self._rule_data.get("condition_row_index")
+        condition_row_index: Optional[int] = _to_int(raw_cri, -1) if raw_cri is not None else None
+        if condition_row_index is not None and condition_row_index < 0:
+            condition_row_index = None
+        raw_tri = self._rule_data.get("target_row_index")
+        target_row_index: Optional[int] = _to_int(raw_tri, -1) if raw_tri is not None else None
+        if target_row_index is not None and target_row_index < 0:
+            target_row_index = None
 
         condition_idx = self.condition_question_combo.findData(condition_num)
         if condition_idx >= 0:
@@ -270,6 +309,22 @@ class AnswerRuleDialog(QDialog):
             self.target_question_combo.setCurrentIndex(target_idx)
             self.target_question_combo.blockSignals(False)
 
+        # 恢复矩阵行选择器
+        self._update_row_selector(self.condition_question_combo, self._condition_row_widget, self.condition_row_combo)
+        self._update_row_selector(self.target_question_combo, self._target_row_widget, self.target_row_combo)
+        if condition_row_index is not None:
+            row_idx = self.condition_row_combo.findData(condition_row_index)
+            if row_idx >= 0:
+                self.condition_row_combo.blockSignals(True)
+                self.condition_row_combo.setCurrentIndex(row_idx)
+                self.condition_row_combo.blockSignals(False)
+        if target_row_index is not None:
+            row_idx = self.target_row_combo.findData(target_row_index)
+            if row_idx >= 0:
+                self.target_row_combo.blockSignals(True)
+                self.target_row_combo.setCurrentIndex(row_idx)
+                self.target_row_combo.blockSignals(False)
+
         if condition_mode == "not_selected":
             self.condition_not_selected_radio.setChecked(True)
         else:
@@ -280,16 +335,30 @@ class AnswerRuleDialog(QDialog):
         else:
             self.must_select_radio.setChecked(True)
 
-        self._render_condition_options(condition_indices, condition_num)
-        self._render_target_options(target_indices, target_num)
+        self._render_condition_options(condition_indices, condition_num, condition_row_index)
+        self._render_target_options(target_indices, target_num, target_row_index)
 
     def _on_condition_question_changed(self) -> None:
         q_num = self._get_combo_question_num(self.condition_question_combo)
-        self._render_condition_options([], q_num)
+        self._update_row_selector(self.condition_question_combo, self._condition_row_widget, self.condition_row_combo)
+        row_index = self._get_combo_row_index(self.condition_row_combo)
+        self._render_condition_options([], q_num, row_index)
 
     def _on_target_question_changed(self) -> None:
         q_num = self._get_combo_question_num(self.target_question_combo)
-        self._render_target_options([], q_num)
+        self._update_row_selector(self.target_question_combo, self._target_row_widget, self.target_row_combo)
+        row_index = self._get_combo_row_index(self.target_row_combo)
+        self._render_target_options([], q_num, row_index)
+
+    def _on_condition_row_changed(self) -> None:
+        q_num = self._get_combo_question_num(self.condition_question_combo)
+        row_index = self._get_combo_row_index(self.condition_row_combo)
+        self._render_condition_options([], q_num, row_index)
+
+    def _on_target_row_changed(self) -> None:
+        q_num = self._get_combo_question_num(self.target_question_combo)
+        row_index = self._get_combo_row_index(self.target_row_combo)
+        self._render_target_options([], q_num, row_index)
 
     def _get_combo_question_num(self, combo: ComboBox) -> Optional[int]:
         idx = combo.currentIndex()
@@ -303,19 +372,55 @@ class AnswerRuleDialog(QDialog):
             return None
         return q_num
 
-    def _render_condition_options(self, selected_indices: List[int], question_num: Optional[int]) -> None:
+    def _get_combo_row_index(self, combo: ComboBox) -> Optional[int]:
+        idx = combo.currentIndex()
+        if idx < 0:
+            return None
+        data = combo.itemData(idx)
+        if data is None:
+            return None
+        row_idx = _to_int(data, -1)
+        if row_idx < 0:
+            return None
+        return row_idx
+
+    def _is_matrix_question(self, question_num: Optional[int]) -> bool:
+        if not question_num:
+            return False
+        info = self._question_map.get(question_num) or {}
+        return _normalize_question_type_code(info.get("type_code")) == "6"
+
+    def _update_row_selector(self, question_combo: ComboBox, row_widget: QWidget, row_combo: ComboBox) -> None:
+        """根据选中的题目类型，显示/隐藏矩阵行选择器并填充行列表。"""
+        q_num = self._get_combo_question_num(question_combo)
+        if self._is_matrix_question(q_num):
+            info = self._question_map.get(q_num) or {}
+            row_texts = info.get("row_texts") if isinstance(info.get("row_texts"), list) else []
+            row_combo.clear()
+            row_combo.addItem("请选择行", userData=None)
+            for i, text in enumerate(row_texts):
+                label = str(text or "").strip() or f"第{i + 1}行"
+                row_combo.addItem(f"第{i + 1}行：{label}", userData=i)
+            row_widget.show()
+        else:
+            row_combo.clear()
+            row_widget.hide()
+
+    def _render_condition_options(self, selected_indices: List[int], question_num: Optional[int], row_index: Optional[int]) -> None:
         self._condition_checks = self._render_option_checks(
             self.condition_options_layout,
             selected_indices,
             question_num,
+            row_index,
             "请先选择条件题目",
         )
 
-    def _render_target_options(self, selected_indices: List[int], question_num: Optional[int]) -> None:
+    def _render_target_options(self, selected_indices: List[int], question_num: Optional[int], row_index: Optional[int]) -> None:
         self._target_checks = self._render_option_checks(
             self.target_options_layout,
             selected_indices,
             question_num,
+            row_index,
             "请先选择目标题目",
         )
 
@@ -324,6 +429,7 @@ class AnswerRuleDialog(QDialog):
         layout: QVBoxLayout,
         selected_indices: List[int],
         question_num: Optional[int],
+        row_index: Optional[int],
         empty_hint: str,
     ) -> List[CheckBox]:
         _clear_layout(layout)
@@ -333,6 +439,14 @@ class AnswerRuleDialog(QDialog):
             layout.addWidget(label)
             return []
         info = self._question_map.get(question_num) or {}
+        type_code = _normalize_question_type_code(info.get("type_code"))
+        # 矩阵题：需要先选行，再显示列选项
+        if type_code == "6":
+            if row_index is None:
+                label = BodyLabel("请先选择行", self)
+                label.setStyleSheet("color: #888888;")
+                layout.addWidget(label)
+                return []
         option_texts = info.get("option_texts") if isinstance(info.get("option_texts"), list) else []
         checks: List[CheckBox] = []
         if not option_texts:
@@ -385,11 +499,26 @@ class AnswerRuleDialog(QDialog):
         condition_info = self._question_map.get(condition_num)
         target_info = self._question_map.get(target_num)
         if not condition_info or _normalize_question_type_code(condition_info.get("type_code")) not in _ALLOWED_TYPE_CODES:
-            self._warn("条件题目仅支持单选题和下拉题")
+            self._warn("条件题目类型不支持")
             return None
         if not target_info or _normalize_question_type_code(target_info.get("type_code")) not in _ALLOWED_TYPE_CODES:
-            self._warn("目标题目仅支持单选题和下拉题")
+            self._warn("目标题目类型不支持")
             return None
+
+        # 矩阵题需要选择行
+        condition_row_index: Optional[int] = None
+        if self._is_matrix_question(condition_num):
+            condition_row_index = self._get_combo_row_index(self.condition_row_combo)
+            if condition_row_index is None:
+                self._warn("请先选择条件行")
+                return None
+
+        target_row_index: Optional[int] = None
+        if self._is_matrix_question(target_num):
+            target_row_index = self._get_combo_row_index(self.target_row_combo)
+            if target_row_index is None:
+                self._warn("请先选择目标行")
+                return None
 
         condition_indices = self._collect_checked_indices(self._condition_checks)
         if not condition_indices:
@@ -408,7 +537,7 @@ class AnswerRuleDialog(QDialog):
         if not rule_id:
             rule_id = uuid.uuid4().hex
 
-        rule = {
+        rule: Dict[str, Any] = {
             "id": rule_id,
             "condition_question_num": condition_num,
             "condition_mode": condition_mode,
@@ -417,6 +546,10 @@ class AnswerRuleDialog(QDialog):
             "action_mode": action_mode,
             "target_option_indices": target_indices,
         }
+        if condition_row_index is not None:
+            rule["condition_row_index"] = condition_row_index
+        if target_row_index is not None:
+            rule["target_row_index"] = target_row_index
         return normalize_rule_dict(rule)
 
     def get_rule(self) -> Optional[Dict[str, Any]]:
@@ -523,8 +656,11 @@ class AnswerRulesPage(ScrollArea):
         result: List[Dict[str, Any]] = []
         for question in self._questions_info:
             type_code = _normalize_question_type_code(question.get("type_code"))
-            if type_code in _ALLOWED_TYPE_CODES:
-                result.append(question)
+            if type_code not in _ALLOWED_TYPE_CODES:
+                continue
+            if type_code == "5" and question.get("is_rating"):
+                continue
+            result.append(question)
         return result
 
     def _on_add_rule(self) -> None:
@@ -588,11 +724,19 @@ class AnswerRulesPage(ScrollArea):
         self._refresh_table()
         self._toast("规则已删除", "success")
 
-    def _question_label_by_num(self, question_num: int) -> str:
+    def _question_label_by_num(self, question_num: int, row_index: Optional[int] = None) -> str:
         info = self._question_map.get(question_num)
         if not info:
             return f"第{question_num}题（题目不存在）"
-        return _build_question_label(info)
+        base = _build_question_label(info)
+        if row_index is not None:
+            row_texts = info.get("row_texts") if isinstance(info.get("row_texts"), list) else []
+            if row_index < len(row_texts):
+                row_label = str(row_texts[row_index] or "").strip() or f"第{row_index + 1}行"
+            else:
+                row_label = f"第{row_index + 1}行"
+            return f"{base} / {row_label}"
+        return base
 
     def _option_label_text(self, question_num: int, option_indices: List[int]) -> str:
         info = self._question_map.get(question_num) or {}
@@ -619,10 +763,18 @@ class AnswerRulesPage(ScrollArea):
             action_mode = str(rule.get("action_mode") or "must_select").strip()
             condition_options = _to_int_list(rule.get("condition_option_indices"))
             target_options = _to_int_list(rule.get("target_option_indices"))
+            raw_cri = rule.get("condition_row_index")
+            condition_row_index: Optional[int] = _to_int(raw_cri, -1) if raw_cri is not None else None
+            if condition_row_index is not None and condition_row_index < 0:
+                condition_row_index = None
+            raw_tri = rule.get("target_row_index")
+            target_row_index: Optional[int] = _to_int(raw_tri, -1) if raw_tri is not None else None
+            if target_row_index is not None and target_row_index < 0:
+                target_row_index = None
 
-            self.table.setItem(row, 0, QTableWidgetItem(self._question_label_by_num(condition_num)))
+            self.table.setItem(row, 0, QTableWidgetItem(self._question_label_by_num(condition_num, condition_row_index)))
             self.table.setItem(row, 1, QTableWidgetItem(_CONDITION_MODE_LABELS.get(condition_mode, condition_mode)))
             self.table.setItem(row, 2, QTableWidgetItem(self._option_label_text(condition_num, condition_options)))
-            self.table.setItem(row, 3, QTableWidgetItem(self._question_label_by_num(target_num)))
+            self.table.setItem(row, 3, QTableWidgetItem(self._question_label_by_num(target_num, target_row_index)))
             self.table.setItem(row, 4, QTableWidgetItem(_ACTION_MODE_LABELS.get(action_mode, action_mode)))
             self.table.setItem(row, 5, QTableWidgetItem(self._option_label_text(target_num, target_options)))

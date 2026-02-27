@@ -34,12 +34,19 @@ def reset_tendency() -> None:
     _thread_local.dimension_bases = {}
 
 
-def _generate_base_index(option_count: int, probabilities: Union[List[float], int, None]) -> int:
-    """根据概率配置生成本份问卷的基准偏好索引。
+def _generate_base_ratio(
+    option_count: int,
+    probabilities: Union[List[float], int, None],
+    is_reverse: bool = False,
+) -> float:
+    """生成本份问卷的基准偏好比例（0.0~1.0），与具体选项数无关。
 
-    如果有概率配置，按概率选择基准；否则参考画像的满意度倾向。
-    当画像存在时，基准偏好 = satisfaction_tendency * (option_count - 1)，
-    再加上少许随机扰动，让不同问卷间仍有差异。
+    base_ratio 语义始终是"真实满意度"：0.0=极不满意，1.0=极满意。
+    对于反向题，用户配置的概率指向的是"反向选项索引"，必须翻转后才能
+    还原为真实满意度，否则会把"极其不满"的人误记成"极其满意"，
+    污染同维度后续所有正向题的作答。
+
+    画像的 satisfaction_tendency 本身已是真实满意度，无需翻转。
     """
     if probabilities == -1 or probabilities is None:
         # 尝试从画像获取满意度倾向
@@ -47,17 +54,21 @@ def _generate_base_index(option_count: int, probabilities: Union[List[float], in
             from wjx.core.persona.generator import get_current_persona
             persona = get_current_persona()
             if persona is not None:
-                # 根据满意度倾向计算基准，加少许扰动
-                raw = persona.satisfaction_tendency * (option_count - 1)
-                jitter = random.gauss(0, 0.5)
-                base = int(round(max(0, min(option_count - 1, raw + jitter))))
-                return base
+                # satisfaction_tendency 本身已是 0.0~1.0，加少许扰动（约±10%量程）
+                raw = persona.satisfaction_tendency
+                jitter = random.gauss(0, 0.1)
+                return max(0.0, min(1.0, raw + jitter))
         except Exception as exc:
-            log_suppressed_exception("_generate_base_index: from wjx.core.persona.generator import get_current_persona", exc, level=logging.ERROR)
-        return random.randrange(option_count)
+            log_suppressed_exception("_generate_base_ratio: get_current_persona", exc, level=logging.ERROR)
+        return random.random()
     if isinstance(probabilities, list) and probabilities:
-        return weighted_index(probabilities)
-    return random.randrange(option_count)
+        idx = weighted_index(probabilities)
+        ratio = idx / max(option_count - 1, 1)
+        # 反向题：索引越高代表越不满意，需翻转才能还原真实满意度
+        if is_reverse:
+            ratio = 1.0 - ratio
+        return ratio
+    return random.random()
 
 
 def _is_ungrouped(dimension: Optional[str]) -> bool:
@@ -95,9 +106,12 @@ def get_tendency_index(
     if option_count <= 0:
         return 0
 
-    # 未分组 → 纯随机/纯概率，不做一致性约束
+    # 未分组 → 纯随机/纯概率，不做一致性约束，但仍需处理反向题
     if _is_ungrouped(dimension):
-        return _random_by_probabilities(option_count, probabilities)
+        result = _random_by_probabilities(option_count, probabilities)
+        if is_reverse:
+            return (option_count - 1) - result
+        return result
 
     # 获取该维度的基准偏好
     assert dimension is not None  # 已通过 _is_ungrouped 过滤，此处 dimension 必为 str
@@ -106,20 +120,22 @@ def get_tendency_index(
         bases = {}
         _thread_local.dimension_bases = bases
 
-    base = bases.get(dimension)
+    base_ratio = bases.get(dimension)
 
-    if base is None:
-        # 该维度首次遇到：生成基准偏好并存入
-        base = _generate_base_index(option_count, probabilities)
-        if is_reverse:
-            base = (option_count - 1) - base
-        bases[dimension] = base
-        return base
+    if base_ratio is None:
+        # 该维度首次遇到：生成归一化比例（0.0~1.0）并存入
+        # 必须透传 is_reverse，否则反向题会把"极不满意"误记成"极满意"
+        base_ratio = _generate_base_ratio(option_count, probabilities, is_reverse=is_reverse)
+        bases[dimension] = base_ratio
 
-    # 后续调用：反向题翻转基准后再应用一致性约束
+    # 将归一化比例还原为当前题的绝对索引，避免不同量程题目语义错位
+    base = int(round(base_ratio * (option_count - 1)))
+    base = max(0, min(option_count - 1, base))
+
+    # 反向题翻转基准后再应用一致性约束
     effective_base = base
     if is_reverse:
-        effective_base = (option_count - 1) - min(base, option_count - 1)
+        effective_base = (option_count - 1) - base
     return _apply_consistency(effective_base, option_count, probabilities)
 
 

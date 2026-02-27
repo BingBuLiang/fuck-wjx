@@ -131,6 +131,9 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
         self.text_random_name_check_map: Dict[int, CheckBox] = {}
         self.text_random_mobile_check_map: Dict[int, CheckBox] = {}
         self.text_random_group_map: Dict[int, QButtonGroup] = {}
+        # 潜变量模式配置映射表
+        self.psycho_check_map: Dict[int, CheckBox] = {}
+        self.psycho_bias_map: Dict[int, ComboBox] = {}
         self._entry_snapshots: List[QuestionEntry] = [copy.deepcopy(entry) for entry in entries]
         self._has_content = False
 
@@ -364,3 +367,8 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
         for idx, cbs in self.matrix_reverse_check_map.items():
             result[idx] = [cb.isChecked() for cb in cbs]
         return result
+
+    def get_psycho_results(self) -> Dict[int, Dict[str, Any]]:
+        """获取潜变量模式配置结果"""
+        from wjx.ui.pages.workbench.question.psycho_config import get_psycho_results
+        return get_psycho_results(self.psycho_check_map, self.psycho_bias_map)

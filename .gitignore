@@ -14,9 +14,10 @@ AGENTS.md
 CLAUDE.md
 docx/
 logs/
-stats/
-tests/
+/stats
+tests
 demo/
+.kiro
 
 # 编译环境
 /build/

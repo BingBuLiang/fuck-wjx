@@ -1,9 +1,9 @@
 """WizardSectionsMixin：各题型配置区 UI 构建方法，供 QuestionWizardDialog 通过多继承引入。"""
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Tuple
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QButtonGroup
-from qfluentwidgets import ScrollArea, BodyLabel, CardWidget, PushButton, LineEdit, CheckBox, ComboBox
+from qfluentwidgets import ScrollArea, BodyLabel, CardWidget, PushButton, LineEdit, CheckBox
 
 from wjx.ui.widgets.no_wheel import NoWheelSlider
 from wjx.core.questions.config import QuestionEntry
@@ -11,7 +11,6 @@ from wjx.utils.app.config import DEFAULT_FILL_TEXT
 from wjx.ui.helpers.ai_fill import ensure_ai_ready
 from wjx.ui.pages.workbench.question.psycho_config import (
     PSYCHO_SUPPORTED_TYPES,
-    PSYCHO_BIAS_CHOICES,
     build_psycho_config_row,
 )
 
@@ -48,7 +47,6 @@ class WizardSectionsMixin:
 
     def _resolve_matrix_weights(self, entry: Any, rows: int, columns: int) -> List[List[float]]: ...
     def _resolve_slider_bounds(self, idx: int, entry: Any) -> Tuple[int, int]: ...
-    def window(self) -> Optional[QWidget]: ...
 
     def _build_text_section(self, idx: int, entry: QuestionEntry, card: CardWidget, card_layout: QVBoxLayout) -> None:
         self._has_content = True

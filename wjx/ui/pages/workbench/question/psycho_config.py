@@ -1,5 +1,5 @@
 """潜变量模式配置组件"""
-from typing import Dict
+from typing import Any, Dict
 
 from PySide6.QtWidgets import QHBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, CheckBox, ComboBox
@@ -93,7 +93,7 @@ def build_psycho_config_row(
 def get_psycho_results(
     psycho_check_map: Dict[int, CheckBox],
     psycho_bias_map: Dict[int, ComboBox],
-) -> Dict[int, Dict[str, any]]:
+) -> Dict[int, Dict[str, Any]]:
     """获取潜变量模式配置结果
     
     Args:
@@ -103,7 +103,7 @@ def get_psycho_results(
     Returns:
         配置结果字典
     """
-    result: Dict[int, Dict[str, any]] = {}
+    result: Dict[int, Dict[str, Any]] = {}
     for idx, cb in psycho_check_map.items():
         bias_combo = psycho_bias_map.get(idx)
         bias_value = "center"

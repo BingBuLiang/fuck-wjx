@@ -116,7 +116,7 @@ def get_tendency_index(
         if choice is not None:
             return choice
         # 如果潜变量模式失败，回退到简单模式
-        logger.debug(
+        logging.debug(
             "潜变量模式未找到答案（题%d 行%s），回退到简单模式",
             question_index, row_index
         )

@@ -78,20 +78,6 @@ class RuntimePage(ScrollArea):
         )
         self.reliability_mode_card.setChecked(True)
 
-        self.fail_stop_card = SwitchSettingCard(
-            FluentIcon.CANCEL, "失败过多自动停止", "连续失败次数过多时自动停止运行",
-            parent=run_group
-        )
-        self.fail_stop_card.setChecked(True)
-
-        self.pause_on_aliyun_card = SwitchSettingCard(
-            FluentIcon.PAUSE,
-            "触发智能验证自动暂停",
-            "检测到阿里云智能验证时暂停执行（默认开启，建议配合随机 IP）",
-            parent=run_group,
-        )
-        self.pause_on_aliyun_card.setChecked(True)
-
         self.headless_card = SwitchSettingCard(
             FluentIcon.SPEED_HIGH,
             "无头模式",
@@ -103,8 +89,6 @@ class RuntimePage(ScrollArea):
         run_group.addSettingCard(self.target_card)
         run_group.addSettingCard(self.thread_card)
         run_group.addSettingCard(self.reliability_mode_card)
-        run_group.addSettingCard(self.fail_stop_card)
-        run_group.addSettingCard(self.pause_on_aliyun_card)
         run_group.addSettingCard(self.headless_card)
         layout.addWidget(run_group)
 
@@ -155,8 +139,6 @@ class RuntimePage(ScrollArea):
         # 兼容旧代码的属性别名
         self.target_spin = self.target_card.spinBox
         self.thread_spin = self.thread_card.spinBox
-        self.fail_stop_switch = self.fail_stop_card.switchButton
-        self.pause_on_aliyun_switch = self.pause_on_aliyun_card.switchButton
         self.reliability_mode_switch = self.reliability_mode_card.switchButton
         self.timed_switch = self.timed_card.switchButton
         self.random_ip_switch = self.random_ip_card.switchButton
@@ -257,8 +239,8 @@ class RuntimePage(ScrollArea):
         cfg.random_ip_enabled = self.random_ip_switch.isChecked()
         cfg.random_ua_enabled = self.random_ua_switch.isChecked()
         cfg.random_ua_ratios = self.random_ua_card.getRatios() if cfg.random_ua_enabled else {"wechat": 33, "mobile": 33, "pc": 34}
-        cfg.fail_stop_enabled = self.fail_stop_switch.isChecked()
-        cfg.pause_on_aliyun_captcha = self.pause_on_aliyun_switch.isChecked()
+        cfg.fail_stop_enabled = True
+        cfg.pause_on_aliyun_captcha = True
         cfg.reliability_mode_enabled = self.reliability_mode_switch.isChecked()
         cfg.headless_mode = self.headless_card.switchButton.isChecked()
         try:
@@ -308,8 +290,6 @@ class RuntimePage(ScrollArea):
             self.random_ua_card.setRatios({"wechat": 33, "mobile": 33, "pc": 34})
 
         self._sync_random_ua(self.random_ua_switch.isChecked())
-        self.fail_stop_switch.setChecked(cfg.fail_stop_enabled)
-        self.pause_on_aliyun_switch.setChecked(getattr(cfg, "pause_on_aliyun_captcha", True))
         self.reliability_mode_switch.setChecked(getattr(cfg, "reliability_mode_enabled", True))
         self.headless_card.setChecked(getattr(cfg, "headless_mode", False))
 

@@ -201,12 +201,7 @@ class UpdateManager:
         download_url: str, file_name: str, progress_callback=None, cancel_check=None,
         on_mirror_switch=None
     ) -> Optional[str]:
-        """下载更新文件，成功返回文件路径。
-        
-        Args:
-            cancel_check: 可调用对象，返回True表示取消下载
-            on_mirror_switch: 镜像源切换时的回调，参数为新的镜像源 key
-        """
+        """下载更新文件，成功返回文件路径。"""
         # 连接超时时间（秒）
         CONNECT_TIMEOUT = 2
         # 已尝试的镜像源

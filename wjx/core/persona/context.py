@@ -81,18 +81,7 @@ def apply_persona_boost(
     option_texts: List[str],
     base_weights: List[float],
 ) -> List[float]:
-    """根据当前画像，对匹配的选项进行权重加成。
-
-    对每个选项文本，检查是否包含画像关键词。
-    如果匹配，该选项权重 *= PERSONA_BOOST_FACTOR。
-
-    Args:
-        option_texts: 各选项的文本内容
-        base_weights: 原始权重列表（已归一化或未归一化均可）
-
-    Returns:
-        加成后的权重列表（未归一化）
-    """
+    """根据当前画像，对匹配的选项进行权重加成。"""
     persona = get_current_persona()
     if persona is None:
         return list(base_weights)
@@ -127,11 +116,7 @@ def apply_persona_boost(
 
 # TODO(清理): 疑似未使用，先保留，确认外部是否有引用再决定删除。
 def get_persona_name_gender() -> Tuple[Optional[str], Optional[str]]:
-    """获取当前画像的性别信息，用于填空题生成姓名时保持一致。
-
-    Returns:
-        (gender, name_style): gender="男"/"女"
-    """
+    """获取当前画像的性别信息，用于填空题生成姓名时保持一致。"""
     persona = get_current_persona()
     if persona is None:
         return None, None
@@ -141,15 +126,7 @@ def get_persona_name_gender() -> Tuple[Optional[str], Optional[str]]:
 # ── AI 上下文构建 ───────────────────────────────────────────
 
 def build_ai_context_prompt() -> str:
-    """构建 AI 填空题的上下文 prompt 片段。
-
-    包含：
-    1. 画像描述
-    2. 前面已答题目的摘要（最多取最近 10 题）
-
-    Returns:
-        上下文描述字符串，可直接拼接到 AI prompt 中
-    """
+    """构建 AI 填空题的上下文 prompt 片段。"""
     parts: List[str] = []
 
     # 画像信息

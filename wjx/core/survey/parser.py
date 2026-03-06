@@ -95,6 +95,111 @@ def _cleanup_question_title(raw_title: str) -> str:
     return title.strip()
 
 
+_FORCE_SELECT_COMMAND_RE = re.compile(r"请(?:务必|一定|必须|直接)?\s*选(?:择)?")
+_FORCE_SELECT_INDEX_RE = re.compile(r"^第?\s*(\d{1,3})\s*(?:个|项|选项|分|星)?$")
+_FORCE_SELECT_SENTENCE_SPLIT_RE = re.compile(r"[。；;！？!\n\r]")
+_FORCE_SELECT_CLEAN_RE = re.compile(r"[\s`'\"“”‘’【】\[\]\(\)（）<>《》,，、。；;:：!?！？]")
+
+
+def _normalize_force_select_text(value: Any) -> str:
+    text = _normalize_html_text(str(value or ""))
+    if not text:
+        return ""
+    return _FORCE_SELECT_CLEAN_RE.sub("", text).lower()
+
+
+def _collect_force_select_fragments(question_div, title_text: str) -> List[str]:
+    fragments: List[str] = []
+    if title_text:
+        cleaned_title = _normalize_html_text(title_text)
+        if cleaned_title:
+            fragments.append(cleaned_title)
+    if question_div is None:
+        return fragments
+    for selector in (".qtypetip", ".topichtml", ".field-label"):
+        try:
+            element = question_div.select_one(selector)
+        except Exception:
+            element = None
+        if not element:
+            continue
+        try:
+            text = _normalize_html_text(element.get_text(" ", strip=True))
+        except Exception:
+            text = ""
+        if text:
+            fragments.append(text)
+    unique_fragments: List[str] = []
+    seen: set = set()
+    for fragment in fragments:
+        key = _normalize_html_text(fragment)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique_fragments.append(key)
+    return unique_fragments
+
+
+def _extract_force_select_option(
+    question_div,
+    title_text: str,
+    option_texts: List[str],
+) -> Tuple[Optional[int], Optional[str]]:
+    """识别“请选XX”类指令，返回强制选择的选项索引。"""
+    if not option_texts:
+        return None, None
+
+    normalized_options: List[Tuple[int, str, str]] = []
+    for idx, option_text in enumerate(option_texts):
+        normalized = _normalize_force_select_text(option_text)
+        if not normalized:
+            continue
+        normalized_options.append((idx, str(option_text or "").strip(), normalized))
+    if not normalized_options:
+        return None, None
+
+    fragments = _collect_force_select_fragments(question_div, title_text)
+    for fragment in fragments:
+        for command_match in _FORCE_SELECT_COMMAND_RE.finditer(fragment):
+            tail_text = fragment[command_match.end():]
+            if not tail_text:
+                continue
+            sentence = _FORCE_SELECT_SENTENCE_SPLIT_RE.split(tail_text, maxsplit=1)[0]
+            sentence = sentence.strip(" ：:，,、")
+            if not sentence:
+                continue
+            compact_sentence = _normalize_force_select_text(sentence)
+            if not compact_sentence:
+                continue
+
+            best_index: Optional[int] = None
+            best_text: Optional[str] = None
+            best_length = -1
+            for option_idx, raw_text, normalized_text in normalized_options:
+                # 跳过纯数字文本，避免“第1题”之类误判；数字题走索引匹配兜底。
+                if normalized_text.isdigit():
+                    continue
+                if normalized_text in compact_sentence:
+                    text_len = len(normalized_text)
+                    if text_len > best_length:
+                        best_length = text_len
+                        best_index = option_idx
+                        best_text = raw_text
+            if best_index is not None:
+                return best_index, best_text
+
+            index_match = _FORCE_SELECT_INDEX_RE.fullmatch(sentence)
+            if index_match:
+                try:
+                    target_idx = int(index_match.group(1)) - 1
+                except Exception:
+                    target_idx = -1
+                if 0 <= target_idx < len(option_texts):
+                    selected = str(option_texts[target_idx] or "").strip()
+                    return target_idx, selected or None
+    return None, None
+
+
 def _element_contains_text_input(element) -> bool:
     if element is None:
         return False
@@ -1073,6 +1178,14 @@ def parse_survey_questions_from_html(html: str) -> List[Dict[str, Any]]:
             has_gapfill = str(question_div.get("gapfill") or "").strip() == "1"
             is_text_like_question = _should_treat_question_as_text_like(type_code, option_count, text_input_count)
             is_multi_text = _should_mark_as_multi_text(type_code, option_count, text_input_count, is_location, has_gapfill)
+            forced_option_index: Optional[int] = None
+            forced_option_text: Optional[str] = None
+            if type_code in {"3", "5", "7"}:
+                forced_option_index, forced_option_text = _extract_force_select_option(
+                    question_div,
+                    title_text,
+                    option_texts,
+                )
             questions_info.append({
                 "num": question_number,
                 "title": title_text,
@@ -1082,6 +1195,8 @@ def parse_survey_questions_from_html(html: str) -> List[Dict[str, Any]]:
                 "row_texts": row_texts,
                 "page": page_index,
                 "option_texts": option_texts,
+                "forced_option_index": forced_option_index,
+                "forced_option_text": forced_option_text,
                 "fillable_options": fillable_indices,
                 "is_location": is_location,
                 "is_rating": is_rating,

@@ -393,16 +393,7 @@ def configure_probabilities(
 
 
 def validate_question_config(entries: List[QuestionEntry], questions_info: Optional[List[dict]] = None) -> Optional[str]:
-    """
-    验证题目配置是否存在冲突，返回错误信息（如果有）。
-
-    Args:
-        entries: 题目配置列表
-        questions_info: 问卷解析信息（包含多选题限制等）
-
-    Returns:
-        错误信息字符串，如果验证通过则返回 None
-    """
+    """验证题目配置是否存在冲突，返回错误信息（如果有）。"""
     if not entries:
         return "未配置任何题目"
 

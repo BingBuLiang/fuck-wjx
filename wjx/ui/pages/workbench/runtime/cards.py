@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 
 from PySide6.QtCore import Qt, QStringListModel, Signal
-from PySide6.QtGui import QIntValidator
+from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import QCompleter, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -504,6 +504,108 @@ class RandomUASettingCard(ExpandGroupSettingCard):
     def setRatios(self, ratios: dict):
         """设置设备占比配置"""
         self.ratioSlider.setValues(ratios)
+
+
+class ReliabilitySettingCard(ExpandGroupSettingCard):
+    """信效度设置卡 - 开关 + 目标 Alpha 输入框
+
+    使用 ExpandGroupSettingCard 承载一个总开关和一行数值输入：
+    - 开关：控制是否启用信效度优化
+    - 输入框：目标 Cronbach's Alpha 系数，范围 0.70-0.95
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FluentIcon.CERTIFICATE,
+            "提升问卷信效度",
+            "启用后量表/矩阵/评价题将共享答题倾向，针对信效度优化作答策略",
+            parent,
+        )
+
+        # 顶部开关
+        self.switchButton = SwitchButton(self, IndicatorPosition.RIGHT)
+        self.switchButton.setOnText("开")
+        self.switchButton.setOffText("关")
+        self.addWidget(self.switchButton)
+
+        # 展开区域容器
+        self._groupContainer = QWidget(self)
+        layout = QVBoxLayout(self._groupContainer)
+        layout.setContentsMargins(48, 12, 48, 12)
+        layout.setSpacing(12)
+
+        # 目标信度 Alpha 行
+        alpha_row = QHBoxLayout()
+        alpha_row.setContentsMargins(0, 0, 0, 0)
+        alpha_row.setSpacing(8)
+
+        alpha_label = BodyLabel("目标 Cronbach's α 系数", self._groupContainer)
+        self.alphaEdit = LineEdit(self._groupContainer)
+        self.alphaEdit.setPlaceholderText("0.70 - 0.95（默认 0.85）")
+        self.alphaEdit.setFixedWidth(120)
+        self.alphaEdit.setFixedHeight(36)
+
+        # 仅允许 0.70 - 0.95 的两位小数
+        validator = QDoubleValidator(0.70, 0.95, 2, self.alphaEdit)
+        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self.alphaEdit.setValidator(validator)
+
+        alpha_row.addWidget(alpha_label)
+        alpha_row.addStretch(1)
+        alpha_row.addWidget(self.alphaEdit)
+
+        layout.addLayout(alpha_row)
+
+        self.addGroupWidget(self._groupContainer)
+        self.setExpand(True)
+
+        # 开关联动：关闭时禁用展开内容
+        self.switchButton.checkedChanged.connect(self._sync_enabled)
+        self._sync_enabled(False)
+
+    def _sync_enabled(self, enabled: bool) -> None:
+        """根据开关状态启用/禁用内部控件。"""
+
+        self._groupContainer.setEnabled(bool(enabled))
+
+    def isChecked(self) -> bool:
+        return self.switchButton.isChecked()
+
+    def setChecked(self, checked: bool) -> None:
+        self.switchButton.setChecked(bool(checked))
+
+    def get_alpha(self) -> float:
+        """读取并裁剪目标 Alpha 值，落在 0.70-0.95 之间。
+
+        输入非法或为空时回退到 0.85。
+        """
+
+        text = (self.alphaEdit.text() or "").strip()
+        try:
+            value = float(text)
+        except Exception:
+            value = 0.85
+
+        if value != value:  # NaN 兜底
+            value = 0.85
+
+        value = max(0.70, min(0.95, value))
+        return value
+
+    def set_alpha(self, value: float) -> None:
+        """设置目标 Alpha，并同步到输入框文本。"""
+
+        try:
+            num = float(value)
+        except Exception:
+            num = 0.85
+        num = max(0.70, min(0.95, num))
+        # 保留两位小数，去掉多余 0
+        text = f"{num:.2f}".rstrip("0").rstrip(".")
+        if not text:
+            text = "0.85"
+        if self.alphaEdit.text() != text:
+            self.alphaEdit.setText(text)
 
 
 class TimeRangeSettingCard(SettingCard):

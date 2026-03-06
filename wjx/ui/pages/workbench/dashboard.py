@@ -714,15 +714,7 @@ class DashboardPage(
         return cfg
 
     def _toast(self, text: str, level: str = "info", duration: int = 2000, show_progress: bool = False):
-        """
-        显示消息提示
-        
-        Args:
-            text: 消息内容
-            level: 消息级别 (info/success/warning/error)
-            duration: 显示时长（毫秒），-1 表示不自动关闭
-            show_progress: 是否显示进度条（适用于耗时操作）
-        """
+        """显示消息提示"""
         # 如果之前有进度消息条正在显示，先关闭它
         if self._progress_infobar:
             try:

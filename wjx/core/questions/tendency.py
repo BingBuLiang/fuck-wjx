@@ -1,19 +1,9 @@
-"""答题倾向模块 - 保证同一份问卷内量表类题目的前后一致性
-
-问题：原来每道量表题完全独立随机，可能出现前面给5分后面给1分的情况，
-导致 Cronbach's Alpha 信效度极低，一看就是假数据。
-
-方案：每次填写问卷时，按维度（dimension）独立生成"基准偏好"，
-同维度内的量表题围绕该基准按量程自适应波动，不同维度之间互不干扰。
-未分组的题目走纯随机，不受一致性约束。
-
-增强（画像融合）：当存在虚拟画像时，基准偏好由画像的 satisfaction_tendency
-决定，而非完全随机。这样画像越"满意"的人物，量表题越倾向选高分。
-
-潜变量模式：支持基于心理测量学的潜变量模型，可精确控制 Cronbach's Alpha。
+"""
+答题倾向模块 - 保证同一份问卷内量表类题目的前后一致性
 """
 import random
 import threading
+import math
 from typing import Any, Dict, List, Optional, Union
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
@@ -88,50 +78,104 @@ def _random_by_probabilities(option_count: int, probabilities: Union[List[float]
     return random.randrange(option_count)
 
 
+def _normalize_probabilities_for_zero_guard(
+    option_count: int,
+    probabilities: Union[List[float], int, None],
+) -> Optional[List[float]]:
+    """将概率配置对齐到选项数，供“0 权重禁选”约束使用。"""
+    if option_count <= 0 or not isinstance(probabilities, list):
+        return None
+
+    normalized: List[float] = []
+    for idx in range(option_count):
+        raw = probabilities[idx] if idx < len(probabilities) else 0.0
+        try:
+            weight = float(raw)
+        except Exception:
+            weight = 0.0
+        if math.isnan(weight) or math.isinf(weight) or weight <= 0.0:
+            weight = 0.0
+        normalized.append(weight)
+    return normalized
+
+
+def _enforce_zero_weight_guard(
+    selected_index: int,
+    option_count: int,
+    probabilities: Union[List[float], int, None],
+    anchor_index: Optional[int] = None,
+) -> int:
+    """硬约束：若某选项权重为 0，则最终结果绝不落在该选项。"""
+    if option_count <= 0:
+        return 0
+
+    selected = max(0, min(option_count - 1, int(selected_index)))
+    normalized = _normalize_probabilities_for_zero_guard(option_count, probabilities)
+    if not normalized:
+        return selected
+
+    positive_indices = [idx for idx, weight in enumerate(normalized) if weight > 0.0]
+    if not positive_indices:
+        raise ValueError("当前题目所有选项权重均为 0，无法在“0 权重禁选”约束下作答，请至少保留一个非 0 选项。")
+    if selected in positive_indices:
+        return selected
+
+    if anchor_index is None:
+        target = selected
+    else:
+        target = max(0, min(option_count - 1, int(anchor_index)))
+
+    # 选离目标最近的正权重项；同距离时优先更高权重，再按索引稳定排序
+    best = positive_indices[0]
+    best_distance = abs(best - target)
+    best_weight = normalized[best]
+    for idx in positive_indices[1:]:
+        distance = abs(idx - target)
+        weight = normalized[idx]
+        if (
+            distance < best_distance
+            or (distance == best_distance and weight > best_weight)
+            or (distance == best_distance and weight == best_weight and idx < best)
+        ):
+            best = idx
+            best_distance = distance
+            best_weight = weight
+
+    return best
+
+
 def get_tendency_index(
     option_count: int,
     probabilities: Union[List[float], int, None],
     dimension: Optional[str] = None,
     is_reverse: bool = False,
-    # 新增：潜变量模式支持
+    # 可选：按心理测量计划直接取答案
     psycho_plan: Optional[Any] = None,
     question_index: Optional[int] = None,
     row_index: Optional[int] = None,
 ) -> int:
-    """获取带有一致性倾向的选项索引。
-
-    支持两种模式：
-    1. 简单倾向模式（默认）：同维度内的题目共享基准并按量程自适应波动
-    2. 潜变量模式：基于心理测量学模型，可精确控制 Cronbach's Alpha
-
-    按维度隔离基准偏好：同维度内的题目共享基准并按量程自适应波动，
-    不同维度之间独立生成基准。未分组的题目走纯随机。
-
-    Args:
-        option_count: 该题的选项数量（比如5分量表就是5）
-        probabilities: 概率配置列表，或 -1 表示随机
-        dimension: 题目所属维度，None 或 DIMENSION_UNGROUPED 表示未分组
-        is_reverse: 是否为反向题，True 时翻转基准偏好
-        psycho_plan: 潜变量计划（可选），如果提供则使用潜变量模式
-        question_index: 题目索引（潜变量模式需要）
-        row_index: 矩阵题行索引（可选，仅矩阵题需要）
-
-    Returns:
-        选中的选项索引（0-based）
-    """
+    """获取带有一致性倾向的选项索引。"""
     if option_count <= 0:
         return 0
 
-    # 优先使用潜变量模式（如果提供了计划）
+    def _finalize_choice(choice: int, anchor: Optional[int] = None) -> int:
+        return _enforce_zero_weight_guard(
+            choice,
+            option_count,
+            probabilities,
+            anchor_index=anchor,
+        )
+
+    # 传入心理测量计划时，优先按计划取答案
     if psycho_plan is not None and question_index is not None:
         choice = _get_psychometric_answer(
             psycho_plan, question_index, row_index, option_count, is_reverse
         )
         if choice is not None:
-            return choice
-        # 如果潜变量模式失败，回退到简单模式
+            return _finalize_choice(choice, anchor=choice)
+        # 计划未命中时，回退到常规倾向逻辑
         logging.debug(
-            "潜变量模式未找到答案（题%d 行%s），回退到简单模式",
+            "心理测量计划未命中答案（题%d 行%s），回退到常规倾向逻辑",
             question_index, row_index
         )
 
@@ -139,8 +183,8 @@ def get_tendency_index(
     if _is_ungrouped(dimension):
         result = _random_by_probabilities(option_count, probabilities)
         if is_reverse:
-            return (option_count - 1) - result
-        return result
+            result = (option_count - 1) - result
+        return _finalize_choice(result, anchor=result)
 
     # 获取该维度的基准偏好
     assert dimension is not None  # 已通过 _is_ungrouped 过滤，此处 dimension 必为 str
@@ -165,7 +209,8 @@ def get_tendency_index(
     effective_base = base
     if is_reverse:
         effective_base = (option_count - 1) - base
-    return _apply_consistency(effective_base, option_count, probabilities)
+    selected = _apply_consistency(effective_base, option_count, probabilities)
+    return _finalize_choice(selected, anchor=effective_base)
 
 
 def _apply_consistency(
@@ -248,18 +293,7 @@ def _get_psychometric_answer(
     option_count: int,
     is_reverse: bool,
 ) -> Optional[int]:
-    """从潜变量计划中获取答案
-    
-    Args:
-        plan: PsychometricPlan 对象
-        question_index: 题目索引（0-based，配置列表中的索引）
-        row_index: 矩阵题行索引（可选）
-        option_count: 选项数量
-        is_reverse: 是否为反向题
-        
-    Returns:
-        选项索引（0-based），如果未找到则返回 None
-    """
+    """从潜变量计划中获取答案"""
     try:
         choice = plan.get_choice(question_index, row_index)
         if choice is None:

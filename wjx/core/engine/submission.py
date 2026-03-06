@@ -14,14 +14,7 @@ from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
 def _click_submit_button(driver: BrowserDriver, max_wait: float = 10.0) -> bool:
-    """点击“提交”按钮（简单版）。
-
-    设计目标：只做“找按钮 -> click”这一件事，不做 JS 强行触发/移除遮罩/调用全局函数等兜底。
-
-    Args:
-        driver: 浏览器驱动
-        max_wait: 最大等待时间（秒），用于轮询等待按钮出现
-    """
+    """点击“提交”按钮（简单版）。"""
 
     submit_keywords = ("提交", "完成", "交卷", "确认提交", "确认")
 

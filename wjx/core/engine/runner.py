@@ -345,15 +345,7 @@ def run(
     gui_instance: Any = None,
     ctx: Optional[TaskContext] = None,
 ):
-    """引擎主循环 - 创建浏览器、填写问卷、处理结果。
-
-    Args:
-        window_x_pos: 浏览器窗口 X 位置
-        window_y_pos: 浏览器窗口 Y 位置
-        stop_signal: 停止信号
-        gui_instance: EngineGuiAdapter 实例
-        ctx: 任务上下文（传入后使用 ctx 配置，不再依赖全局 state）
-    """
+    """引擎主循环 - 创建浏览器、填写问卷、处理结果。"""
     # 如果没传 ctx，从 gui_instance 获取
     if ctx is None and gui_instance and hasattr(gui_instance, 'task_ctx'):
         ctx = gui_instance.task_ctx

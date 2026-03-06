@@ -95,18 +95,7 @@ def _select_user_agent_from_keys(selected_keys: List[str]) -> Tuple[Optional[str
 
 
 def _select_user_agent_from_ratios(ratios: Dict[str, int]) -> Tuple[Optional[str], Optional[str]]:
-    """
-    根据设备类型占比选择 User-Agent
-
-    Args:
-        ratios: 设备类型占比字典，格式为 {"wechat": 33, "mobile": 33, "pc": 34}
-                - wechat: 微信访问（安卓微信）
-                - mobile: 手机访问（安卓手机浏览器）
-                - pc: 链接访问（电脑网页端）
-
-    Returns:
-        (ua, label) 元组
-    """
+    """根据设备类型占比选择 User-Agent"""
     # 映射设备类型到UA预设键
     device_to_ua_keys = {
         "wechat": ["wechat_android"],
@@ -177,9 +166,9 @@ class RuntimeConfig:
     random_ua_ratios: Dict[str, int] = field(default_factory=lambda: {"wechat": 33, "mobile": 33, "pc": 34})  # 设备类型占比
     fail_stop_enabled: bool = True
     pause_on_aliyun_captcha: bool = True
-    reliability_mode_enabled: bool = True  # 信效度模式总开关
-    reliability_mode_type: str = "simple"  # 信效度模式类型：simple（简单倾向）或 psychometric（潜变量模型）
-    psycho_target_alpha: float = 0.85  # 潜变量模式的目标 Cronbach's Alpha（0.70-0.95）
+    reliability_mode_enabled: bool = True  # 信效度生成总开关
+    reliability_mode_type: str = "simple"  # 兼容旧配置字段：simple/psychometric
+    psycho_target_alpha: float = 0.85  # 心理测量计划目标 Cronbach's Alpha（0.70-0.95）
     headless_mode: bool = False
     debug_mode: bool = False
     ai_enabled: bool = False

@@ -110,22 +110,7 @@ class _QuestionDispatcher:
         indices: Dict[str, int],
         ctx: TaskContext,
     ) -> Optional[bool]:
-        """分发题型并填写。
-
-        Args:
-            driver: 浏览器驱动
-            question_type: HTML type 属性字符串
-            question_num: 当前题号
-            question_div: 题目 DOM 元素
-            config_entry: (type_key, idx) | None
-            indices: 各题型当前计数器字典
-            ctx: 任务上下文（替代全局 state）
-
-        Returns:
-            None  -> 分发就序型题型，计数器 +=1
-            int   -> 返回计数器新值（矩阵题）
-            False -> 不支持或跳过
-        """
+        """分发题型并填写。"""
         is_reorder = (question_type == "11") or _driver_question_looks_like_reorder(question_div)
 
         # 排序题

@@ -302,6 +302,20 @@ class RunController(QObject):
             # 去掉所有空白，避免不同格式导致匹配失败
             return "".join(text.split())
 
+        def _normalize_forced_option_index(raw: Any, option_count: int) -> Optional[int]:
+            try:
+                idx = int(raw)
+            except Exception:
+                return None
+            total = max(0, int(option_count or 0))
+            if 0 <= idx < total:
+                return idx
+            return None
+
+        def _build_forced_single_weights(option_count: int, forced_index: int) -> List[float]:
+            total = max(1, int(option_count or 1))
+            return [1.0 if idx == forced_index else 0.0 for idx in range(total)]
+
         # 建立可复用配置映射（按题号、题目文本）
         existing_by_num: Dict[int, QuestionEntry] = {}
         existing_by_title: Dict[str, QuestionEntry] = {}
@@ -331,6 +345,7 @@ class RunController(QObject):
             is_rating = bool(q.get("is_rating"))
             rating_max = int(q.get("rating_max") or 0)
             title_text = str(q.get("title") or "").strip()
+            forced_option_text = str(q.get("forced_option_text") or "").strip()
 
             if is_multi_text or (is_text_like and text_inputs > 1):
                 q_type = "multi_text"
@@ -358,6 +373,7 @@ class RunController(QObject):
                 option_count = max(base_option_count, text_inputs, 1)
             else:
                 option_count = base_option_count
+            forced_option_index = _normalize_forced_option_index(q.get("forced_option_index"), option_count)
             
             parsed_title_key = _normalize_title(title_text)
 
@@ -438,6 +454,21 @@ class RunController(QObject):
                     distribution = "random"
                     custom_weights = None
                     texts = [DEFAULT_FILL_TEXT]
+
+            if forced_option_index is not None and q_type in ("single", "dropdown", "scale", "score"):
+                if q_type == "score":
+                    option_count = max(option_count, 2)
+                    forced_option_index = min(forced_option_index, option_count - 1)
+                forced_weights = _build_forced_single_weights(option_count, forced_option_index)
+                probabilities = list(forced_weights)
+                distribution = "custom"
+                custom_weights = list(forced_weights)
+                logging.info(
+                    "题号%s检测到指定作答指令，已强制锁定为第%s项（%s）",
+                    q.get("num"),
+                    forced_option_index + 1,
+                    forced_option_text or "无文本",
+                )
 
             entry = QuestionEntry(
                 question_type=q_type,

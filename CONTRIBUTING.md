@@ -12,6 +12,7 @@
 - 安装依赖：`pip install -r requirements.txt`。
 - 从源码运行：`python fuck-wjx.py`。
 - 导入检测：`python test_wjx_imports.py`（扫描 `wjx/` 下所有 `.py` 文件的 `import` 是否报错）。
+- 死代码检测：`python test_wjx_deadcode.py`（基于 vulture，扫描 `wjx/` 下未引用的死代码）。
 
 ## 仓库根目录
 
@@ -20,6 +21,7 @@
 ├── fuck-wjx.py
 ├── rthook_pyside6.py     # PySide6 打包钩子
 ├── test_wjx_imports.py   # 导入检测脚本
+├── test_wjx_deadcode.py  # 死代码检测脚本
 └── wjx/                  # 主代码目录
 ```
 
@@ -32,12 +34,13 @@ wjx/
 ├── assets/                # 针对指定地区随机ip的地区行政编码
 ├── core/                  # 核心业务逻辑
 │   ├── task_context.py    # 单次任务上下文数据
-│   ├── engine/            # 执行引擎（driver_factory/runtime_control/full_simulation/dom_helpers/navigation/question_detection/submission/answering/runner）
+│   ├── engine/            # 执行引擎（driver_factory/runtime_control/dom_helpers/navigation/question_detection/submission/answering/runner）
 │   ├── survey/            # 问卷解析（parser.py）
 │   ├── questions/         # 题目配置与题型实现（types/），以及一致性校验（consistency.py）
 │   │   └── types/         # 各题型实现（single/multiple/dropdown/matrix/scale/score/slider/text/reorder）
 │   ├── captcha/           # 验证码处理（control/handler）
 │   ├── ai/                # AI 运行时（runtime.py）
+│   ├── psychometrics/     # 心理测量学工具（psychometric/utils）
 │   ├── persona/           # 画像与上下文约束（generator/context）
 │   └── services/          # 核心服务层（area_service/proxy_service/survey_service）
 ├── ui/                    # 界面层
@@ -51,24 +54,29 @@ wjx/
 │   └── pages/             # 各页面（workbench/settings/more/community）
 │       ├── community.py   # 社区页（一级菜单）
 │       ├── settings/      # 设置页（settings.py）
-│       ├── more/          # 更多子页面（about/changelog/donate/support）
+│       ├── more/          # 更多子页面（about/changelog/donate/support/ip_usage）
 │       └── workbench/
 │           ├── dashboard.py
 │           ├── answer_rules.py   # 作答规则页（条件 -> 动作）
 │           ├── log.py
 │           ├── dashboard_parts/  # dashboard 拆分模块（clipboard/entries/random_ip）
-│           ├── question/         # 题目配置界面（page/add_dialog/add_preview/wizard_dialog/wizard_sections/constants/utils）
+│           ├── question/         # 题目配置界面（page/add_dialog/add_preview/wizard_dialog/wizard_sections/psycho_config/constants/utils）
 │           └── runtime/          # 运行时界面（main/cards/ai/dialogs）
 ├── network/               # 网络相关
-│   ├── browser/driver.py  # 浏览器驱动封装
-│   ├── proxy/provider.py  # 随机 IP/代理逻辑
+│   ├── browser/
+│   │   └── driver.py      # 浏览器驱动封装
+│   ├── proxy/
+│   │   ├── provider.py    # 代理获取、URL构建、代理源管理
+│   │   ├── quota.py       # 额度管理（API缓存、注册表读写）
+│   │   ├── card.py        # 卡密验证（纯逻辑）
+│   │   └── gui_bridge.py  # GUI交互桥接（弹窗、线程派发、开关控制）
 │   ├── http_client.py     # 请求策略
 │   └── session_policy.py  # 会话策略
 ├── modes/                 # 运行模式控制（timed_mode/duration_control）
 ├── utils/                 # 通用工具
 │   ├── event_bus.py       # 全局事件总线
 │   ├── app/               # 应用配置与路径（config/runtime_paths/version）
-│   ├── io/                # 文件读写（load_save/markdown_utils/qrcode_utils）
+│   ├── io/                # 文件读写（load_save/markdown_utils/qrcode_utils/ip_usage_log）
 │   ├── integrations/      # 外部集成（ai_service）
 │   ├── system/            # 系统工具（cleanup_runner/registry_manager）
 │   ├── logging/           # 日志工具（log_utils）
@@ -87,19 +95,6 @@ wjx/
 - 维持现有命名与目录结构，不要把无关功能塞进同一文件
 - GUI 优先使用 `QfluentWidgets` 原生组件
 - 文档、提示信息优先使用小白也能看懂的中文
-
-## 性能优化原则
-### 异步清理与线程管理
-- **浏览器进程清理必须异步**：清理浏览器实例时，不要在主线程或工作线程中同步执行 `taskkill` 等阻塞操作
-- **批量清理优于单次清理**：使用 `CleanupRunner.submit_pid_cleanup()` 提交 PID 到批量清理队列，由后台线程统一执行一次 `taskkill`，避免创建大量清理线程
-- **去抖动机制**：`flush_pending_pids()` 使用短延迟定时器（50ms）而非立即执行，避免多次调用创建多个清理线程
-- **Fire-and-Forget 模式**：Playwright 实例的 `stop()` 必须在同一工作线程中调用（避免事件循环冲突），但可以在后台线程中执行
-- **避免锁竞争**：清理操作应尽量减少持锁时间，优先使用无锁的队列/集合提交任务，由单一后台线程处理
-
-### 随机IP场景特别注意
-- 启用随机IP时，每个任务完成都会触发清理，高并发下容易产生大量清理请求
-- 停止按钮点击时，可能有多个线程同时提交清理请求，必须使用去抖机制聚合
-- 不要在 `stop_run()` 或 `cleanup_browsers()` 中同步等待清理完成
 
 ## 行为要求
 - 严禁将本项目用于伪造学术数据、非法刷问卷或任何污染他人数据的行为。

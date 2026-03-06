@@ -4,15 +4,17 @@
 导致 Cronbach's Alpha 信效度极低，一看就是假数据。
 
 方案：每次填写问卷时，按维度（dimension）独立生成"基准偏好"，
-同维度内的量表题围绕该基准 ±1 波动，不同维度之间互不干扰。
+同维度内的量表题围绕该基准按量程自适应波动，不同维度之间互不干扰。
 未分组的题目走纯随机，不受一致性约束。
 
 增强（画像融合）：当存在虚拟画像时，基准偏好由画像的 satisfaction_tendency
 决定，而非完全随机。这样画像越"满意"的人物，量表题越倾向选高分。
+
+潜变量模式：支持基于心理测量学的潜变量模型，可精确控制 Cronbach's Alpha。
 """
 import random
 import threading
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
@@ -22,8 +24,11 @@ from wjx.utils.app.config import DIMENSION_UNGROUPED
 # 线程局部存储：每个浏览器线程有自己独立的答题倾向
 _thread_local = threading.local()
 
-# 波动范围（基准 ±1）
-_FLUCTUATION = 1
+# 波动参数：按量程自适应窗口，避免小量程过度跳变、大量程过度僵硬
+_FLUCTUATION_RATIO = 0.15
+_FLUCTUATION_MAX = 8
+_SMALL_SCALE_STATIC_MAX_OPTIONS = 3
+_OUTSIDE_WINDOW_DECAY = 0.02
 
 
 def reset_tendency() -> None:
@@ -88,10 +93,18 @@ def get_tendency_index(
     probabilities: Union[List[float], int, None],
     dimension: Optional[str] = None,
     is_reverse: bool = False,
+    # 新增：潜变量模式支持
+    psycho_plan: Optional[Any] = None,
+    question_index: Optional[int] = None,
+    row_index: Optional[int] = None,
 ) -> int:
     """获取带有一致性倾向的选项索引。
 
-    按维度隔离基准偏好：同维度内的题目共享基准 ±1 波动，
+    支持两种模式：
+    1. 简单倾向模式（默认）：同维度内的题目共享基准并按量程自适应波动
+    2. 潜变量模式：基于心理测量学模型，可精确控制 Cronbach's Alpha
+
+    按维度隔离基准偏好：同维度内的题目共享基准并按量程自适应波动，
     不同维度之间独立生成基准。未分组的题目走纯随机。
 
     Args:
@@ -99,12 +112,28 @@ def get_tendency_index(
         probabilities: 概率配置列表，或 -1 表示随机
         dimension: 题目所属维度，None 或 DIMENSION_UNGROUPED 表示未分组
         is_reverse: 是否为反向题，True 时翻转基准偏好
+        psycho_plan: 潜变量计划（可选），如果提供则使用潜变量模式
+        question_index: 题目索引（潜变量模式需要）
+        row_index: 矩阵题行索引（可选，仅矩阵题需要）
 
     Returns:
         选中的选项索引（0-based）
     """
     if option_count <= 0:
         return 0
+
+    # 优先使用潜变量模式（如果提供了计划）
+    if psycho_plan is not None and question_index is not None:
+        choice = _get_psychometric_answer(
+            psycho_plan, question_index, row_index, option_count, is_reverse
+        )
+        if choice is not None:
+            return choice
+        # 如果潜变量模式失败，回退到简单模式
+        logging.debug(
+            "潜变量模式未找到答案（题%d 行%s），回退到简单模式",
+            question_index, row_index
+        )
 
     # 未分组 → 纯随机/纯概率，不做一致性约束，但仍需处理反向题
     if _is_ungrouped(dimension):
@@ -115,7 +144,7 @@ def get_tendency_index(
 
     # 获取该维度的基准偏好
     assert dimension is not None  # 已通过 _is_ungrouped 过滤，此处 dimension 必为 str
-    bases: Dict[str, int] = getattr(_thread_local, 'dimension_bases', {})
+    bases: Dict[str, float] = getattr(_thread_local, 'dimension_bases', {})
     if not isinstance(bases, dict):
         bases = {}
         _thread_local.dimension_bases = bases
@@ -144,13 +173,16 @@ def _apply_consistency(
     option_count: int,
     probabilities: Union[List[float], int, None],
 ) -> int:
-    """在基准 ±1 范围内应用一致性约束选择选项。"""
+    """在基准附近的自适应窗口内应用一致性约束选择选项。"""
     # 当前题目选项数可能与生成 base 时不同，需要夹到合法范围
     effective_base = min(base, option_count - 1)
+    fluctuation_window = _resolve_fluctuation_window(option_count)
+    if fluctuation_window <= 0:
+        return effective_base
 
-    # 在基准附近 ±1 波动
-    low = max(0, effective_base - _FLUCTUATION)
-    high = min(option_count - 1, effective_base + _FLUCTUATION)
+    # 在基准附近按量程自适应波动
+    low = max(0, effective_base - fluctuation_window)
+    high = min(option_count - 1, effective_base + fluctuation_window)
 
     # 如果有显式概率配置，需要结合原概率和距离衰减
     if isinstance(probabilities, list) and len(probabilities) == option_count:
@@ -158,24 +190,22 @@ def _apply_consistency(
         for i in range(option_count):
             if low <= i <= high:
                 distance = abs(i - effective_base)
-                decay = 2.0 if distance == 0 else (1.0 if distance == 1 else 0.1)
+                decay = _window_decay(distance, fluctuation_window)
                 adjusted_probs.append(probabilities[i] * decay)
             else:
-                adjusted_probs.append(probabilities[i] * 0.05)
+                adjusted_probs.append(probabilities[i] * _OUTSIDE_WINDOW_DECAY)
 
         total = sum(adjusted_probs)
         if total > 0:
             adjusted_probs = [p / total for p in adjusted_probs]
             return weighted_index(adjusted_probs)
 
-    # 随机模式或无有效概率：在约束范围内均匀波动，但偏向基准
+    # 随机模式或无有效概率：在约束范围内按距离衰减抽样，偏向基准
     candidates = list(range(low, high + 1))
     weights = []
     for c in candidates:
-        if c == effective_base:
-            weights.append(2.0)
-        else:
-            weights.append(1.0)
+        distance = abs(c - effective_base)
+        weights.append(_window_decay(distance, fluctuation_window))
 
     total = sum(weights)
     pivot = random.random() * total
@@ -185,3 +215,69 @@ def _apply_consistency(
         if pivot <= running:
             return candidates[i]
     return candidates[-1]
+
+
+def _resolve_fluctuation_window(option_count: int) -> int:
+    """根据量程动态计算波动窗口。"""
+    if option_count <= _SMALL_SCALE_STATIC_MAX_OPTIONS:
+        # 3级及以下量表不做波动，避免语义直接翻转
+        return 0
+
+    span = max(option_count, 1)
+    window = int(round(span * _FLUCTUATION_RATIO))
+    if window < 1:
+        window = 1
+    return min(window, _FLUCTUATION_MAX)
+
+
+def _window_decay(distance: int, window: int) -> float:
+    """窗口内距离衰减：中心最高，边缘次之。"""
+    if distance <= 0:
+        return 1.6
+    if window <= 0:
+        return 0.0
+
+    normalized = min(1.0, float(distance) / float(window))
+    return max(0.8, 1.6 - 0.8 * normalized)
+
+
+def _get_psychometric_answer(
+    plan: Any,
+    question_index: int,
+    row_index: Optional[int],
+    option_count: int,
+    is_reverse: bool,
+) -> Optional[int]:
+    """从潜变量计划中获取答案
+    
+    Args:
+        plan: PsychometricPlan 对象
+        question_index: 题目索引（0-based，配置列表中的索引）
+        row_index: 矩阵题行索引（可选）
+        option_count: 选项数量
+        is_reverse: 是否为反向题
+        
+    Returns:
+        选项索引（0-based），如果未找到则返回 None
+    """
+    try:
+        choice = plan.get_choice(question_index, row_index)
+        if choice is None:
+            return None
+        
+        # 确保选项索引在有效范围内
+        choice = max(0, min(option_count - 1, choice))
+        
+        # 反向题翻转
+        if is_reverse:
+            choice = (option_count - 1) - choice
+        
+        return choice
+    except Exception as exc:
+        log_suppressed_exception(
+            f"_get_psychometric_answer: question_index={question_index}, row_index={row_index}",
+            exc,
+            level=logging.WARNING
+        )
+        return None
+

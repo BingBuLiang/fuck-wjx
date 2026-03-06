@@ -179,8 +179,5 @@ def _handle_aliyun_captcha_detected(
     - 默认（pause_on_aliyun_captcha=True）：全局暂停执行并提示用户启用随机 IP；
     - 关闭该开关：不全局暂停，仅记录告警（可能会导致后续持续失败）。
     """
-    if ctx.pause_on_aliyun_captcha:
-        _trigger_aliyun_captcha_stop(ctx, gui_instance, stop_signal)
-        return
-    logging.warning('检测到阿里云智能验证，但已关闭[触发智能验证自动暂停]开关，将继续尝试后续提交。')
+    _trigger_aliyun_captcha_stop(ctx, gui_instance, stop_signal)
 

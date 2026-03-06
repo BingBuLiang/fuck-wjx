@@ -7,6 +7,8 @@ from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     FluentIcon,
+    InfoBar,
+    InfoBarPosition,
     PopupTeachingTip,
     ScrollArea,
     SettingCardGroup,
@@ -28,11 +30,17 @@ from wjx.utils.io.load_save import RuntimeConfig
 class RuntimePage(ScrollArea):
     """独立的运行参数/开关页，方便在侧边栏查看。"""
 
+    MIN_THREADS = 1
+    NON_HEADLESS_MAX_THREADS = 8
+    HEADLESS_MAX_THREADS = 16
+    SUBMIT_INTERVAL_MAX_SECONDS = 300
+    ANSWER_DURATION_MAX_SECONDS = 600
 
 
     def __init__(self, controller: RunController, parent=None):
         super().__init__(parent)
         self.controller = controller
+        self._suppress_headless_tip = False
         self.view = QWidget(self)
         self.setWidget(self.view)
         self.setWidgetResizable(True)
@@ -41,22 +49,33 @@ class RuntimePage(ScrollArea):
         self._build_ui()
         self._bind_events()
         self._sync_random_ua(self.random_ua_card.isChecked())
+        self._apply_thread_limit_by_headless(self.headless_card.isChecked())
 
     def _build_ui(self):
         layout = QVBoxLayout(self.view)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(20)
 
-        # ========== 运行参数组 ==========
-        run_group = SettingCardGroup("运行参数", self.view)
+        # ========== 特性开关组 ==========
+        feature_group = SettingCardGroup("特性开关", self.view)
+
+        self.random_ip_card = RandomIPSettingCard(parent=feature_group)
+        self.random_ua_card = RandomUASettingCard(parent=feature_group)
+
+        feature_group.addSettingCard(self.random_ip_card)
+        feature_group.addSettingCard(self.random_ua_card)
+        layout.addWidget(feature_group)
+
+        # ========== 作答设置组 ==========
+        run_group = SettingCardGroup("作答设置", self.view)
 
         self.target_card = SpinBoxSettingCard(
             FluentIcon.DOCUMENT, "目标份数", "设置要提交的问卷数量",
             min_val=1, max_val=9999, default=10, parent=run_group
         )
         self.thread_card = SpinBoxSettingCard(
-            FluentIcon.APPLICATION, "并发浏览器", "同时运行的浏览器数量 (1-12)",
-            min_val=1, max_val=12, default=2, parent=run_group
+            FluentIcon.APPLICATION, "并发浏览器", "无头关闭时 1-8，无头开启时 1-16",
+            min_val=self.MIN_THREADS, max_val=self.NON_HEADLESS_MAX_THREADS, default=2, parent=run_group
         )
         spin_width = self.target_card.suggestSpinBoxWidthForDigits(4)
         self.target_card.setSpinBoxWidth(spin_width)
@@ -67,20 +86,6 @@ class RuntimePage(ScrollArea):
             parent=run_group
         )
         self.reliability_mode_card.setChecked(True)
-
-        self.fail_stop_card = SwitchSettingCard(
-            FluentIcon.CANCEL, "失败过多自动停止", "连续失败次数过多时自动停止运行",
-            parent=run_group
-        )
-        self.fail_stop_card.setChecked(True)
-
-        self.pause_on_aliyun_card = SwitchSettingCard(
-            FluentIcon.PAUSE,
-            "触发智能验证自动暂停",
-            "检测到阿里云智能验证时暂停执行（默认开启，建议配合随机 IP）",
-            parent=run_group,
-        )
-        self.pause_on_aliyun_card.setChecked(True)
 
         self.headless_card = SwitchSettingCard(
             FluentIcon.SPEED_HIGH,
@@ -93,8 +98,6 @@ class RuntimePage(ScrollArea):
         run_group.addSettingCard(self.target_card)
         run_group.addSettingCard(self.thread_card)
         run_group.addSettingCard(self.reliability_mode_card)
-        run_group.addSettingCard(self.fail_stop_card)
-        run_group.addSettingCard(self.pause_on_aliyun_card)
         run_group.addSettingCard(self.headless_card)
         layout.addWidget(run_group)
 
@@ -117,13 +120,17 @@ class RuntimePage(ScrollArea):
         time_group.vBoxLayout.insertWidget(0, title_container)
 
         self.interval_card = TimeRangeSettingCard(
-            FluentIcon.HISTORY, "提交间隔", "两次提交之间的等待时间",
-            max_seconds=300,
+            FluentIcon.HISTORY,
+            "提交间隔",
+            f"两次提交之间的等待时间（0-{self.SUBMIT_INTERVAL_MAX_SECONDS} 秒）",
+            max_seconds=self.SUBMIT_INTERVAL_MAX_SECONDS,
             parent=time_group
         )
         self.answer_card = TimeRangeSettingCard(
-            FluentIcon.STOP_WATCH, "作答时长", "设置单份作答消耗的时间",
-            max_seconds=120,
+            FluentIcon.STOP_WATCH,
+            "作答时长",
+            f"设置单份作答耗时（0-{self.ANSWER_DURATION_MAX_SECONDS} 秒），按20%比例随机上下抖动",
+            max_seconds=self.ANSWER_DURATION_MAX_SECONDS,
             parent=time_group
         )
         self.timed_card = TimedModeSettingCard(
@@ -136,16 +143,6 @@ class RuntimePage(ScrollArea):
         time_group.addSettingCard(self.timed_card)
         layout.addWidget(time_group)
 
-        # ========== 特性开关组 ==========
-        feature_group = SettingCardGroup("特性开关", self.view)
-
-        self.random_ip_card = RandomIPSettingCard(parent=feature_group)
-        self.random_ua_card = RandomUASettingCard(parent=feature_group)
-
-        feature_group.addSettingCard(self.random_ip_card)
-        feature_group.addSettingCard(self.random_ua_card)
-        layout.addWidget(feature_group)
-
         # ========== AI 填空助手组 ==========
         self.ai_section = RuntimeAISection(self.view, self)
         self.ai_section.bind_to_layout(layout)
@@ -155,8 +152,6 @@ class RuntimePage(ScrollArea):
         # 兼容旧代码的属性别名
         self.target_spin = self.target_card.spinBox
         self.thread_spin = self.thread_card.spinBox
-        self.fail_stop_switch = self.fail_stop_card.switchButton
-        self.pause_on_aliyun_switch = self.pause_on_aliyun_card.switchButton
         self.reliability_mode_switch = self.reliability_mode_card.switchButton
         self.timed_switch = self.timed_card.switchButton
         self.random_ip_switch = self.random_ip_card.switchButton
@@ -165,11 +160,69 @@ class RuntimePage(ScrollArea):
         self.custom_api_edit = self.random_ip_card.customApiEdit
 
     def _bind_events(self):
+        self.target_spin.valueChanged.connect(self._sync_target_to_dashboard)
+        self.thread_spin.valueChanged.connect(self._sync_threads_to_dashboard)
         self.random_ip_switch.checkedChanged.connect(self._on_random_ip_toggled)
         self.random_ua_switch.checkedChanged.connect(self._on_random_ua_toggled)
+        self.headless_card.switchButton.checkedChanged.connect(self._on_headless_toggled)
         self.timed_switch.checkedChanged.connect(self._sync_timed_mode)
         self.timed_card.helpButton.clicked.connect(self._show_timed_mode_help)
         self.proxy_source_combo.currentIndexChanged.connect(self._on_proxy_source_changed)
+        self.reliability_mode_switch.checkedChanged.connect(self._on_reliability_mode_toggled)
+
+    def _resolve_thread_max(self, headless_enabled: bool) -> int:
+        return self.HEADLESS_MAX_THREADS if headless_enabled else self.NON_HEADLESS_MAX_THREADS
+
+    def _apply_thread_limit_by_headless(self, headless_enabled: bool) -> bool:
+        max_threads = self._resolve_thread_max(bool(headless_enabled))
+        previous_value = int(self.thread_spin.value())
+        clamped = previous_value > max_threads
+
+        self.thread_spin.setRange(self.MIN_THREADS, max_threads)
+        if clamped:
+            self.thread_spin.setValue(max_threads)
+
+        main_win = self.window()
+        dashboard = getattr(main_win, "dashboard", None)
+        if dashboard is not None and hasattr(dashboard, "thread_spin"):
+            dashboard.thread_spin.setRange(self.MIN_THREADS, max_threads)
+            if dashboard.thread_spin.value() > max_threads:
+                dashboard.thread_spin.blockSignals(True)
+                dashboard.thread_spin.setValue(max_threads)
+                dashboard.thread_spin.blockSignals(False)
+
+        return clamped
+
+    def _show_headless_limit_tip(self):
+        parent = self.window() or self.view
+        InfoBar.info(
+            "",
+            f"已关闭无头模式，并发上限为 {self.NON_HEADLESS_MAX_THREADS}，已自动调整",
+            parent=parent,
+            position=InfoBarPosition.TOP,
+            duration=2200,
+        )
+
+    def _on_headless_toggled(self, enabled: bool):
+        clamped = self._apply_thread_limit_by_headless(bool(enabled))
+        if (not enabled) and clamped and not self._suppress_headless_tip:
+            self._show_headless_limit_tip()
+
+    def _sync_target_to_dashboard(self, value: int):
+        main_win = self.window()
+        dashboard = getattr(main_win, "dashboard", None)
+        if dashboard is not None and hasattr(dashboard, "target_spin"):
+            dashboard.target_spin.blockSignals(True)
+            dashboard.target_spin.setValue(int(value))
+            dashboard.target_spin.blockSignals(False)
+
+    def _sync_threads_to_dashboard(self, value: int):
+        main_win = self.window()
+        dashboard = getattr(main_win, "dashboard", None)
+        if dashboard is not None and hasattr(dashboard, "thread_spin"):
+            dashboard.thread_spin.blockSignals(True)
+            dashboard.thread_spin.setValue(int(value))
+            dashboard.thread_spin.blockSignals(False)
 
     def _show_timed_mode_help(self):
         """显示定时模式说明"""
@@ -241,6 +294,9 @@ class RuntimePage(ScrollArea):
         except Exception as exc:
             log_suppressed_exception("_sync_timed_mode: self.interval_card.setEnabled(not enabled)", exc, level=logging.WARNING)
 
+    def _on_reliability_mode_toggled(self, enabled: bool):
+        pass
+
     def update_config(self, cfg: RuntimeConfig):
         cfg.target = max(1, self.target_spin.value())
         cfg.threads = max(1, self.thread_spin.value())
@@ -253,8 +309,8 @@ class RuntimePage(ScrollArea):
         cfg.random_ip_enabled = self.random_ip_switch.isChecked()
         cfg.random_ua_enabled = self.random_ua_switch.isChecked()
         cfg.random_ua_ratios = self.random_ua_card.getRatios() if cfg.random_ua_enabled else {"wechat": 33, "mobile": 33, "pc": 34}
-        cfg.fail_stop_enabled = self.fail_stop_switch.isChecked()
-        cfg.pause_on_aliyun_captcha = self.pause_on_aliyun_switch.isChecked()
+        cfg.fail_stop_enabled = True
+        cfg.pause_on_aliyun_captcha = True
         cfg.reliability_mode_enabled = self.reliability_mode_switch.isChecked()
         cfg.headless_mode = self.headless_card.switchButton.isChecked()
         try:
@@ -304,10 +360,14 @@ class RuntimePage(ScrollArea):
             self.random_ua_card.setRatios({"wechat": 33, "mobile": 33, "pc": 34})
 
         self._sync_random_ua(self.random_ua_switch.isChecked())
-        self.fail_stop_switch.setChecked(cfg.fail_stop_enabled)
-        self.pause_on_aliyun_switch.setChecked(getattr(cfg, "pause_on_aliyun_captcha", True))
         self.reliability_mode_switch.setChecked(getattr(cfg, "reliability_mode_enabled", True))
-        self.headless_card.setChecked(getattr(cfg, "headless_mode", False))
+
+        self._suppress_headless_tip = True
+        try:
+            self.headless_card.setChecked(getattr(cfg, "headless_mode", False))
+            self._apply_thread_limit_by_headless(self.headless_card.isChecked())
+        finally:
+            self._suppress_headless_tip = False
 
         try:
             proxy_source = getattr(cfg, "proxy_source", "default")

@@ -1,16 +1,23 @@
 """WizardSectionsMixin：各题型配置区 UI 构建方法，供 QuestionWizardDialog 通过多继承引入。"""
-from typing import List, Dict, Any, Optional, Tuple
+from html import escape
+from typing import List, Dict, Any, Tuple, Optional, cast
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, QEasingCurve
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QButtonGroup
-from qfluentwidgets import ScrollArea, BodyLabel, CardWidget, PushButton, LineEdit, CheckBox
+from qfluentwidgets import ScrollArea, BodyLabel, CardWidget, PushButton, LineEdit, CheckBox, SegmentedWidget
 
 from wjx.ui.widgets.no_wheel import NoWheelSlider
 from wjx.core.questions.config import QuestionEntry
 from wjx.utils.app.config import DEFAULT_FILL_TEXT
 from wjx.ui.helpers.ai_fill import ensure_ai_ready
 
-from .utils import _shorten_text, _apply_label_color, _bind_slider_input
+from .utils import (
+    _shorten_text,
+    _apply_label_color,
+    _bind_slider_input,
+    infer_reverse_by_option_texts,
+)
+from .psycho_config import PSYCHO_SUPPORTED_TYPES, BIAS_PRESET_CHOICES, build_bias_weights
 
 _TEXT_RANDOM_NONE = "none"
 _TEXT_RANDOM_NAME = "name"
@@ -33,18 +40,95 @@ class WizardSectionsMixin:
     text_edit_map: Dict[int, Any]
     info: List[Any]
     reliability_mode_enabled: bool
+    ai_master_enabled: bool
     matrix_row_slider_map: Dict[int, Any]
     matrix_reverse_check_map: Dict[int, Any]
     reverse_check_map: Dict[int, Any]
     entries: List[Any]
     slider_map: Dict[int, Any]
-
+    bias_preset_map: Dict[int, Any]
     def _resolve_matrix_weights(self, entry: Any, rows: int, columns: int) -> List[List[float]]: ...
     def _resolve_slider_bounds(self, idx: int, entry: Any) -> Tuple[int, int]: ...
-    def window(self) -> Optional[QWidget]: ...
+
+    @staticmethod
+    def _compute_ratio_percentages(values: List[Any]) -> List[float]:
+        cleaned: List[float] = []
+        for value in values:
+            try:
+                cleaned.append(max(0.0, float(value)))
+            except Exception:
+                cleaned.append(0.0)
+        count = len(cleaned)
+        if count <= 0:
+            return []
+        total = sum(cleaned)
+        if total <= 0:
+            return [100.0 / count] * count
+        return [(item / total) * 100.0 for item in cleaned]
+
+    @staticmethod
+    def _format_ratio_percent(value: float) -> str:
+        rounded = round(float(value), 1)
+        text = f"{rounded:.1f}"
+        if text.endswith(".0"):
+            text = text[:-2]
+        return f"{text}%"
+
+    @staticmethod
+    def _pick_ratio_color(value: float) -> str:
+        if value < 10:
+            return "#d13438"
+        if value < 20:
+            return "#f7630c"
+        if value < 50:
+            return "#ffb900"
+        return "#107c10"
+
+    def _build_ratio_preview_text(self, option_names: List[str], percentages: List[float], prefix: str) -> str:
+        if not percentages:
+            return f"{prefix}暂无"
+        normalized_names: List[str] = []
+        for idx in range(len(percentages)):
+            raw_name = str(option_names[idx] or "").strip() if idx < len(option_names) else ""
+            normalized_names.append(escape(_shorten_text(raw_name or f"选项{idx + 1}", 14)))
+
+        chunks: List[str] = []
+        for idx in range(len(percentages)):
+            percent_text = self._format_ratio_percent(percentages[idx])
+            percent_color = self._pick_ratio_color(percentages[idx])
+            colored_percent = f"<span style='color:{percent_color};'>{percent_text}</span>"
+            chunks.append(f"{normalized_names[idx]} {colored_percent}")
+        return f"{prefix}{'｜'.join(chunks)}"
+
+    def _refresh_ratio_preview_label(
+        self,
+        label: BodyLabel,
+        sliders: List[NoWheelSlider],
+        option_names: List[str],
+        prefix: str,
+    ) -> None:
+        percentages = self._compute_ratio_percentages([slider.value() for slider in sliders])
+        label.setText(self._build_ratio_preview_text(option_names, percentages, prefix))
 
     def _build_text_section(self, idx: int, entry: QuestionEntry, card: CardWidget, card_layout: QVBoxLayout) -> None:
         self._has_content = True
+
+        # 检测是否为多项填空题
+        is_multi_text = False
+        blank_count = 1
+        if idx < len(self.info):
+            info_entry = self.info[idx]
+            text_input_count = info_entry.get("text_inputs", 0)
+            is_multi_text_flag = info_entry.get("is_multi_text", False)
+            if is_multi_text_flag or entry.question_type == "multi_text":
+                is_multi_text = True
+                blank_count = max(1, text_input_count)
+
+        # 如果是多项填空题，使用矩阵式输入界面
+        if is_multi_text:
+            self._build_multi_text_matrix_input(idx, entry, card, card_layout, blank_count)
+            return
+
         hint = BodyLabel("答案列表（随机选择一个填入）：", card)
         hint.setStyleSheet("font-size: 12px;")
         _apply_label_color(hint, "#666666", "#bfbfbf")
@@ -131,8 +215,14 @@ class WizardSectionsMixin:
             )
 
             ai_cb = CheckBox("启用 AI", card)
-            ai_cb.setToolTip("运行时每次填空都会调用 AI")
-            ai_cb.setChecked(bool(getattr(entry, "ai_enabled", False)))
+            ai_master_on = getattr(self, "ai_master_enabled", True)
+            if not ai_master_on:
+                ai_cb.setToolTip('请先在运行参数页开启"启用 AI 填空"总开关')
+                ai_cb.setEnabled(False)
+                ai_cb.setChecked(False)
+            else:
+                ai_cb.setToolTip("运行时每次填空都会调用 AI")
+                ai_cb.setChecked(bool(getattr(entry, "ai_enabled", False)))
             ai_cb.toggled.connect(lambda checked, i=idx: self._on_entry_ai_toggled(i, checked))
             btn_row.addWidget(ai_cb)
             self.ai_check_map[idx] = ai_cb
@@ -151,6 +241,230 @@ class WizardSectionsMixin:
         card_layout.addLayout(btn_row)
         self.text_edit_map[idx] = edits
 
+    def _build_multi_text_matrix_input(
+        self, idx: int, entry: QuestionEntry, card: CardWidget,
+        card_layout: QVBoxLayout, blank_count: int
+    ) -> None:
+        """为多项填空题构建矩阵式输入界面"""
+        from wjx.core.questions.types.text import MULTI_TEXT_DELIMITER
+
+        # 提示标签
+        hint = BodyLabel(f"答案列表（随机选择一组填入，共 {blank_count} 个填空）：", card)
+        hint.setStyleSheet("font-size: 12px;")
+        _apply_label_color(hint, "#666666", "#bfbfbf")
+        card_layout.addWidget(hint)
+
+        # 表头
+        header_widget = QWidget(card)
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(0, 4, 0, 4)
+        header_layout.setSpacing(8)
+
+        num_spacer = QWidget(card)
+        num_spacer.setFixedWidth(24)
+        header_layout.addWidget(num_spacer)
+
+        for i in range(blank_count):
+            col_label = BodyLabel(f"填空{i+1}", card)
+            col_label.setStyleSheet("font-size: 11px; font-weight: bold;")
+            _apply_label_color(col_label, "#888888", "#a6a6a6")
+            header_layout.addWidget(col_label, 1)
+
+        del_spacer = QWidget(card)
+        del_spacer.setFixedWidth(32)
+        header_layout.addWidget(del_spacer)
+
+        card_layout.addWidget(header_widget)
+
+        # 答案行容器
+        rows_container = QWidget(card)
+        rows_layout = QVBoxLayout(rows_container)
+        rows_layout.setContentsMargins(0, 0, 0, 0)
+        rows_layout.setSpacing(4)
+        card_layout.addWidget(rows_container)
+
+        row_edits: List[List[LineEdit]] = []
+
+        texts = list(entry.texts or [DEFAULT_FILL_TEXT])
+
+        def make_add_row_func(container_layout, row_edit_list, parent_card, num_blanks):
+            def add_row(initial_values: Optional[List[str]] = None):
+                values: List[str] = initial_values if initial_values is not None else [""] * num_blanks
+
+                row_widget = QWidget(parent_card)
+                row_layout = QHBoxLayout(row_widget)
+                row_layout.setContentsMargins(0, 2, 0, 2)
+                row_layout.setSpacing(8)
+
+                num_lbl = BodyLabel(f"{len(row_edit_list) + 1}.", parent_card)
+                num_lbl.setFixedWidth(24)
+                num_lbl.setStyleSheet("font-size: 12px;")
+                _apply_label_color(num_lbl, "#888888", "#a6a6a6")
+                row_layout.addWidget(num_lbl)
+
+                edits_in_row: List[LineEdit] = []
+                for i in range(num_blanks):
+                    edit = LineEdit(parent_card)
+                    edit.setText(values[i] if i < len(values) else "")
+                    edit.setPlaceholderText(f"填空{i+1}")
+                    row_layout.addWidget(edit, 1)
+                    edits_in_row.append(edit)
+
+                del_btn = PushButton("×", parent_card)
+                del_btn.setFixedWidth(32)
+                row_layout.addWidget(del_btn)
+
+                container_layout.addWidget(row_widget)
+                row_edit_list.append(edits_in_row)
+
+                def remove_row():
+                    if len(row_edit_list) > 1:
+                        row_edit_list.remove(edits_in_row)
+                        row_widget.deleteLater()
+
+                del_btn.clicked.connect(remove_row)
+
+            return add_row
+
+        add_row_func = make_add_row_func(rows_layout, row_edits, card, blank_count)
+
+        for text in texts:
+            parts = text.split(MULTI_TEXT_DELIMITER) if MULTI_TEXT_DELIMITER in text else [text]
+            while len(parts) < blank_count:
+                parts.append("")
+            parts = parts[:blank_count]
+            add_row_func(parts)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        add_btn = PushButton("+ 添加答案组", card)
+        add_btn.setFixedWidth(120)
+        add_btn.clicked.connect(lambda checked=False, f=add_row_func: f(None))
+        btn_row.addWidget(add_btn)
+        btn_row.addStretch(1)
+        card_layout.addLayout(btn_row)
+
+        self.text_edit_map[idx] = row_edits
+        self.text_container_map[idx] = rows_container
+        self.text_add_btn_map[idx] = add_btn
+
+        # 填空项配置区域
+        from PySide6.QtWidgets import QRadioButton
+        config_hint = BodyLabel("填空项配置：", card)
+        config_hint.setStyleSheet("font-size: 12px; margin-top: 8px;")
+        _apply_label_color(config_hint, "#666666", "#bfbfbf")
+        card_layout.addWidget(config_hint)
+
+        # 存储每个填空项的单选按钮组和AI复选框
+        blank_radio_groups: List[QButtonGroup] = []
+        blank_mode_radios: List[Dict[str, QRadioButton]] = []
+        blank_ai_checkboxes: List[CheckBox] = []
+
+        # 解析现有配置
+        saved_modes = getattr(entry, "multi_text_blank_modes", None) or []
+        if not isinstance(saved_modes, list):
+            saved_modes = []
+        while len(saved_modes) < blank_count:
+            saved_modes.append(_TEXT_RANDOM_NONE)
+
+        saved_ai_flags = getattr(entry, "multi_text_blank_ai_flags", None) or []
+        if not isinstance(saved_ai_flags, list):
+            saved_ai_flags = []
+        while len(saved_ai_flags) < blank_count:
+            saved_ai_flags.append(False)
+
+        ai_master_on = getattr(self, "ai_master_enabled", True)
+
+        for blank_idx in range(blank_count):
+            blank_row = QHBoxLayout()
+            blank_row.setSpacing(8)
+            blank_label = BodyLabel(f"填空{blank_idx + 1}:", card)
+            blank_label.setFixedWidth(60)
+            blank_label.setStyleSheet("font-size: 12px;")
+            _apply_label_color(blank_label, "#666666", "#bfbfbf")
+            blank_row.addWidget(blank_label)
+
+            radio_group = QButtonGroup(card)
+            radio_group.setExclusive(True)
+
+            radio_list = QRadioButton("使用答案列表", card)
+            radio_name = QRadioButton("随机姓名", card)
+            radio_mobile = QRadioButton("随机手机号", card)
+
+            radio_group.addButton(radio_list, 0)
+            radio_group.addButton(radio_name, 1)
+            radio_group.addButton(radio_mobile, 2)
+
+            current_mode = saved_modes[blank_idx] if blank_idx < len(saved_modes) else _TEXT_RANDOM_NONE
+            if current_mode == _TEXT_RANDOM_NAME:
+                radio_name.setChecked(True)
+            elif current_mode == _TEXT_RANDOM_MOBILE:
+                radio_mobile.setChecked(True)
+            else:
+                radio_list.setChecked(True)
+
+            blank_row.addWidget(radio_list)
+            blank_row.addWidget(radio_name)
+            blank_row.addWidget(radio_mobile)
+
+            # 每个填空项的AI复选框
+            ai_cb = CheckBox("启用AI", card)
+            if not ai_master_on:
+                ai_cb.setEnabled(False)
+                ai_cb.setChecked(False)
+            else:
+                ai_cb.setChecked(saved_ai_flags[blank_idx] if blank_idx < len(saved_ai_flags) else False)
+            blank_row.addWidget(ai_cb)
+            blank_ai_checkboxes.append(ai_cb)
+
+            blank_row.addStretch(1)
+            card_layout.addLayout(blank_row)
+
+            blank_radio_groups.append(radio_group)
+            blank_mode_radios.append({
+                "list": radio_list,
+                "name": radio_name,
+                "mobile": radio_mobile
+            })
+
+            # 互斥逻辑：控制该列输入框的启用/禁用
+            def make_sync_func(col_idx, radios, ai_checkbox, edits_list):
+                def sync_column_state():
+                    mode_id = radios["list"].group().checkedId()
+                    ai_enabled = ai_checkbox.isChecked() if ai_master_on else False
+                    use_list = (mode_id == 0 and not ai_enabled)
+
+                    # 禁用/启用该列的所有输入框
+                    for row in edits_list:
+                        if col_idx < len(row):
+                            row[col_idx].setEnabled(use_list)
+
+                    # AI和随机模式互斥
+                    if ai_enabled:
+                        radios["name"].setEnabled(False)
+                        radios["mobile"].setEnabled(False)
+                        if not radios["list"].isChecked():
+                            radios["list"].setChecked(True)
+                    else:
+                        radios["name"].setEnabled(True)
+                        radios["mobile"].setEnabled(True)
+
+                return sync_column_state
+
+            sync_func = make_sync_func(blank_idx, blank_mode_radios[-1], ai_cb, row_edits)
+            radio_group.buttonClicked.connect(lambda checked=False, f=sync_func: f())
+            ai_cb.toggled.connect(lambda checked, f=sync_func: f())
+            # 初始化状态
+            sync_func()
+
+        # 存储到映射
+        if not hasattr(self, "multi_text_blank_radio_groups"):
+            self.multi_text_blank_radio_groups = {}
+        if not hasattr(self, "multi_text_blank_ai_checkboxes"):
+            self.multi_text_blank_ai_checkboxes = {}
+        self.multi_text_blank_radio_groups[idx] = blank_radio_groups
+        self.multi_text_blank_ai_checkboxes[idx] = blank_ai_checkboxes
+
     def _build_matrix_section(self, idx: int, entry: QuestionEntry, card: CardWidget,
                               card_layout: QVBoxLayout, option_texts: List[str], row_texts: List[str]) -> None:
         self._has_content = True
@@ -168,6 +482,10 @@ class WizardSectionsMixin:
         hint.setStyleSheet("font-size: 12px;")
         _apply_label_color(hint, "#666666", "#bfbfbf")
         card_layout.addWidget(hint)
+
+        _is_psycho = entry.question_type in PSYCHO_SUPPORTED_TYPES
+        _saved_bias = getattr(entry, "psycho_bias", None)
+        _matrix_row_preset_segs = []
 
         per_row_scroll = ScrollArea(card)
         per_row_scroll.setWidgetResizable(True)
@@ -218,7 +536,8 @@ class WizardSectionsMixin:
         matrix_weights = self._resolve_matrix_weights(entry, rows, columns)
 
         saved_row_flags = list(getattr(entry, "row_reverse_flags", []) or [])
-        if not saved_row_flags and getattr(entry, "is_reverse", False):
+        auto_reverse = infer_reverse_by_option_texts(option_texts)
+        if not saved_row_flags and (getattr(entry, "is_reverse", False) or auto_reverse):
             saved_row_flags = [True] * rows
 
         per_row_sliders: List[List[NoWheelSlider]] = []
@@ -238,11 +557,33 @@ class WizardSectionsMixin:
             _apply_label_color(row_label, "#444444", "#e0e0e0")
             row_card_layout.addWidget(row_label)
 
+            if _is_psycho:
+                r_preset_row = QHBoxLayout()
+                r_preset_row.setSpacing(8)
+                r_preset_lbl = BodyLabel("倾向预设：", row_card)
+                r_preset_lbl.setStyleSheet("font-size: 12px;")
+                _apply_label_color(r_preset_lbl, "#666666", "#bfbfbf")
+                r_preset_row.addWidget(r_preset_lbl)
+                r_seg = SegmentedWidget(row_card)
+                for _v, _t in BIAS_PRESET_CHOICES:
+                    r_seg.addItem(routeKey=_v, text=_t)
+                if isinstance(_saved_bias, list) and row_idx < len(_saved_bias):
+                    r_seg.setCurrentItem(_saved_bias[row_idx] or "custom")
+                else:
+                    r_seg.setCurrentItem((_saved_bias if isinstance(_saved_bias, str) else None) or "custom")
+                r_preset_row.addWidget(r_seg)
+                r_preset_row.addStretch(1)
+                row_card_layout.addLayout(r_preset_row)
+                _matrix_row_preset_segs.append(r_seg)
+
             if self.reliability_mode_enabled:
                 rev_row_layout = QHBoxLayout()
                 rev_row_layout.setContentsMargins(0, 0, 0, 2)
                 rev_cb = CheckBox("反向题请勾选此处", row_card)
-                rev_cb.setToolTip("勾选后，该行的答题倾向会翻转（正向高分 → 反向低分）")
+                tip = "勾选后，该行的答题倾向会翻转（正向高分 → 反向低分）"
+                if auto_reverse and not getattr(entry, "is_reverse", False):
+                    tip += "\n已根据选项文本自动推断为反向题，可手动修改。"
+                rev_cb.setToolTip(tip)
                 row_is_rev = saved_row_flags[row_idx] if row_idx < len(saved_row_flags) else False
                 rev_cb.setChecked(bool(row_is_rev))
                 rev_row_layout.addWidget(rev_cb)
@@ -252,11 +593,75 @@ class WizardSectionsMixin:
 
             row_sliders = build_slider_rows(row_card, row_card_layout, per_row_values[row_idx])
             per_row_sliders.append(row_sliders)
+
+            row_preview_label = BodyLabel("", row_card)
+            row_preview_label.setWordWrap(True)
+            row_preview_label.setStyleSheet("font-size: 12px;")
+            _apply_label_color(row_preview_label, "#666666", "#bfbfbf")
+            row_card_layout.addWidget(row_preview_label)
+
+            def _make_row_preview_update(
+                _label: BodyLabel = row_preview_label,
+                _row_sliders: List[NoWheelSlider] = row_sliders,
+            ):
+                def _update(_value: int = 0):
+                    self._refresh_ratio_preview_label(
+                        _label,
+                        _row_sliders,
+                        option_texts,
+                        "本行预计占比：",
+                    )
+                return _update
+
+            _row_preview_update = _make_row_preview_update()
+            for _slider in row_sliders:
+                _slider.valueChanged.connect(_row_preview_update)
+            _row_preview_update()
             per_row_layout.addWidget(row_card)
 
         self.matrix_row_slider_map[idx] = per_row_sliders
         if self.reliability_mode_enabled and row_reverse_cbs:
             self.matrix_reverse_check_map[idx] = row_reverse_cbs
+
+        # 每行预设 ↔ 该行滑块联动
+        if _matrix_row_preset_segs:
+            self.bias_preset_map[idx] = _matrix_row_preset_segs
+
+            def _wire_row(seg, sliders, cols):
+                _flag = [False]
+                _anims: Dict[object, QPropertyAnimation] = {}
+
+                def _on_preset(route_key):
+                    if route_key == "custom":
+                        return
+                    _flag[0] = True
+                    weights = build_bias_weights(cols, route_key)
+                    for si, sl in enumerate(sliders):
+                        old = _anims.get(sl)
+                        if old:
+                            old.stop()
+                        target = int(weights[si]) if si < len(weights) else 1
+                        anim = QPropertyAnimation(sl, b"value", sl)
+                        anim.setDuration(300)
+                        anim.setStartValue(sl.value())
+                        anim.setEndValue(target)
+                        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+                        anim.start()
+                        _anims[sl] = anim
+                    QTimer.singleShot(320, lambda: _flag.__setitem__(0, False))
+
+                seg.currentItemChanged.connect(_on_preset)
+
+                def _on_slider(_):
+                    if _flag[0]:
+                        return
+                    if seg.currentItem() != "custom":
+                        seg.setCurrentItem("custom")
+                for sl in sliders:
+                    sl.valueChanged.connect(_on_slider)
+
+            for r_seg, row_sl in zip(_matrix_row_preset_segs, per_row_sliders):
+                _wire_row(r_seg, row_sl, columns)
 
     def _build_order_section(self, card: CardWidget, card_layout: QVBoxLayout, option_texts: List[str]) -> None:
         self._has_content = True
@@ -295,14 +700,37 @@ class WizardSectionsMixin:
             rev_row = QHBoxLayout()
             rev_row.setContentsMargins(0, 2, 0, 2)
             rev_cb = CheckBox("反向题请勾选此处", card)
-            rev_cb.setToolTip("勾选后，信效度一致性约束会翻转该题的基准偏好（正向高分 → 反向低分）")
-            rev_cb.setChecked(bool(getattr(entry, "is_reverse", False)))
+            auto_reverse = infer_reverse_by_option_texts(option_texts)
+            tip = "勾选后，信效度一致性约束会翻转该题的基准偏好（正向高分 → 反向低分）"
+            if auto_reverse and not getattr(entry, "is_reverse", False):
+                tip += "\n已根据选项文本自动推断为反向题，可手动修改。"
+            rev_cb.setToolTip(tip)
+            rev_cb.setChecked(bool(getattr(entry, "is_reverse", False) or auto_reverse))
             rev_row.addWidget(rev_cb)
             rev_row.addStretch(1)
             card_layout.addLayout(rev_row)
             self.reverse_check_map[idx] = rev_cb
 
         options = max(1, int(entry.option_count or 1))
+
+        # 倾向预设选择器（仅支持的题型）
+        _preset_seg = None
+        if entry.question_type in PSYCHO_SUPPORTED_TYPES:
+            preset_row = QHBoxLayout()
+            preset_row.setSpacing(8)
+            preset_label = BodyLabel("倾向预设：", card)
+            preset_label.setStyleSheet("font-size: 12px;")
+            _apply_label_color(preset_label, "#666666", "#bfbfbf")
+            preset_row.addWidget(preset_label)
+            _preset_seg = SegmentedWidget(card)
+            for value, text in BIAS_PRESET_CHOICES:
+                _preset_seg.addItem(routeKey=value, text=text)
+            current_bias = getattr(entry, "psycho_bias", "custom") or "custom"
+            _preset_seg.setCurrentItem(current_bias)
+            preset_row.addWidget(_preset_seg)
+            preset_row.addStretch(1)
+            card_layout.addLayout(preset_row)
+            self.bias_preset_map[idx] = _preset_seg
         if entry.question_type == "multiple":
             default_weight = 50
         elif entry.question_type == "slider":
@@ -397,6 +825,62 @@ class WizardSectionsMixin:
 
         self.slider_map[idx] = sliders
 
+        if entry.question_type in ("single", "dropdown", "scale", "score"):
+            ratio_preview_label = BodyLabel("", card)
+            ratio_preview_label.setWordWrap(True)
+            ratio_preview_label.setStyleSheet("font-size: 12px;")
+            _apply_label_color(ratio_preview_label, "#666666", "#bfbfbf")
+            card_layout.addWidget(ratio_preview_label)
+
+            def _update_option_preview(_value: int = 0):
+                self._refresh_ratio_preview_label(
+                    ratio_preview_label,
+                    sliders,
+                    option_texts,
+                    "预计占比：",
+                )
+
+            for slider in sliders:
+                slider.valueChanged.connect(_update_option_preview)
+            _update_option_preview()
+
+        # 预设 ↔ 滑块联动（用标志位避免循环触发，不用 blockSignals 以保证输入框同步）
+        if _preset_seg is not None:
+            _applying_preset = [False]
+
+            _slider_anims: Dict[object, QPropertyAnimation] = {}
+
+            def _on_preset_changed(route_key: str, _sliders=sliders, _flag=_applying_preset, _sa=_slider_anims):
+                if route_key == "custom":
+                    return
+                _flag[0] = True
+                weights = build_bias_weights(len(_sliders), route_key)
+                for si, sl in enumerate(_sliders):
+                    old = _sa.get(sl)
+                    if old:
+                        old.stop()
+                    target = int(weights[si]) if si < len(weights) else 1
+                    anim = QPropertyAnimation(sl, b"value", sl)
+                    anim.setDuration(300)
+                    anim.setStartValue(sl.value())
+                    anim.setEndValue(target)
+                    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+                    anim.start()
+                    _sa[sl] = anim
+                QTimer.singleShot(320, lambda: _flag.__setitem__(0, False))
+            _preset_seg.currentItemChanged.connect(_on_preset_changed)
+
+            def _make_slider_cb(_seg=_preset_seg, _flag=_applying_preset):
+                def _cb(value):
+                    if _flag[0]:
+                        return
+                    if _seg.currentItem() != "custom":
+                        _seg.setCurrentItem("custom")
+                return _cb
+            _slider_cb = _make_slider_cb()
+            for sl in sliders:
+                sl.valueChanged.connect(_slider_cb)
+
     def _set_text_answer_enabled(self, idx: int, enabled: bool) -> None:
         container = self.text_container_map.get(idx)
         if container:
@@ -430,8 +914,12 @@ class WizardSectionsMixin:
             self._set_text_answer_enabled(idx, False)
             return
         if ai_cb:
-            ai_cb.setEnabled(True)
-            self._set_text_answer_enabled(idx, not ai_cb.isChecked())
+            ai_master_on = getattr(self, "ai_master_enabled", True)
+            ai_cb.setEnabled(ai_master_on)
+            if ai_master_on:
+                self._set_text_answer_enabled(idx, not ai_cb.isChecked())
+            else:
+                self._set_text_answer_enabled(idx, True)
             return
         self._set_text_answer_enabled(idx, True)
 
@@ -470,7 +958,7 @@ class WizardSectionsMixin:
                 cb.setEnabled(False)
             self._set_text_answer_enabled(idx, False)
             return
-        if checked and not ensure_ai_ready(self.window() or self):
+        if checked and not ensure_ai_ready(cast(QWidget, self).window() or cast(QWidget, self)):
             cb = self.ai_check_map.get(idx)
             if cb:
                 cb.blockSignals(True)

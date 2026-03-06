@@ -7,16 +7,6 @@ from wjx.core.engine.dom_helpers import (
     _driver_question_looks_like_reorder,
 )
 from wjx.core.engine.driver_factory import create_playwright_driver
-from wjx.core.engine.full_simulation import (
-    _build_per_question_delay_plan,
-    _calculate_full_simulation_run_target,
-    _full_simulation_active,
-    _prepare_full_simulation_schedule,
-    _reset_full_simulation_runtime_state,
-    _simulate_answer_duration_delay,
-    _sync_full_sim_state_from_ctx,
-    _wait_for_next_full_simulation_slot,
-)
 from wjx.core.engine.navigation import (
     _click_next_page_button,
     _human_scroll_after_question,
@@ -60,20 +50,12 @@ __all__ = [
     "_handle_submission_failure",
     "_wait_if_paused",
     "_trigger_target_reached_stop",
-    "_sync_full_sim_state_from_ctx",
     "_driver_question_looks_like_rating",
     "_driver_question_looks_like_reorder",
     "_count_choice_inputs_driver",
     "try_click_start_answer_button",
     "dismiss_resume_dialog_if_present",
     "detect",
-    "_full_simulation_active",
-    "_reset_full_simulation_runtime_state",
-    "_prepare_full_simulation_schedule",
-    "_wait_for_next_full_simulation_slot",
-    "_calculate_full_simulation_run_target",
-    "_build_per_question_delay_plan",
-    "_simulate_answer_duration_delay",
     "_human_scroll_after_question",
     "_click_next_page_button",
     "_click_submit_button",

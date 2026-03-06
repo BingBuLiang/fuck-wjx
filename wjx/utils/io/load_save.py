@@ -169,7 +169,7 @@ class RuntimeConfig:
     timed_mode_interval: float = 3.0
     random_ip_enabled: bool = False
     random_proxy_api: Optional[str] = None
-    proxy_source: str = "default"  # 代理源选择: "default", "pikachu" 或 "custom"
+    proxy_source: str = "default"  # 代理源选择: "default" 或 "custom"
     custom_proxy_api: str = ""  # 自定义代理API地址
     proxy_area_code: Optional[str] = None
     random_ua_enabled: bool = False
@@ -177,7 +177,9 @@ class RuntimeConfig:
     random_ua_ratios: Dict[str, int] = field(default_factory=lambda: {"wechat": 33, "mobile": 33, "pc": 34})  # 设备类型占比
     fail_stop_enabled: bool = True
     pause_on_aliyun_captcha: bool = True
-    reliability_mode_enabled: bool = True  # 信效度模式开关（控制维度设置是否可用）
+    reliability_mode_enabled: bool = True  # 信效度模式总开关
+    reliability_mode_type: str = "simple"  # 信效度模式类型：simple（简单倾向）或 psychometric（潜变量模型）
+    psycho_target_alpha: float = 0.85  # 潜变量模式的目标 Cronbach's Alpha（0.70-0.95）
     headless_mode: bool = False
     debug_mode: bool = False
     ai_enabled: bool = False
@@ -251,15 +253,22 @@ def serialize_question_entry(entry: QuestionEntry) -> Dict[str, Any]:
         "is_location": getattr(entry, "is_location", False),
         "is_reverse": bool(getattr(entry, "is_reverse", False)),
         "row_reverse_flags": list(getattr(entry, "row_reverse_flags", []) or []),
+        "psycho_bias": str(getattr(entry, "psycho_bias", "custom") or "custom"),
     }
+
+
+def _normalize_psycho_bias(data: Dict[str, Any]) -> str:
+    """规范化 psycho_bias，仅接受 left/center/right。"""
+    bias = str(data.get("psycho_bias") or "custom")
+    if bias in ("left", "center", "right"):
+        return bias
+    return "custom"
 
 
 def deserialize_question_entry(data: Dict[str, Any]) -> "QuestionEntry":
     """Create a QuestionEntry from a persisted dict."""
     from wjx.core.questions.config import QuestionEntry
     mode_raw = data.get("distribution_mode") or "random"
-    if mode_raw == "equal":
-        mode_raw = "random"
 
     def _prob_config_is_unset(value: Any) -> bool:
         if value is None:
@@ -317,6 +326,7 @@ def deserialize_question_entry(data: Dict[str, Any]) -> "QuestionEntry":
         is_location=bool(data.get("is_location")),
         is_reverse=bool(data.get("is_reverse", False)),
         row_reverse_flags=[bool(v) for v in (data.get("row_reverse_flags") or [])],
+        psycho_bias=_normalize_psycho_bias(data),
     )
 
 
@@ -342,18 +352,6 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
             log_suppressed_exception("_tuple_pair: if isinstance(value, (list, tuple)) and len(value) >= 2: return int(value[0])...", exc, level=logging.WARNING)
         return 0, 0
 
-    def _legacy_interval_pair(value: Any) -> Optional[Tuple[int, int]]:
-        """Support legacy payload: {'minutes','seconds','max_minutes','max_seconds'}."""
-        if not isinstance(value, dict):
-            return None
-        min_seconds = _as_int(value.get("minutes")) * 60 + _as_int(value.get("seconds"))
-        max_seconds = _as_int(value.get("max_minutes")) * 60 + _as_int(value.get("max_seconds"))
-        if min_seconds < 0:
-            min_seconds = 0
-        if max_seconds < min_seconds:
-            max_seconds = min_seconds
-        return min_seconds, max_seconds
-
     def _browser_pref_list(value: Any) -> List[str]:
         allowed = set(BROWSER_PREFERENCE) | {"edge", "chrome", "chromium"}
         prefs: List[str] = []
@@ -375,48 +373,34 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     config = RuntimeConfig()
     config.url = str(raw.get("url") or "")
     config.survey_title = str(raw.get("survey_title") or "")
-    config.target = _as_int(raw.get("target") or raw.get("target_num") or 1, 1)
-    config.threads = _as_int(raw.get("threads") or raw.get("num_threads") or 1, 1)
-    config.browser_preference = _browser_pref_list(raw.get("browser_preference") or raw.get("preferred_browser"))
+    config.target = _as_int(raw.get("target"), 1)
+    config.threads = _as_int(raw.get("threads"), 1)
+    config.browser_preference = _browser_pref_list(raw.get("browser_preference"))
 
     submit_interval = raw.get("submit_interval")
     config.submit_interval = _tuple_pair(submit_interval)
-    if config.submit_interval == (0, 0):
-        legacy = _legacy_interval_pair(submit_interval)
-        if legacy:
-            config.submit_interval = legacy
 
     answer_duration = raw.get("answer_duration")
     config.answer_duration = _tuple_pair(answer_duration)
-    if config.answer_duration == (0, 0):
-        legacy_range = raw.get("answer_duration_range")
-        if isinstance(legacy_range, dict):
-            config.answer_duration = (
-                max(0, _as_int(legacy_range.get("min_seconds"))),
-                max(0, _as_int(legacy_range.get("max_seconds"))),
-            )
 
-    config.timed_mode_enabled = bool(raw.get("timed_mode_enabled") or (raw.get("timed_mode") or {}).get("enabled"))
+    config.timed_mode_enabled = bool(raw.get("timed_mode_enabled", False))
     try:
         config.timed_mode_interval = _as_float(raw.get("timed_mode_interval") or 3.0, 3.0)
     except Exception:
         config.timed_mode_interval = 3.0
 
-    # random ip/proxy: new key random_ip_enabled, legacy key random_proxy_enabled
-    config.random_ip_enabled = normalize_random_ip_enabled_value(
-        bool(raw.get("random_ip_enabled") if "random_ip_enabled" in raw else raw.get("random_proxy_enabled"))
-    )
-    config.random_proxy_api = raw.get("random_proxy_api") or raw.get("random_proxy_api_url") or None
-    config.proxy_source = str(raw.get("proxy_source") or "default")
+    config.random_ip_enabled = normalize_random_ip_enabled_value(bool(raw.get("random_ip_enabled", False)))
+    config.random_proxy_api = raw.get("random_proxy_api") or None
+    proxy_source = str(raw.get("proxy_source") or "default")
+    if proxy_source not in ("default", "custom"):
+        proxy_source = "default"
+    config.proxy_source = proxy_source
     config.custom_proxy_api = str(raw.get("custom_proxy_api") or "")
     raw_area_code = raw.get("proxy_area_code")
     config.proxy_area_code = None if raw_area_code is None else str(raw_area_code)
 
-    # random UA: legacy payload stored under random_user_agent
-    legacy_ua_raw = raw.get("random_user_agent")
-    legacy_ua: Dict[str, Any] = legacy_ua_raw if isinstance(legacy_ua_raw, dict) else {}
-    config.random_ua_enabled = bool(raw.get("random_ua_enabled") if "random_ua_enabled" in raw else legacy_ua.get("enabled"))
-    selected_ua_keys = raw.get("random_ua_keys") if "random_ua_keys" in raw else legacy_ua.get("selected")
+    config.random_ua_enabled = bool(raw.get("random_ua_enabled", False))
+    selected_ua_keys = raw.get("random_ua_keys")
     config.random_ua_keys = _filter_valid_user_agent_keys(selected_ua_keys or [])
 
     # random UA ratios: 设备类型占比配置
@@ -439,6 +423,11 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     config.fail_stop_enabled = bool(raw.get("fail_stop_enabled", True))
     config.pause_on_aliyun_captcha = bool(raw.get("pause_on_aliyun_captcha", True))
     config.reliability_mode_enabled = bool(raw.get("reliability_mode_enabled", True))
+    config.reliability_mode_type = str(raw.get("reliability_mode_type") or "simple")
+    if config.reliability_mode_type not in ("simple", "psychometric"):
+        config.reliability_mode_type = "simple"
+    config.psycho_target_alpha = float(raw.get("psycho_target_alpha") or 0.85)
+    config.psycho_target_alpha = max(0.70, min(0.95, config.psycho_target_alpha))
     config.debug_mode = bool(raw.get("debug_mode", False))
     config.answer_rules = []
     raw_rules = raw.get("answer_rules")
@@ -466,8 +455,7 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
         config.ai_model = str(raw.get("ai_model") or "")
         config.ai_system_prompt = str(raw.get("ai_system_prompt") or "")
 
-    # question entries: new key question_entries; legacy key questions
-    entries_data = raw.get("question_entries") or raw.get("questions") or []
+    entries_data = raw.get("question_entries") or []
     config.question_entries = []
     for item in entries_data:
         try:
@@ -485,18 +473,112 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     return config
 
 
-def load_config(path: Optional[str] = None) -> RuntimeConfig:
-    """Load persisted runtime configuration."""
+def _strip_json_comments(raw_text: str) -> str:
+    """移除 JSON 文本中的 // 与 /* */ 注释（保留字符串内容）。"""
+    text = str(raw_text or "").lstrip("\ufeff")
+    if not text:
+        return ""
+
+    out: List[str] = []
+    in_string = False
+    escaped = False
+    in_line_comment = False
+    in_block_comment = False
+    quote = '"'
+    i = 0
+    n = len(text)
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+
+        if in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+                out.append(ch)
+            i += 1
+            continue
+
+        if in_block_comment:
+            if ch == "*" and nxt == "/":
+                in_block_comment = False
+                i += 2
+            else:
+                i += 1
+            continue
+
+        if in_string:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                in_string = False
+            i += 1
+            continue
+
+        if ch == '"':
+            in_string = True
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "/":
+            in_line_comment = True
+            i += 2
+            continue
+
+        if ch == "/" and nxt == "*":
+            in_block_comment = True
+            i += 2
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
+
+def load_config(path: Optional[str] = None, *, strict: bool = False) -> RuntimeConfig:
+    """Load persisted runtime configuration.
+
+    strict=True 时，遇到坏配置会抛出 ValueError，供 UI 明确提示用户。
+    strict=False 时，读取失败回退默认配置，避免启动中断。
+    """
     config_path = os.fspath(path or _default_config_path())
     if not os.path.exists(config_path):
         return RuntimeConfig()
     try:
         with open(config_path, "r", encoding="utf-8") as fp:
-            payload = json.load(fp)
+            raw_text = fp.read()
+        clean_text = _strip_json_comments(raw_text)
+        if not clean_text.strip():
+            default_path = os.path.abspath(_default_config_path())
+            current_path = os.path.abspath(config_path)
+            if not strict and current_path == default_path:
+                try:
+                    with open(config_path, "w", encoding="utf-8") as fp:
+                        fp.write("{}\n")
+                except Exception as repair_exc:
+                    logging.debug(f"自动修复空配置失败: {config_path} -> {repair_exc}")
+            raise ValueError("配置文件为空")
+        payload = json.loads(clean_text)
     except Exception as exc:
-        logging.warning(f"读取配置失败: {exc}")
+        error_message = f"读取配置失败: {config_path} -> {exc}"
+        if strict:
+            logging.error(error_message)
+            raise ValueError(error_message) from exc
+        logging.warning(error_message)
         return RuntimeConfig()
-    return _sanitize_runtime_config_payload(payload if isinstance(payload, dict) else {})
+    if not isinstance(payload, dict):
+        error_message = f"读取配置失败: {config_path} -> JSON 顶层必须是对象"
+        if strict:
+            raise ValueError(error_message)
+        logging.warning(error_message)
+        return RuntimeConfig()
+    return _sanitize_runtime_config_payload(payload)
 
 
 def save_config(config: RuntimeConfig, path: Optional[str] = None) -> str:
@@ -511,8 +593,7 @@ def save_config(config: RuntimeConfig, path: Optional[str] = None) -> str:
 
 class ConfigPersistenceMixin:
     """
-    Compatibility stub retained for legacy imports.
-    New UI should call load_config/save_config directly.
+    兼容层：保留旧调用入口，内部转发到 load_config/save_config。
     """
 
     def load_runtime_config(self, path: Optional[str] = None) -> RuntimeConfig:

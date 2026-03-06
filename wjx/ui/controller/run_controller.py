@@ -408,7 +408,7 @@ class RunController(QObject):
                     custom_weights = list(weights)
                     texts = None
                 elif q_type == "multiple":
-                    probabilities = [1.0] * option_count
+                    probabilities = [50.0] * option_count
                     distribution = "random"
                     custom_weights = None
                     texts = None
@@ -837,8 +837,8 @@ class RunController(QObject):
             self._schedule_cleanup()
 
     # -------------------- Persistence --------------------
-    def load_saved_config(self, path: Optional[str] = None) -> RuntimeConfig:
-        cfg = load_config(path)
+    def load_saved_config(self, path: Optional[str] = None, *, strict: bool = False) -> RuntimeConfig:
+        cfg = load_config(path, strict=strict)
         self.config = cfg
         self.question_entries = cfg.question_entries
         self.questions_info = list(getattr(cfg, "questions_info", None) or [])

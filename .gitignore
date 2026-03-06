@@ -3,6 +3,7 @@
 .github_token
 .clinerules/
 .claude/
+.codex/
 .gemini/
 .ruff_cache/
 desktop.ini
@@ -12,15 +13,13 @@ control/
 ipzanAPI_doc.md
 AGENTS.md
 CLAUDE.md
-docx/
-logs/
-stats/
-tests/
-demo/
 web
 .kiro
 .vscode
-
+demo
+docx
+stats
+tests
 
 # 编译环境
 /build/

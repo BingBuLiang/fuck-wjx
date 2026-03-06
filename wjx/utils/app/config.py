@@ -199,7 +199,6 @@ _DEFAULT_CONTACT_API = "https://bot.hungrym0.top"
 _DEFAULT_CARD_VALIDATION = "https://api-wjx.hungrym0.top/api/card/verify"
 _DEFAULT_STATUS_ENDPOINT = "https://api-wjx.hungrym0.top/api/status"
 _DEFAULT_EMAIL_VERIFY_ENDPOINT = "https://api-wjx.hungrym0.top/api/email"
-_DEFAULT_PIKACHU_PROXY_API = "https://raw.githubusercontent.com/CharlesPikachu/freeproxy/master/proxies.json"
 
 # ==================== 浏览器配置 ====================
 # 浏览器选择优先级（默认优先 Edge，不存在则回落到 Chrome/内置 Chromium）
@@ -272,14 +271,11 @@ CONTACT_API_URL = _resolve_env_value("CONTACT_API_URL", _DEFAULT_CONTACT_API)
 CARD_VALIDATION_ENDPOINT = _resolve_env_value("CARD_VALIDATION_ENDPOINT", _DEFAULT_CARD_VALIDATION)
 STATUS_ENDPOINT = _resolve_env_value("STATUS_ENDPOINT", _DEFAULT_STATUS_ENDPOINT)
 EMAIL_VERIFY_ENDPOINT = _resolve_env_value("EMAIL_VERIFY_ENDPOINT", _DEFAULT_EMAIL_VERIFY_ENDPOINT)
-PIKACHU_PROXY_API = _resolve_env_value("PIKACHU_PROXY_API", _DEFAULT_PIKACHU_PROXY_API)
 
 
 # ==================== 时长控制配置 ====================
 # 时长控制持续时间抖动系数
-DURATION_CONTROL_JITTER = 0.2
 # 时长控制最小延迟（秒）
-DURATION_CONTROL_MIN_DELAY_SECONDS = 0.15
 
 # ==================== 问卷题型配置 ====================
 QUESTION_TYPE_LABELS = {

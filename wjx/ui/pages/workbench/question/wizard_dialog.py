@@ -19,6 +19,7 @@ from qfluentwidgets import (
     PrimaryPushButton,
     LineEdit,
     CheckBox,
+    SegmentedWidget,
 )
 
 from wjx.ui.widgets.no_wheel import NoWheelSlider
@@ -28,6 +29,7 @@ from wjx.utils.app.config import DEFAULT_FILL_TEXT
 from .constants import _get_entry_type_label
 from .utils import _shorten_text, _apply_label_color
 from .wizard_sections import WizardSectionsMixin, _TEXT_RANDOM_NONE
+from .psycho_config import BIAS_PRESET_CHOICES
 
 
 # ---------------------------------------------------------------------------
@@ -37,8 +39,7 @@ from .wizard_sections import WizardSectionsMixin, _TEXT_RANDOM_NONE
 class QuestionWizardDialog(WizardSectionsMixin, QDialog):
     """配置向导：用滑块快速设置权重/概率，编辑填空题答案。"""
 
-    @staticmethod
-    def _resolve_matrix_weights(entry: QuestionEntry, rows: int, columns: int) -> List[List[float]]:
+    def _resolve_matrix_weights(self, entry: QuestionEntry, rows: int, columns: int) -> List[List[float]]:
         """解析矩阵题的配比配置，返回按行的默认权重。"""
         def _clean_row(raw_row: Any) -> Optional[List[float]]:
             if not isinstance(raw_row, (list, tuple)):
@@ -86,7 +87,7 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
         except Exception:
             return float(default)
 
-    def _resolve_slider_bounds(self, idx: int, entry: QuestionEntry) -> List[int]:
+    def _resolve_slider_bounds(self, idx: int, entry: QuestionEntry) -> tuple[int, int]:
         min_val = 0.0
         max_val = 10.0
 
@@ -107,9 +108,9 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
         max_int = int(round(max_val))
         if max_int <= min_int:
             max_int = min_int + 1
-        return [min_int, max_int]
+        return (min_int, max_int)
 
-    def __init__(self, entries: List[QuestionEntry], info: List[Dict[str, Any]], survey_title: Optional[str] = None, parent=None, reliability_mode_enabled: bool = True):
+    def __init__(self, entries: List[QuestionEntry], info: List[Dict[str, Any]], survey_title: Optional[str] = None, parent=None, reliability_mode_enabled: bool = True, ai_master_enabled: bool = True):
         super().__init__(parent)
         window_title = "配置向导"
         if survey_title:
@@ -119,18 +120,20 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
         self.entries = entries
         self.info = info or []
         self.reliability_mode_enabled = reliability_mode_enabled
+        self.ai_master_enabled = ai_master_enabled
         self.slider_map: Dict[int, List[NoWheelSlider]] = {}
         self.matrix_row_slider_map: Dict[int, List[List[NoWheelSlider]]] = {}
         self.text_edit_map: Dict[int, List[LineEdit]] = {}
         self.ai_check_map: Dict[int, CheckBox] = {}
-        self.reverse_check_map: Dict[int, CheckBox] = {}          # scale/score 用
-        self.matrix_reverse_check_map: Dict[int, List[CheckBox]] = {}  # matrix 每行用
+        self.reverse_check_map: Dict[int, CheckBox] = {}
+        self.matrix_reverse_check_map: Dict[int, List[CheckBox]] = {}
         self.text_container_map: Dict[int, QWidget] = {}
         self.text_add_btn_map: Dict[int, PushButton] = {}
         self.text_random_mode_map: Dict[int, str] = {}
         self.text_random_name_check_map: Dict[int, CheckBox] = {}
         self.text_random_mobile_check_map: Dict[int, CheckBox] = {}
         self.text_random_group_map: Dict[int, QButtonGroup] = {}
+        self.bias_preset_map: Dict[int, Any] = {}
         self._entry_snapshots: List[QuestionEntry] = [copy.deepcopy(entry) for entry in entries]
         self._has_content = False
 
@@ -138,13 +141,12 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(16)
 
-        # 顶部说明
         intro = BodyLabel("配置各题目的选项权重/概率或填空答案", self)
         intro.setStyleSheet("font-size: 13px;")
         _apply_label_color(intro, "#666666", "#bfbfbf")
         layout.addWidget(intro)
 
-        # 滚动区域
+        # 单一滚动页面
         scroll = ScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.enableTransparentBackground()
@@ -154,8 +156,50 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
         inner.setContentsMargins(4, 4, 12, 4)
         inner.setSpacing(20)
 
-        for idx, entry in enumerate(entries):
+        # 批量倾向预设（在滚动区内最顶部）
+        master_row = QHBoxLayout()
+        master_row.setSpacing(8)
+        master_lbl = BodyLabel("批量倾向预设：", container)
+        master_lbl.setStyleSheet("font-size: 13px;")
+        _apply_label_color(master_lbl, "#444444", "#e0e0e0")
+        master_row.addWidget(master_lbl)
+        _master_seg = SegmentedWidget(container)
+        for _v, _t in BIAS_PRESET_CHOICES:
+            _master_seg.addItem(routeKey=_v, text=_t)
+        _master_seg.setCurrentItem("custom")
+        master_row.addWidget(_master_seg)
+        master_row.addStretch(1)
+        inner.addLayout(master_row)
+
+        for idx, entry in enumerate(self.entries):
             self._build_entry_card(idx, entry, container, inner)
+
+        self._master_applying = False
+
+        def _on_master_preset(route_key: str):
+            if route_key == "custom":
+                return
+            self._master_applying = True
+            for seg in self.bias_preset_map.values():
+                if isinstance(seg, list):
+                    for s in seg:
+                        s.setCurrentItem(route_key)
+                else:
+                    seg.setCurrentItem(route_key)
+            self._master_applying = False
+        _master_seg.currentItemChanged.connect(_on_master_preset)
+
+        def _reset_master(_=None):
+            if self._master_applying:
+                return
+            if _master_seg.currentItem() != "custom":
+                _master_seg.setCurrentItem("custom")
+        for seg in self.bias_preset_map.values():
+            if isinstance(seg, list):
+                for s in seg:
+                    s.currentItemChanged.connect(_reset_master)
+            else:
+                seg.currentItemChanged.connect(_reset_master)
 
         if not self._has_content:
             empty_label = BodyLabel("当前无题目需要配置", container)
@@ -164,7 +208,7 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
             inner.addWidget(empty_label)
 
         inner.addStretch(1)
-        layout.addWidget(scroll, 3)
+        layout.addWidget(scroll, 1)
 
         # 底部按钮
         btn_row = QHBoxLayout()
@@ -244,7 +288,7 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
             header.addWidget(slider_note)
         if entry.question_type == "multiple":
             # 构建多选题提示文本
-            multi_note_text = "每个滑块的值对应的是选项的命中概率（%）"
+            multi_note_text = "概率=该选项独立被选中的机会，不要求总和100%（例：两个选项都50%，可能同时被选中）"
             if multi_min_limit is not None or multi_max_limit is not None:
                 limit_parts = []
                 if multi_min_limit is not None and multi_max_limit is not None:
@@ -268,7 +312,17 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
 
         # 题目描述
         if title_text:
-            desc = BodyLabel(_shorten_text(title_text, 120), card)
+            display_text = title_text
+            # 多项填空题：在题目内容中标注填空项位置
+            if idx < len(self.info):
+                text_inputs = self.info[idx].get("text_inputs", 0)
+                is_multi_text = self.info[idx].get("is_multi_text", False)
+                if (is_multi_text or text_inputs > 1) and text_inputs > 0:
+                    # 将题目文本按空格分隔，为每个部分添加编号
+                    parts = title_text.split()
+                    if len(parts) >= text_inputs:
+                        display_text = " ".join([f"{parts[i]}____(填空{i+1})" for i in range(text_inputs)])
+            desc = BodyLabel(_shorten_text(display_text, 120), card)
             desc.setWordWrap(True)
             desc.setStyleSheet("font-size: 12px; margin-bottom: 4px;")
             _apply_label_color(desc, "#555555", "#c8c8c8")
@@ -333,9 +387,20 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
 
     def get_text_results(self) -> Dict[int, List[str]]:
         """获取填空题答案结果"""
+        from wjx.core.questions.types.text import MULTI_TEXT_DELIMITER
         result: Dict[int, List[str]] = {}
         for idx, edits in self.text_edit_map.items():
-            texts = [e.text().strip() for e in edits if e.text().strip()]
+            if edits and isinstance(edits[0], list):
+                # 多项填空题：二维列表
+                texts = []
+                for row_edits in edits:
+                    row_values = [edit.text().strip() for edit in row_edits]
+                    merged = MULTI_TEXT_DELIMITER.join(row_values)
+                    if merged:
+                        texts.append(merged)
+            else:
+                # 普通填空题：一维列表
+                texts = [e.text().strip() for e in edits if e.text().strip()]
             if not texts:
                 texts = [DEFAULT_FILL_TEXT]
             result[idx] = texts
@@ -344,6 +409,34 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
     def get_text_random_modes(self) -> Dict[int, str]:
         """获取填空题随机值模式（none/name/mobile）"""
         return {idx: mode for idx, mode in self.text_random_mode_map.items()}
+
+    def get_multi_text_blank_modes(self) -> Dict[int, List[str]]:
+        """获取多项填空题每个填空项的随机模式"""
+        from .wizard_sections import _TEXT_RANDOM_NONE, _TEXT_RANDOM_NAME, _TEXT_RANDOM_MOBILE
+        result: Dict[int, List[str]] = {}
+        if not hasattr(self, "multi_text_blank_radio_groups"):
+            return result
+        for idx, groups in self.multi_text_blank_radio_groups.items():
+            modes: List[str] = []
+            for group in groups:
+                checked_id = group.checkedId()
+                if checked_id == 1:
+                    modes.append(_TEXT_RANDOM_NAME)
+                elif checked_id == 2:
+                    modes.append(_TEXT_RANDOM_MOBILE)
+                else:
+                    modes.append(_TEXT_RANDOM_NONE)
+            result[idx] = modes
+        return result
+
+    def get_multi_text_blank_ai_flags(self) -> Dict[int, List[bool]]:
+        """获取多项填空题每个填空项的AI标志"""
+        result: Dict[int, List[bool]] = {}
+        if not hasattr(self, "multi_text_blank_ai_checkboxes"):
+            return result
+        for idx, checkboxes in self.multi_text_blank_ai_checkboxes.items():
+            result[idx] = [cb.isChecked() for cb in checkboxes]
+        return result
 
     def get_ai_flags(self) -> Dict[int, bool]:
         """获取填空题是否启用 AI"""
@@ -363,4 +456,14 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
             result[idx] = cb.isChecked()
         for idx, cbs in self.matrix_reverse_check_map.items():
             result[idx] = [cb.isChecked() for cb in cbs]
+        return result
+
+    def get_bias_presets(self) -> Dict[int, Any]:
+        """获取每个题目的倾向预设值（矩阵题返回列表）"""
+        result: Dict[int, Any] = {}
+        for idx, seg in self.bias_preset_map.items():
+            if isinstance(seg, list):
+                result[idx] = [s.currentItem() or "custom" for s in seg]
+            else:
+                result[idx] = seg.currentItem() or "custom"
         return result

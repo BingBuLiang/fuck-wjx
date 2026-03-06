@@ -9,6 +9,7 @@ from qfluentwidgets import MessageBox
 
 from wjx.core.questions.config import QuestionEntry
 from wjx.ui.pages.workbench.question import QuestionWizardDialog, _get_entry_type_label
+from wjx.ui.pages.workbench.question.psycho_config import PSYCHO_SUPPORTED_TYPES
 
 _TEXT_RANDOM_NAME_TOKEN = "__RANDOM_NAME__"
 _TEXT_RANDOM_MOBILE_TOKEN = "__RANDOM_MOBILE__"
@@ -25,6 +26,11 @@ def _pretty_text_answer(value: Any) -> str:
 
 def question_summary(entry: QuestionEntry) -> str:
     """生成题目配置摘要"""
+    bias = getattr(entry, "psycho_bias", "custom") or "custom"
+    if getattr(entry, "question_type", "") in PSYCHO_SUPPORTED_TYPES and bias in ("left", "center", "right"):
+        bias_text = {"left": "低分倾向", "center": "居中", "right": "高分倾向"}.get(bias, bias)
+        return f"倾向预设: {bias_text}"
+
     if entry.question_type in ("text", "multi_text"):
         if entry.question_type == "text":
             random_mode = str(getattr(entry, "text_random_mode", "none") or "none").strip().lower()
@@ -53,12 +59,12 @@ def question_summary(entry: QuestionEntry) -> str:
         return f"{rows} 行 × {cols} 列 - 完全随机"
     if entry.question_type == "order":
         return "排序题 - 自动随机排序"
-    if entry.custom_weights:
+    if entry.custom_weights and not isinstance(entry.custom_weights[0], list):
         weights = entry.custom_weights
         if entry.question_type == "multiple":
-            summary = f"自定义概率: {','.join(f'{int(w)}%' for w in weights[:4])}"
+            summary = f"自定义概率: {','.join(f'{int(w)}%' for w in weights[:4] if isinstance(w, (int, float)))}"
         else:
-            summary = f"自定义配比: {','.join(str(int(w)) for w in weights[:4])}"
+            summary = f"自定义配比: {','.join(str(int(w)) for w in weights[:4] if isinstance(w, (int, float)))}"
         if len(weights) > 4:
             summary += "..."
         return summary
@@ -129,14 +135,9 @@ class DashboardEntriesMixin:
             if 0 <= idx < len(entries):
                 entry = entries[idx]
                 normalized = _normalize_weights(weights)
-                if entry.question_type == "matrix":
-                    entry.custom_weights = normalized
-                    entry.probabilities = normalized
-                    entry.distribution_mode = "custom"
-                elif isinstance(normalized, list):
-                    entry.custom_weights = normalized
-                    entry.probabilities = normalized
-                    entry.distribution_mode = "custom"
+                entry.custom_weights = normalized
+                entry.probabilities = normalized
+                entry.distribution_mode = "custom"
         text_updates = dlg.get_text_results()
         for idx, texts in text_updates.items():
             if 0 <= idx < len(entries):
@@ -150,17 +151,30 @@ class DashboardEntriesMixin:
         for idx, enabled in ai_updates.items():
             if 0 <= idx < len(entries):
                 entry = entries[idx]
-                entry.ai_enabled = bool(enabled) if entry.question_type == "text" else False
+                entry.ai_enabled = bool(enabled) if entry.question_type in ("text", "multi_text") else False
+        multi_text_blank_modes_updates = dlg.get_multi_text_blank_modes()
+        for idx, modes in multi_text_blank_modes_updates.items():
+            if 0 <= idx < len(entries):
+                entries[idx].multi_text_blank_modes = modes
+        multi_text_blank_ai_updates = dlg.get_multi_text_blank_ai_flags()
+        for idx, flags in multi_text_blank_ai_updates.items():
+            if 0 <= idx < len(entries):
+                entries[idx].multi_text_blank_ai_flags = flags
         reverse_updates = dlg.get_reverse_results()
         for idx, rev_val in reverse_updates.items():
             if 0 <= idx < len(entries):
                 entry = entries[idx]
                 if isinstance(rev_val, list):
-                    # 矩阵题：按行存储
                     entry.row_reverse_flags = [bool(v) for v in rev_val]
                     entry.is_reverse = any(entry.row_reverse_flags)
                 else:
                     entry.is_reverse = bool(rev_val)
+
+        # 存储倾向预设
+        bias_presets = dlg.get_bias_presets()
+        for idx, bias in bias_presets.items():
+            if 0 <= idx < len(entries):
+                entries[idx].psycho_bias = bias
 
     def _run_question_wizard(self, entries: List[QuestionEntry], info: List[Dict[str, Any]], survey_title: Optional[str] = None) -> bool:
         if not entries:
@@ -168,7 +182,11 @@ class DashboardEntriesMixin:
             return False
         title = survey_title if survey_title is not None else self._survey_title
         reliability_mode_enabled = getattr(self.runtime_page.reliability_mode_switch, "isChecked", lambda: True)()
-        dlg = QuestionWizardDialog(entries, info, title, self, reliability_mode_enabled=reliability_mode_enabled)
+        try:
+            ai_master_enabled = self.runtime_page.ai_section.ai_enabled_card.isChecked()
+        except Exception:
+            ai_master_enabled = True
+        dlg = QuestionWizardDialog(entries, info, title, self, reliability_mode_enabled=reliability_mode_enabled, ai_master_enabled=ai_master_enabled)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._apply_wizard_results(entries, dlg)
             return True
@@ -204,12 +222,20 @@ class DashboardEntriesMixin:
         self.entry_table.setRowCount(len(entries))
         self.count_label.setText(f"{len(entries)} 题")
         for idx, entry in enumerate(entries):
+            # 序号列（从1开始）
+            seq_item = QTableWidgetItem(str(idx + 1))
+            seq_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.entry_table.setItem(idx, 0, seq_item)
+            
+            # 类型列
             type_label = _get_entry_type_label(entry)
-            summary = question_summary(entry)
             type_item = QTableWidgetItem(type_label)
             type_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.entry_table.setItem(idx, 0, type_item)
-            self.entry_table.setItem(idx, 1, QTableWidgetItem(summary))
+            self.entry_table.setItem(idx, 1, type_item)
+            
+            # 策略列
+            summary = question_summary(entry)
+            self.entry_table.setItem(idx, 2, QTableWidgetItem(summary))
         self._sync_start_button_state()
 
     def _checked_rows(self) -> List[int]:

@@ -41,6 +41,8 @@ class TaskContext:
     text_entry_types: List[str] = field(default_factory=list)
     text_ai_flags: List[bool] = field(default_factory=list)
     text_titles: List[str] = field(default_factory=list)
+    multi_text_blank_modes: List[List[str]] = field(default_factory=list)
+    multi_text_blank_ai_flags: List[List[bool]] = field(default_factory=list)
     single_option_fill_texts: List[Optional[List[Optional[str]]]] = field(default_factory=list)
     droplist_option_fill_texts: List[Optional[List[Optional[str]]]] = field(default_factory=list)
     multiple_option_fill_texts: List[Optional[List[Optional[str]]]] = field(default_factory=list)
@@ -69,9 +71,6 @@ class TaskContext:
     # ── 时间 / 节奏配置 ───────────────────────────────────────────────────
     submit_interval_range_seconds: Tuple[int, int] = (0, 0)
     answer_duration_range_seconds: Tuple[int, int] = (0, 0)
-    duration_control_enabled: bool = False
-    duration_control_estimated_seconds: int = 0
-    duration_control_total_duration_seconds: int = 0
 
     # ── 定时模式 ──────────────────────────────────────────────────────────
     timed_mode_enabled: bool = False
@@ -127,8 +126,7 @@ class TaskContext:
     def is_fast_mode(self) -> bool:
         """极速模式：时长控制/随机IP关闭且时间间隔为0时自动启用。"""
         return (
-            not self.duration_control_enabled
-            and not self.random_proxy_ip_enabled
+            not self.random_proxy_ip_enabled
             and self.submit_interval_range_seconds == (0, 0)
             and self.answer_duration_range_seconds == (0, 0)
         )

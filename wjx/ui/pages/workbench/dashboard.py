@@ -1,6 +1,5 @@
 """主控制面板：卡片式配置区 + 底部状态条（不包含日志）"""
 import os
-import copy
 import threading
 from typing import Optional
 import logging
@@ -106,6 +105,7 @@ class DashboardPage(
         self._last_progress = 0
         self._progress_infobar: Optional[InfoBar] = None  # 存储进度消息条的引用
         self._ip_low_infobar: Optional[FullWidthInfoBar] = None
+        self._ip_cost_infobar: Optional[FullWidthInfoBar] = None
         self._ip_low_infobar_dismissed = False
         self._ip_low_threshold = 5000
         self._api_balance_cache: Optional[float] = None  # 缓存 API 余额
@@ -120,6 +120,7 @@ class DashboardPage(
         self.config_drawer = ConfigDrawer(self, self._load_config_from_path)
         self._bind_events()
         self._sync_start_button_state()
+        self._refresh_ip_cost_infobar()
 
     def _build_ui(self):
         outer = QVBoxLayout(self)
@@ -223,7 +224,7 @@ class DashboardPage(
         title_row = QHBoxLayout()
         title_row.addWidget(SubtitleLabel("快捷设置", self))
         title_row.addStretch(1)
-        self.more_settings_btn = HyperlinkButton(FluentIcon.SETTING, "", "前往“运行参数”页仔细调整", self)
+        self.more_settings_btn = HyperlinkButton(FluentIcon.SETTING, "", "更多设置请前往“运行参数”页仔细调整", self)
         title_row.addWidget(self.more_settings_btn)
         exec_layout.addLayout(title_row)
 
@@ -237,7 +238,7 @@ class DashboardPage(
         spin_row.addSpacing(12)
         spin_row.addWidget(BodyLabel("并发数（提交速度）：", self))
         self.thread_spin = NoWheelSpinBox(self)
-        self.thread_spin.setRange(1, 12)
+        self.thread_spin.setRange(1, 8)
         self.thread_spin.setMinimumWidth(140)
         self.thread_spin.setMinimumHeight(36)
         spin_row.addWidget(self.thread_spin)
@@ -256,6 +257,19 @@ class DashboardPage(
         ip_row.addWidget(self.card_btn)
         ip_row.addStretch(1)
         exec_layout.addLayout(ip_row)
+
+        self._ip_cost_infobar = FullWidthInfoBar(
+            icon=InfoBarIcon.INFORMATION,
+            title="",
+            content="",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=False,
+            position=InfoBarPosition.NONE,
+            duration=-1,
+            parent=exec_card,
+        )
+        self._ip_cost_infobar.hide()
+        exec_layout.addWidget(self._ip_cost_infobar)
         layout.addWidget(exec_card)
 
         list_card = CardWidget(self)
@@ -289,18 +303,20 @@ class DashboardPage(
         list_layout.addWidget(self.command_bar)
         self.entry_table = TableWidget(self)
         self.entry_table.setRowCount(0)
-        self.entry_table.setColumnCount(2)
-        self.entry_table.setHorizontalHeaderLabels(["类型", "策略"])
+        self.entry_table.setColumnCount(3)
+        self.entry_table.setHorizontalHeaderLabels(["序号", "类型", "策略"])
         self.entry_table.verticalHeader().setVisible(False)
         self.entry_table.setSelectionBehavior(TableWidget.SelectionBehavior.SelectRows)
         self.entry_table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
         self.entry_table.setAlternatingRowColors(True)
         self.entry_table.setMinimumHeight(360)
-        # 设置列宽策略：第1列固定宽度，第2列自动拉伸填充剩余空间
+        # 设置列宽策略：第0列序号固定60px，第1列类型固定180px，第2列策略自动拉伸
         header = self.entry_table.horizontalHeader()
         header.setSectionResizeMode(0, header.ResizeMode.Fixed)
-        header.setSectionResizeMode(1, header.ResizeMode.Stretch)
-        self.entry_table.setColumnWidth(0, 180)
+        header.setSectionResizeMode(1, header.ResizeMode.Fixed)
+        header.setSectionResizeMode(2, header.ResizeMode.Stretch)
+        self.entry_table.setColumnWidth(0, 60)
+        self.entry_table.setColumnWidth(1, 180)
         list_layout.addWidget(self.entry_table)
         layout.addWidget(list_card, 1)
 
@@ -347,6 +363,8 @@ class DashboardPage(
         self.random_ip_cb.stateChanged.connect(self._on_random_ip_toggled)
         self.card_btn.clicked.connect(self._on_card_code_clicked)
         self.more_settings_btn.clicked.connect(self._go_to_runtime_page)
+        self.runtime_page.answer_card.spinBox.valueChanged.connect(lambda _v: self._refresh_ip_cost_infobar())
+        self.runtime_page.timed_switch.checkedChanged.connect(lambda _v: self._refresh_ip_cost_infobar())
         # 监听问卷链接输入框的文本变化（用于检测 reset 命令）
         self.url_edit.textChanged.connect(self._on_url_text_changed)
         # 监听剪贴板变化，自动处理粘贴的图片
@@ -461,7 +479,7 @@ class DashboardPage(
 
     @staticmethod
     def _is_survey_domain(url: str) -> bool:
-        """检查是否为问卷域名（v.wjx.cn 及其子域），排除投票和考试链接。"""
+        """检查是否为问卷域名（仅允许 v.wjx.cn、www.wjx.cn 及其子域）。"""
         if not url:
             return False
         text = str(url).strip()
@@ -474,8 +492,8 @@ class DashboardPage(
         except Exception:
             return False
         host = (parsed.netloc or "").split(":", 1)[0].lower()
-        # 只接受 v.wjx.cn 及其子域名（问卷链接）
-        return bool(host == "v.wjx.cn" or host.endswith(".v.wjx.cn"))
+        # 白名单：只接受 v.wjx.cn、www.wjx.cn 及其子域名
+        return host in ("v.wjx.cn", "www.wjx.cn") or host.endswith(".v.wjx.cn")
 
     def _on_show_config_list(self):
         try:
@@ -499,8 +517,9 @@ class DashboardPage(
             self._toast("文件不存在，可能已被删除", "warning")
             return
         try:
-            cfg = self.controller.load_saved_config(path)
+            cfg = self.controller.load_saved_config(path, strict=True)
         except Exception as exc:
+            logging.error("手动载入配置失败: %s", exc, exc_info=True)
             self._toast(f"载入失败：{exc}", "error")
             return
         # 应用到界面
@@ -519,8 +538,9 @@ class DashboardPage(
 
     def _on_save_config(self):
         cfg = self._build_config()
-        # 运行时使用深拷贝，避免执行过程污染用户配置
-        cfg.question_entries = [copy.deepcopy(entry) for entry in self.question_page.get_entries()]
+        # 序列化过滤 UI 组件
+        from wjx.utils.io.load_save import serialize_question_entry, deserialize_question_entry
+        cfg.question_entries = [deserialize_question_entry(serialize_question_entry(entry)) for entry in self.question_page.get_entries()]
         cfg.questions_info = list(self.question_page.questions_info or [])
         self.controller.config = cfg
         configs_dir = os.path.join(get_runtime_directory(), "configs")
@@ -647,6 +667,7 @@ class DashboardPage(
         self._survey_title = title or ""
         self._refresh_entry_table()
         self._sync_start_button_state()
+        self._refresh_ip_cost_infobar()
 
     def apply_config(self, cfg: RuntimeConfig):
         self.url_edit.setText(cfg.url)
@@ -734,4 +755,3 @@ class DashboardPage(
             else:
                 InfoBar.info("", text, parent=parent, position=InfoBarPosition.TOP, duration=duration)
             return None
-

@@ -18,7 +18,6 @@ from wjx.core.engine.driver_factory import (
     create_playwright_driver,
     shutdown_browser_manager,
 )
-from wjx.core.engine.full_simulation import _full_simulation_active, _wait_for_next_full_simulation_slot
 from wjx.core.engine.runtime_control import (
     _handle_submission_failure,
     _timed_mode_active,
@@ -409,10 +408,6 @@ def run(
             if stop_signal.is_set() or (ctx.target_num > 0 and ctx.cur_num >= ctx.target_num):
                 break
 
-        if _full_simulation_active(ctx):
-            if not _wait_for_next_full_simulation_slot(stop_signal):
-                break
-            logging.debug("[Action Log] 时长控制时段管控中，等待编辑区释放...")
         if stop_signal.is_set():
             break
         _wait_if_paused(gui_instance, stop_signal)
@@ -641,11 +636,10 @@ def run(
 
         if stop_signal.is_set():
             break
-        if not _full_simulation_active(ctx):
-            min_wait, max_wait = ctx.submit_interval_range_seconds
-            if max_wait > 0:
-                wait_seconds = min_wait if max_wait == min_wait else random.uniform(min_wait, max_wait)
-                if stop_signal.wait(wait_seconds):
-                    break
+        min_wait, max_wait = ctx.submit_interval_range_seconds
+        if max_wait > 0:
+            wait_seconds = min_wait if max_wait == min_wait else random.uniform(min_wait, max_wait)
+            if stop_signal.wait(wait_seconds):
+                break
 
     session.shutdown()

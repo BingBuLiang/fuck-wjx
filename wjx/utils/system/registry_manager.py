@@ -58,9 +58,10 @@ class RegistryManager:
             return False
     
     @staticmethod
-    def increment_submit_count() -> int:
+    def increment_submit_count(step: int = 1) -> int:
         current = RegistryManager.read_submit_count()
-        new_count = current + 1
+        safe_step = max(1, int(step or 1))
+        new_count = current + safe_step
         RegistryManager.write_submit_count(new_count)
         return new_count
 

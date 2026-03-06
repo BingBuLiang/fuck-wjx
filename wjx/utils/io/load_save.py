@@ -169,7 +169,7 @@ class RuntimeConfig:
     timed_mode_interval: float = 3.0
     random_ip_enabled: bool = False
     random_proxy_api: Optional[str] = None
-    proxy_source: str = "default"  # 代理源选择: "default", "pikachu" 或 "custom"
+    proxy_source: str = "default"  # 代理源选择: "default" 或 "custom"
     custom_proxy_api: str = ""  # 自定义代理API地址
     proxy_area_code: Optional[str] = None
     random_ua_enabled: bool = False
@@ -257,13 +257,10 @@ def serialize_question_entry(entry: QuestionEntry) -> Dict[str, Any]:
     }
 
 
-def _compat_psycho_bias(data: Dict[str, Any]) -> str:
-    """向后兼容：旧配置 psycho_enabled=True 时保留 psycho_bias，否则设为 custom。"""
+def _normalize_psycho_bias(data: Dict[str, Any]) -> str:
+    """规范化 psycho_bias，仅接受 left/center/right。"""
     bias = str(data.get("psycho_bias") or "custom")
     if bias in ("left", "center", "right"):
-        # 旧配置有 psycho_enabled 字段时，仅在启用时保留 bias
-        if "psycho_enabled" in data and not data.get("psycho_enabled"):
-            return "custom"
         return bias
     return "custom"
 
@@ -272,8 +269,6 @@ def deserialize_question_entry(data: Dict[str, Any]) -> "QuestionEntry":
     """Create a QuestionEntry from a persisted dict."""
     from wjx.core.questions.config import QuestionEntry
     mode_raw = data.get("distribution_mode") or "random"
-    if mode_raw == "equal":
-        mode_raw = "random"
 
     def _prob_config_is_unset(value: Any) -> bool:
         if value is None:
@@ -331,7 +326,7 @@ def deserialize_question_entry(data: Dict[str, Any]) -> "QuestionEntry":
         is_location=bool(data.get("is_location")),
         is_reverse=bool(data.get("is_reverse", False)),
         row_reverse_flags=[bool(v) for v in (data.get("row_reverse_flags") or [])],
-        psycho_bias=_compat_psycho_bias(data),
+        psycho_bias=_normalize_psycho_bias(data),
     )
 
 
@@ -357,18 +352,6 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
             log_suppressed_exception("_tuple_pair: if isinstance(value, (list, tuple)) and len(value) >= 2: return int(value[0])...", exc, level=logging.WARNING)
         return 0, 0
 
-    def _legacy_interval_pair(value: Any) -> Optional[Tuple[int, int]]:
-        """Support legacy payload: {'minutes','seconds','max_minutes','max_seconds'}."""
-        if not isinstance(value, dict):
-            return None
-        min_seconds = _as_int(value.get("minutes")) * 60 + _as_int(value.get("seconds"))
-        max_seconds = _as_int(value.get("max_minutes")) * 60 + _as_int(value.get("max_seconds"))
-        if min_seconds < 0:
-            min_seconds = 0
-        if max_seconds < min_seconds:
-            max_seconds = min_seconds
-        return min_seconds, max_seconds
-
     def _browser_pref_list(value: Any) -> List[str]:
         allowed = set(BROWSER_PREFERENCE) | {"edge", "chrome", "chromium"}
         prefs: List[str] = []
@@ -390,52 +373,34 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     config = RuntimeConfig()
     config.url = str(raw.get("url") or "")
     config.survey_title = str(raw.get("survey_title") or "")
-    config.target = _as_int(raw.get("target") or raw.get("target_num") or 1, 1)
-    config.threads = _as_int(raw.get("threads") or raw.get("num_threads") or 1, 1)
-    config.browser_preference = _browser_pref_list(raw.get("browser_preference") or raw.get("preferred_browser"))
+    config.target = _as_int(raw.get("target"), 1)
+    config.threads = _as_int(raw.get("threads"), 1)
+    config.browser_preference = _browser_pref_list(raw.get("browser_preference"))
 
     submit_interval = raw.get("submit_interval")
     config.submit_interval = _tuple_pair(submit_interval)
-    if config.submit_interval == (0, 0):
-        legacy = _legacy_interval_pair(submit_interval)
-        if legacy:
-            config.submit_interval = legacy
 
     answer_duration = raw.get("answer_duration")
     config.answer_duration = _tuple_pair(answer_duration)
-    if config.answer_duration == (0, 0):
-        legacy_range = raw.get("answer_duration_range")
-        if isinstance(legacy_range, dict):
-            config.answer_duration = (
-                max(0, _as_int(legacy_range.get("min_seconds"))),
-                max(0, _as_int(legacy_range.get("max_seconds"))),
-            )
 
-    config.timed_mode_enabled = bool(raw.get("timed_mode_enabled") or (raw.get("timed_mode") or {}).get("enabled"))
+    config.timed_mode_enabled = bool(raw.get("timed_mode_enabled", False))
     try:
         config.timed_mode_interval = _as_float(raw.get("timed_mode_interval") or 3.0, 3.0)
     except Exception:
         config.timed_mode_interval = 3.0
 
-    # random ip/proxy: new key random_ip_enabled, legacy key random_proxy_enabled
-    config.random_ip_enabled = normalize_random_ip_enabled_value(
-        bool(raw.get("random_ip_enabled") if "random_ip_enabled" in raw else raw.get("random_proxy_enabled"))
-    )
-    config.random_proxy_api = raw.get("random_proxy_api") or raw.get("random_proxy_api_url") or None
+    config.random_ip_enabled = normalize_random_ip_enabled_value(bool(raw.get("random_ip_enabled", False)))
+    config.random_proxy_api = raw.get("random_proxy_api") or None
     proxy_source = str(raw.get("proxy_source") or "default")
-    # 兼容性处理：将旧的 pikachu 代理源转换为 default
-    if proxy_source == "pikachu":
+    if proxy_source not in ("default", "custom"):
         proxy_source = "default"
     config.proxy_source = proxy_source
     config.custom_proxy_api = str(raw.get("custom_proxy_api") or "")
     raw_area_code = raw.get("proxy_area_code")
     config.proxy_area_code = None if raw_area_code is None else str(raw_area_code)
 
-    # random UA: legacy payload stored under random_user_agent
-    legacy_ua_raw = raw.get("random_user_agent")
-    legacy_ua: Dict[str, Any] = legacy_ua_raw if isinstance(legacy_ua_raw, dict) else {}
-    config.random_ua_enabled = bool(raw.get("random_ua_enabled") if "random_ua_enabled" in raw else legacy_ua.get("enabled"))
-    selected_ua_keys = raw.get("random_ua_keys") if "random_ua_keys" in raw else legacy_ua.get("selected")
+    config.random_ua_enabled = bool(raw.get("random_ua_enabled", False))
+    selected_ua_keys = raw.get("random_ua_keys")
     config.random_ua_keys = _filter_valid_user_agent_keys(selected_ua_keys or [])
 
     # random UA ratios: 设备类型占比配置
@@ -490,8 +455,7 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
         config.ai_model = str(raw.get("ai_model") or "")
         config.ai_system_prompt = str(raw.get("ai_system_prompt") or "")
 
-    # question entries: new key question_entries; legacy key questions
-    entries_data = raw.get("question_entries") or raw.get("questions") or []
+    entries_data = raw.get("question_entries") or []
     config.question_entries = []
     for item in entries_data:
         try:
@@ -629,8 +593,7 @@ def save_config(config: RuntimeConfig, path: Optional[str] = None) -> str:
 
 class ConfigPersistenceMixin:
     """
-    Compatibility stub retained for legacy imports.
-    New UI should call load_config/save_config directly.
+    兼容层：保留旧调用入口，内部转发到 load_config/save_config。
     """
 
     def load_runtime_config(self, path: Optional[str] = None) -> RuntimeConfig:

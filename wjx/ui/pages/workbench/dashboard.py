@@ -105,6 +105,7 @@ class DashboardPage(
         self._last_progress = 0
         self._progress_infobar: Optional[InfoBar] = None  # 存储进度消息条的引用
         self._ip_low_infobar: Optional[FullWidthInfoBar] = None
+        self._ip_cost_infobar: Optional[FullWidthInfoBar] = None
         self._ip_low_infobar_dismissed = False
         self._ip_low_threshold = 5000
         self._api_balance_cache: Optional[float] = None  # 缓存 API 余额
@@ -119,6 +120,7 @@ class DashboardPage(
         self.config_drawer = ConfigDrawer(self, self._load_config_from_path)
         self._bind_events()
         self._sync_start_button_state()
+        self._refresh_ip_cost_infobar()
 
     def _build_ui(self):
         outer = QVBoxLayout(self)
@@ -255,6 +257,19 @@ class DashboardPage(
         ip_row.addWidget(self.card_btn)
         ip_row.addStretch(1)
         exec_layout.addLayout(ip_row)
+
+        self._ip_cost_infobar = FullWidthInfoBar(
+            icon=InfoBarIcon.INFORMATION,
+            title="",
+            content="",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=False,
+            position=InfoBarPosition.NONE,
+            duration=-1,
+            parent=exec_card,
+        )
+        self._ip_cost_infobar.hide()
+        exec_layout.addWidget(self._ip_cost_infobar)
         layout.addWidget(exec_card)
 
         list_card = CardWidget(self)
@@ -348,6 +363,8 @@ class DashboardPage(
         self.random_ip_cb.stateChanged.connect(self._on_random_ip_toggled)
         self.card_btn.clicked.connect(self._on_card_code_clicked)
         self.more_settings_btn.clicked.connect(self._go_to_runtime_page)
+        self.runtime_page.answer_card.spinBox.valueChanged.connect(lambda _v: self._refresh_ip_cost_infobar())
+        self.runtime_page.timed_switch.checkedChanged.connect(lambda _v: self._refresh_ip_cost_infobar())
         # 监听问卷链接输入框的文本变化（用于检测 reset 命令）
         self.url_edit.textChanged.connect(self._on_url_text_changed)
         # 监听剪贴板变化，自动处理粘贴的图片
@@ -650,6 +667,7 @@ class DashboardPage(
         self._survey_title = title or ""
         self._refresh_entry_table()
         self._sync_start_button_state()
+        self._refresh_ip_cost_infobar()
 
     def apply_config(self, cfg: RuntimeConfig):
         self.url_edit.setText(cfg.url)

@@ -3,10 +3,8 @@ import logging
 from typing import Optional
 
 from PySide6.QtCore import Qt, QStringListModel
-from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import QCompleter, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
-    Action,
     BodyLabel,
     ComboBox,
     EditableComboBox,
@@ -19,11 +17,11 @@ from qfluentwidgets import (
     InfoBarPosition,
     LineEdit,
     PushButton,
-    RoundMenu,
     SettingCard,
     SwitchButton,
     TransparentToolButton,
 )
+from wjx.ui.widgets.no_wheel import NoWheelSpinBox
 
 
 class SearchableComboBox(EditableComboBox):
@@ -509,7 +507,7 @@ class RandomUASettingCard(ExpandGroupSettingCard):
 
 
 class TimeRangeSettingCard(SettingCard):
-    """时间设置卡 - 使用单个秒数输入框"""
+    """时间设置卡 - 使用单个秒数 SpinBox 输入框"""
 
     def __init__(self, icon, title, content, max_seconds: int = 300, parent=None):
         super().__init__(icon, title, content, parent)
@@ -521,79 +519,34 @@ class TimeRangeSettingCard(SettingCard):
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(8)
 
-        self.value_edit = LineEdit(self._input_container)
-        self.value_edit.setPlaceholderText("秒数")
-        self.value_edit.setFixedWidth(100)
-        self.value_edit.setValidator(QIntValidator(0, max_seconds, self.value_edit))
-        self.value_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.value_edit.customContextMenuRequested.connect(self._show_value_edit_menu)
+        self.spinBox = NoWheelSpinBox(self._input_container)
+        self.spinBox.setRange(0, max_seconds)
+        self.spinBox.setFixedWidth(128)
+        self.spinBox.setFixedHeight(36)
+        self.spinBox.setValue(0)
+        self.spinBox.setToolTip(f"允许范围：0-{max_seconds} 秒")
 
         sec_label = BodyLabel("秒", self._input_container)
         sec_label.setStyleSheet("color: #606060;")
 
-        input_layout.addWidget(self.value_edit)
+        input_layout.addWidget(self.spinBox)
         input_layout.addWidget(sec_label)
-
-        self.value_edit.editingFinished.connect(self._normalize_inputs)
-        self.setValue(0)
 
         self.hBoxLayout.addWidget(self._input_container, 0, Qt.AlignmentFlag.AlignRight)
         self.hBoxLayout.addSpacing(16)
 
     def setEnabled(self, enabled):
         super().setEnabled(enabled)
-        self.value_edit.setEnabled(enabled)
-
-    def _parse_int(self, text: str, fallback: int) -> int:
-        text = str(text or "").strip()
-        if not text:
-            return fallback
-        try:
-            value = int(text)
-        except ValueError:
-            return fallback
-        if value < 0:
-            return 0
-        if value > self.max_seconds:
-            return self.max_seconds
-        return value
-
-    def _normalize_inputs(self):
-        self.value_edit.setText(str(self.getValue()))
-
-    def _show_value_edit_menu(self, pos):
-        menu = RoundMenu(parent=self.value_edit)
-
-        cut_action = Action(FluentIcon.CUT, "剪切", parent=menu)
-        cut_action.setEnabled(not self.value_edit.isReadOnly() and self.value_edit.hasSelectedText())
-        cut_action.triggered.connect(self.value_edit.cut)
-        menu.addAction(cut_action)
-
-        copy_action = Action(FluentIcon.COPY, "复制", parent=menu)
-        copy_action.setEnabled(self.value_edit.hasSelectedText())
-        copy_action.triggered.connect(self.value_edit.copy)
-        menu.addAction(copy_action)
-
-        paste_action = Action(FluentIcon.PASTE, "粘贴", parent=menu)
-        paste_action.setEnabled(not self.value_edit.isReadOnly())
-        paste_action.triggered.connect(self.value_edit.paste)
-        menu.addAction(paste_action)
-
-        select_all_action = Action(FluentIcon.CHECKBOX, "全选", parent=menu)
-        select_all_action.setEnabled(bool(self.value_edit.text()))
-        select_all_action.triggered.connect(self.value_edit.selectAll)
-        menu.addAction(select_all_action)
-
-        menu.exec(self.value_edit.mapToGlobal(pos))
+        self.spinBox.setEnabled(enabled)
 
     def getValue(self) -> int:
         """获取当前秒数"""
-        return self._parse_int(self.value_edit.text(), 0)
+        return int(self.spinBox.value())
 
     def setValue(self, value: int):
         """设置当前秒数"""
         value = max(0, min(int(value), self.max_seconds))
-        self.value_edit.setText(str(value))
+        self.spinBox.setValue(value)
 
     def getRange(self) -> tuple:
         """兼容调用方：返回 (秒数, 秒数)"""

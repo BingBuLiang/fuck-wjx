@@ -17,6 +17,15 @@ from wjx.utils.system.registry_manager import RegistryManager
 _quota_limit_dialog_shown = False
 
 
+def _resolve_ip_quota_cost() -> tuple[int, int]:
+    """按当前代理 minute 计算一次提交消耗的额度计数。"""
+    from wjx.network.proxy.provider import get_proxy_occupy_minute, get_quota_cost_by_minute
+
+    minute = int(get_proxy_occupy_minute() or 1)
+    quota_cost = int(get_quota_cost_by_minute(minute))
+    return minute, quota_cost
+
+
 def _invoke_popup(gui: Any, kind: str, title: str, message: str) -> Any:
     gui_handler = getattr(gui, f"_log_popup_{kind}", None) if gui is not None else None
     if callable(gui_handler):
@@ -198,8 +207,21 @@ def handle_random_ip_submission(gui: Any, stop_signal: Optional[threading.Event]
             stop_signal.set()
         _disable_random_ip_and_show_dialog(gui)
         return
-    ip_count = RegistryManager.increment_submit_count()
-    logging.info(f"随机IP提交计数: {ip_count}/{limit}")
+    minute, quota_cost = _resolve_ip_quota_cost()
+    remaining = max(0, limit - current_count)
+    if remaining < quota_cost:
+        logging.warning(
+            "随机IP剩余额度不足（剩余%s，当前minute=%s需消耗%s），停止任务并弹出卡密验证窗口",
+            remaining,
+            minute,
+            quota_cost,
+        )
+        if stop_signal:
+            stop_signal.set()
+        _disable_random_ip_and_show_dialog(gui)
+        return
+    ip_count = RegistryManager.increment_submit_count(quota_cost)
+    logging.info(f"随机IP提交计数: {ip_count}/{limit}（minute={minute}，本次消耗={quota_cost}）")
     try:
         _schedule_on_gui_thread(gui, lambda: refresh_ip_counter_display(gui))
     except Exception as exc:

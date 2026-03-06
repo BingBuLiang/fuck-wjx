@@ -3,6 +3,7 @@
 .github_token
 .clinerules/
 .claude/
+.codex/
 .gemini/
 .ruff_cache/
 desktop.ini

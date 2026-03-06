@@ -38,6 +38,14 @@ _IP_PORT_RE = re.compile(
     r':(\d{2,5})'
 )
 _IPZAN_MINUTE_OPTIONS: Tuple[int, ...] = (1, 3, 5, 10, 15, 30)
+_IP_QUOTA_COST_MAP = {
+    1: 1,
+    3: 2,
+    5: 3,
+    10: 5,
+    15: 8,
+    30: 20,
+}
 _proxy_occupy_minute: int = 1
 _IPZAN_POOL_ORDINARY = "ordinary"
 _IPZAN_POOL_QUALITY = "quality"
@@ -90,6 +98,18 @@ def _map_answer_seconds_to_ipzan_minute(total_seconds: int) -> int:
     return 30
 
 
+def get_ipzan_minute_by_answer_seconds(total_seconds: int) -> int:
+    minute = int(_map_answer_seconds_to_ipzan_minute(total_seconds))
+    if minute not in _IPZAN_MINUTE_OPTIONS:
+        return 1
+    return minute
+
+
+def get_quota_cost_by_minute(minute: int) -> int:
+    safe_minute = int(minute) if int(minute) in _IPZAN_MINUTE_OPTIONS else 1
+    return int(_IP_QUOTA_COST_MAP.get(safe_minute, 1))
+
+
 def set_proxy_occupy_minute_by_answer_duration(answer_duration_range_seconds: Optional[Tuple[int, int]]) -> int:
     global _proxy_occupy_minute
     min_seconds = max_seconds = 0
@@ -98,11 +118,16 @@ def set_proxy_occupy_minute_by_answer_duration(answer_duration_range_seconds: Op
             min_seconds = _to_non_negative_int(answer_duration_range_seconds[0], 0)
         max_seconds = _to_non_negative_int(answer_duration_range_seconds[1], min_seconds) if len(answer_duration_range_seconds) >= 2 else min_seconds
     max_seconds = max(max_seconds, min_seconds)
-    minute = _map_answer_seconds_to_ipzan_minute(max_seconds)
-    if minute not in _IPZAN_MINUTE_OPTIONS:
-        minute = 1
+    minute = get_ipzan_minute_by_answer_seconds(max_seconds)
     _proxy_occupy_minute = minute
     logging.debug("已根据作答时长更新代理 minute=%s（min=%s秒, max=%s秒）", minute, min_seconds, max_seconds)
+    return minute
+
+
+def get_proxy_occupy_minute() -> int:
+    minute = int(_proxy_occupy_minute or 1)
+    if minute not in _IPZAN_MINUTE_OPTIONS:
+        return 1
     return minute
 
 

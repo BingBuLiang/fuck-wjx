@@ -275,9 +275,7 @@ EMAIL_VERIFY_ENDPOINT = _resolve_env_value("EMAIL_VERIFY_ENDPOINT", _DEFAULT_EMA
 
 # ==================== 时长控制配置 ====================
 # 时长控制持续时间抖动系数
-DURATION_CONTROL_JITTER = 0.2
 # 时长控制最小延迟（秒）
-DURATION_CONTROL_MIN_DELAY_SECONDS = 0.15
 
 # ==================== 问卷题型配置 ====================
 QUESTION_TYPE_LABELS = {

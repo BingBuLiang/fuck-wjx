@@ -34,7 +34,7 @@ wjx/
 ├── assets/                # 针对指定地区随机ip的地区行政编码
 ├── core/                  # 核心业务逻辑
 │   ├── task_context.py    # 单次任务上下文数据
-│   ├── engine/            # 执行引擎（driver_factory/runtime_control/full_simulation/dom_helpers/navigation/question_detection/submission/answering/runner）
+│   ├── engine/            # 执行引擎（driver_factory/runtime_control/dom_helpers/navigation/question_detection/submission/answering/runner）
 │   ├── survey/            # 问卷解析（parser.py）
 │   ├── questions/         # 题目配置与题型实现（types/），以及一致性校验（consistency.py）
 │   │   └── types/         # 各题型实现（single/multiple/dropdown/matrix/scale/score/slider/text/reorder）

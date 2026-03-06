@@ -33,6 +33,8 @@ class RuntimePage(ScrollArea):
     MIN_THREADS = 1
     NON_HEADLESS_MAX_THREADS = 8
     HEADLESS_MAX_THREADS = 16
+    SUBMIT_INTERVAL_MAX_SECONDS = 300
+    ANSWER_DURATION_MAX_SECONDS = 600
 
 
     def __init__(self, controller: RunController, parent=None):
@@ -118,13 +120,17 @@ class RuntimePage(ScrollArea):
         time_group.vBoxLayout.insertWidget(0, title_container)
 
         self.interval_card = TimeRangeSettingCard(
-            FluentIcon.HISTORY, "提交间隔", "两次提交之间的等待时间",
-            max_seconds=300,
+            FluentIcon.HISTORY,
+            "提交间隔",
+            f"两次提交之间的等待时间（0-{self.SUBMIT_INTERVAL_MAX_SECONDS} 秒）",
+            max_seconds=self.SUBMIT_INTERVAL_MAX_SECONDS,
             parent=time_group
         )
         self.answer_card = TimeRangeSettingCard(
-            FluentIcon.STOP_WATCH, "作答时长", "设置单份作答消耗的时间",
-            max_seconds=120,
+            FluentIcon.STOP_WATCH,
+            "作答时长",
+            f"设置单份作答耗时（0-{self.ANSWER_DURATION_MAX_SECONDS} 秒），按20%比例随机上下抖动",
+            max_seconds=self.ANSWER_DURATION_MAX_SECONDS,
             parent=time_group
         )
         self.timed_card = TimedModeSettingCard(

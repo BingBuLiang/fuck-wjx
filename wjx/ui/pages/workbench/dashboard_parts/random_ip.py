@@ -13,6 +13,8 @@ from qfluentwidgets import FluentIcon
 from wjx.network.proxy import (
     _format_status_payload,
     _validate_card,
+    get_ipzan_minute_by_answer_seconds,
+    get_quota_cost_by_minute,
     get_random_ip_counter_snapshot_local,
     get_status,
     on_random_ip_toggle,
@@ -43,6 +45,7 @@ class DashboardRandomIPMixin:
         controller: RunController
         runtime_page: RuntimePage
         _ip_low_infobar: Optional[FullWidthInfoBar]
+        _ip_cost_infobar: Optional[FullWidthInfoBar]
         _ip_low_infobar_dismissed: bool
         _ip_low_threshold: int
         _api_balance_cache: Optional[float]
@@ -163,11 +166,13 @@ class DashboardRandomIPMixin:
             self.random_ip_hint.setText("自定义接口")
             self.random_ip_hint.setStyleSheet("color:#ff8c00;")
             self._update_ip_low_infobar(count, limit, custom_api)
+            self._update_ip_cost_infobar(custom_api)
             return
         if limit <= 0:
             self.random_ip_hint.setText("--/--")
             self.random_ip_hint.setStyleSheet("color:#6b6b6b;")
             self._update_ip_low_infobar(count, limit, custom_api)
+            self._update_ip_cost_infobar(custom_api)
             if self.random_ip_cb.isChecked():
                 self.random_ip_cb.blockSignals(True)
                 self.random_ip_cb.setChecked(False)
@@ -180,12 +185,73 @@ class DashboardRandomIPMixin:
         else:
             self.random_ip_hint.setStyleSheet("color:#6b6b6b;")
         self._update_ip_low_infobar(count, limit, custom_api)
+        self._update_ip_cost_infobar(custom_api)
         # 达到上限时自动关闭随机IP开关
         if count >= limit and self.random_ip_cb.isChecked():
             self.random_ip_cb.blockSignals(True)
             self.random_ip_cb.setChecked(False)
             self.random_ip_cb.blockSignals(False)
             self._set_runtime_ip_switch(False)
+
+    @staticmethod
+    def _format_duration_text(seconds: int) -> str:
+        total = max(0, int(seconds))
+        mins = total // 60
+        secs = total % 60
+        return f"{mins}分{secs}秒"
+
+    def _refresh_ip_cost_infobar(self) -> None:
+        """根据当前配置刷新随机IP成本提示条。"""
+        try:
+            _, _, custom_api = get_random_ip_counter_snapshot_local()
+        except Exception:
+            custom_api = False
+        self._update_ip_cost_infobar(bool(custom_api))
+
+    def _update_ip_cost_infobar(self, custom_api: bool) -> None:
+        if not self._ip_cost_infobar:
+            return
+        if custom_api:
+            self._ip_cost_infobar.hide()
+            return
+
+        try:
+            timed_enabled = bool(self.runtime_page.timed_switch.isChecked())
+        except Exception:
+            timed_enabled = False
+        if timed_enabled:
+            self._ip_cost_infobar.hide()
+            return
+
+        try:
+            answer_seconds = int(self.runtime_page.answer_card.getValue())
+        except Exception:
+            answer_seconds = 0
+
+        minute = int(get_ipzan_minute_by_answer_seconds(answer_seconds))
+        if minute <= 1:
+            self._ip_cost_infobar.hide()
+            return
+
+        quota_cost = int(get_quota_cost_by_minute(minute))
+        content = (
+            f"当前作答时长约 {self._format_duration_text(answer_seconds)}，成本较高，"
+            f"将按 {quota_cost} 倍消耗速率扣减随机IP额度。"
+        )
+        try:
+            # InfoBar 初始化时 title/content 都是空，会把对应 QLabel 设为隐藏。
+            # 这里动态更新文本时，必须同步恢复标签可见性。
+            self._ip_cost_infobar.title = content
+            self._ip_cost_infobar.content = ""
+            if hasattr(self._ip_cost_infobar, "titleLabel"):
+                self._ip_cost_infobar.titleLabel.setVisible(True)
+            if hasattr(self._ip_cost_infobar, "contentLabel"):
+                self._ip_cost_infobar.contentLabel.setVisible(False)
+            if hasattr(self._ip_cost_infobar, "_adjustText"):
+                self._ip_cost_infobar._adjustText()
+            self._ip_cost_infobar.show()
+        except Exception as exc:
+            log_suppressed_exception("_update_ip_cost_infobar", exc, level=logging.WARNING)
 
     def _on_random_ip_toggled(self, state: int):
         enabled = state != 0

@@ -1,9 +1,8 @@
 """答题核心逻辑 - 按配置策略自动填写问卷"""
 import logging
-import random
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from wjx.core.task_context import TaskContext
 from wjx.core.engine.dom_helpers import (
@@ -12,15 +11,10 @@ from wjx.core.engine.dom_helpers import (
     _driver_question_looks_like_rating,
     _driver_question_looks_like_reorder,
 )
-from wjx.core.engine.full_simulation import (
-    _build_per_question_delay_plan,
-    _calculate_full_simulation_run_target,
-    _full_simulation_active,
-    _simulate_answer_duration_delay,
-)
+from wjx.modes.duration_control import simulate_answer_duration_delay
 from wjx.core.engine.navigation import _click_next_page_button, _human_scroll_after_question
 from wjx.core.engine.question_detection import detect
-from wjx.core.engine.runtime_control import _is_fast_mode, _sleep_with_stop
+from wjx.core.engine.runtime_control import _is_fast_mode
 from wjx.core.engine.submission import submit
 from wjx.core.persona.context import reset_context as _reset_answer_context
 from wjx.core.persona.generator import generate_persona, reset_persona, set_current_persona
@@ -192,7 +186,6 @@ def brush(
     reset_consistency_context(ctx.answer_rules)
     logging.debug("本轮画像：%s", persona.to_description())
     questions_per_page = detect(driver, stop_signal=stop_signal)
-    total_question_count = sum(questions_per_page)
     fast_mode = _is_fast_mode(ctx)
 
     # 各题型计数器统一放入字典，方便 dispatcher 内部修改
@@ -208,16 +201,6 @@ def brush(
 
     current_question_number = 0
     active_stop = stop_signal or ctx.stop_event
-    question_delay_plan: Optional[List[float]] = None
-    if _full_simulation_active(ctx) and total_question_count > 0:
-        target_seconds = _calculate_full_simulation_run_target(total_question_count)
-        question_delay_plan = _build_per_question_delay_plan(total_question_count, target_seconds)
-        planned_total = sum(question_delay_plan)
-        logging.debug(
-            "[Action Log] 时长控制：本次计划总耗时约 %.1f 秒，共 %d 题",
-            planned_total,
-            total_question_count,
-        )
 
     def _abort_requested() -> bool:
         return bool(active_stop and active_stop.is_set())
@@ -231,9 +214,6 @@ def brush(
             if _abort_requested():
                 return False
             current_question_number += 1
-            if _full_simulation_active(ctx):
-                if _sleep_with_stop(active_stop, random.uniform(0.8, 1.5)):
-                    return False
             question_selector = f"#div{current_question_number}"
             try:
                 question_div = driver.find_element(By.CSS_SELECTOR, question_selector)
@@ -325,20 +305,7 @@ def brush(
                     else:
                         print(f"第{current_question_number}题为不支持类型(type={question_type})")
 
-        if _full_simulation_active(ctx):
-            _human_scroll_after_question(driver)
-        if (
-            question_delay_plan
-            and current_question_number < total_question_count
-        ):
-            plan_index = min(current_question_number - 1, len(question_delay_plan) - 1)
-            delay_seconds = question_delay_plan[plan_index] if plan_index >= 0 else 0.0
-            if delay_seconds > 0.01:
-                if active_stop:
-                    if active_stop.wait(delay_seconds):
-                        return False
-                else:
-                    time.sleep(delay_seconds)
+        _human_scroll_after_question(driver)
         if _abort_requested():
             return False
         buffer_delay = 0.0 if fast_mode else 0.5
@@ -350,7 +317,7 @@ def brush(
                 time.sleep(buffer_delay)
         is_last_page = (page_index == total_pages - 1)
         if is_last_page:
-            if _simulate_answer_duration_delay(ctx, active_stop):
+            if simulate_answer_duration_delay(active_stop, ctx.answer_duration_range_seconds):
                 return False
             if _abort_requested():
                 return False

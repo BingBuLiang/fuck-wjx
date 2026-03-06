@@ -17,6 +17,10 @@ logs/
 stats/
 tests/
 demo/
+web
+.kiro
+.vscode
+
 
 # 编译环境
 /build/

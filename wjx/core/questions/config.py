@@ -92,6 +92,8 @@ class QuestionEntry:
     question_num: Optional[int] = None
     question_title: Optional[str] = None
     ai_enabled: bool = False
+    multi_text_blank_modes: List[str] = field(default_factory=list)
+    multi_text_blank_ai_flags: List[bool] = field(default_factory=list)
     text_random_mode: str = _TEXT_RANDOM_NONE
     option_fill_texts: Optional[List[Optional[str]]] = None
     fillable_option_indices: Optional[List[int]] = None

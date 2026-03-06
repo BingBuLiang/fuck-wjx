@@ -19,6 +19,9 @@ from wjx.network.proxy import normalize_random_ip_enabled_value
 if TYPE_CHECKING:
     from wjx.core.questions.config import QuestionEntry
 
+_CURRENT_CONFIG_SCHEMA_VERSION = 2
+_TEXT_RANDOM_MODES = {"none", "name", "mobile"}
+
 
 def get_runtime_directory() -> str:
     """获取运行时目录（项目根目录）"""
@@ -157,7 +160,6 @@ class RuntimeConfig:
     timed_mode_enabled: bool = False
     timed_mode_interval: float = 3.0
     random_ip_enabled: bool = False
-    random_proxy_api: Optional[str] = None
     proxy_source: str = "default"  # 代理源选择: "default" 或 "custom"
     custom_proxy_api: str = ""  # 自定义代理API地址
     proxy_area_code: Optional[str] = None
@@ -236,6 +238,8 @@ def serialize_question_entry(entry: QuestionEntry) -> Dict[str, Any]:
         "question_num": entry.question_num,
         "question_title": getattr(entry, "question_title", None),
         "ai_enabled": bool(getattr(entry, "ai_enabled", False)),
+        "multi_text_blank_modes": _normalize_multi_text_blank_modes(getattr(entry, "multi_text_blank_modes", [])),
+        "multi_text_blank_ai_flags": _normalize_multi_text_blank_ai_flags(getattr(entry, "multi_text_blank_ai_flags", [])),
         "text_random_mode": str(getattr(entry, "text_random_mode", "none") or "none"),
         "option_fill_texts": entry.option_fill_texts,
         "fillable_option_indices": entry.fillable_option_indices,
@@ -252,6 +256,22 @@ def _normalize_psycho_bias(data: Dict[str, Any]) -> str:
     if bias in ("left", "center", "right"):
         return bias
     return "custom"
+
+
+def _normalize_multi_text_blank_modes(raw: Any) -> List[str]:
+    if not isinstance(raw, list):
+        return []
+    normalized: List[str] = []
+    for item in raw:
+        mode = str(item or "none").strip().lower()
+        normalized.append(mode if mode in _TEXT_RANDOM_MODES else "none")
+    return normalized
+
+
+def _normalize_multi_text_blank_ai_flags(raw: Any) -> List[bool]:
+    if not isinstance(raw, list):
+        return []
+    return [bool(item) for item in raw]
 
 
 def deserialize_question_entry(data: Dict[str, Any]) -> "QuestionEntry":
@@ -309,6 +329,8 @@ def deserialize_question_entry(data: Dict[str, Any]) -> "QuestionEntry":
         question_num=data.get("question_num"),
         question_title=data.get("question_title"),
         ai_enabled=bool(data.get("ai_enabled", False)),
+        multi_text_blank_modes=_normalize_multi_text_blank_modes(data.get("multi_text_blank_modes")),
+        multi_text_blank_ai_flags=_normalize_multi_text_blank_ai_flags(data.get("multi_text_blank_ai_flags")),
         text_random_mode=str(data.get("text_random_mode") or "none"),
         option_fill_texts=data.get("option_fill_texts"),
         fillable_option_indices=data.get("fillable_option_indices"),
@@ -332,6 +354,22 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
             return float(value)
         except Exception:
             return default
+
+    def _as_bool(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in {"1", "true", "yes", "on"}:
+                return True
+            if text in {"0", "false", "no", "off", ""}:
+                return False
+            return default
+        return bool(value)
 
     def _tuple_pair(value: Any) -> Tuple[int, int]:
         try:
@@ -378,13 +416,16 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     except Exception:
         config.timed_mode_interval = 3.0
 
-    config.random_ip_enabled = normalize_random_ip_enabled_value(bool(raw.get("random_ip_enabled", False)))
-    config.random_proxy_api = raw.get("random_proxy_api") or None
+    config.random_ip_enabled = normalize_random_ip_enabled_value(_as_bool(raw.get("random_ip_enabled"), False))
+    legacy_proxy_api = str(raw.get("random_proxy_api") or "").strip()
+    custom_proxy_api = str(raw.get("custom_proxy_api") or "").strip()
+    if (not custom_proxy_api) and legacy_proxy_api:
+        custom_proxy_api = legacy_proxy_api
     proxy_source = str(raw.get("proxy_source") or "default")
     if proxy_source not in ("default", "custom"):
-        proxy_source = "default"
+        proxy_source = "custom" if custom_proxy_api else "default"
     config.proxy_source = proxy_source
-    config.custom_proxy_api = str(raw.get("custom_proxy_api") or "")
+    config.custom_proxy_api = custom_proxy_api
     raw_area_code = raw.get("proxy_area_code")
     config.proxy_area_code = None if raw_area_code is None else str(raw_area_code)
 
@@ -415,7 +456,7 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     config.reliability_mode_type = str(raw.get("reliability_mode_type") or "simple")
     if config.reliability_mode_type not in ("simple", "psychometric"):
         config.reliability_mode_type = "simple"
-    config.psycho_target_alpha = float(raw.get("psycho_target_alpha") or 0.85)
+    config.psycho_target_alpha = _as_float(raw.get("psycho_target_alpha") or 0.85, 0.85)
     config.psycho_target_alpha = max(0.70, min(0.95, config.psycho_target_alpha))
     config.debug_mode = bool(raw.get("debug_mode", False))
     config.answer_rules = []
@@ -530,6 +571,59 @@ def _strip_json_comments(raw_text: str) -> str:
     return "".join(out)
 
 
+def _coerce_schema_version(raw_value: Any) -> int:
+    try:
+        version = int(raw_value)
+    except Exception:
+        return 1
+    return version if version > 0 else 1
+
+
+def _migrate_v1_to_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
+    migrated: Dict[str, Any] = dict(payload)
+
+    # 代理字段迁移：random_proxy_api -> proxy_source/custom_proxy_api
+    legacy_proxy_api = str(migrated.get("random_proxy_api") or "").strip()
+    custom_proxy_api = str(migrated.get("custom_proxy_api") or "").strip()
+    if (not custom_proxy_api) and legacy_proxy_api:
+        custom_proxy_api = legacy_proxy_api
+    proxy_source = str(migrated.get("proxy_source") or "").strip().lower()
+    if proxy_source not in ("default", "custom"):
+        proxy_source = "custom" if custom_proxy_api else "default"
+    migrated["proxy_source"] = proxy_source
+    migrated["custom_proxy_api"] = custom_proxy_api
+    migrated.pop("random_proxy_api", None)
+
+    # 多项填空细粒度配置迁移：缺失时写入空列表，后续由业务按空列表兜底
+    entries = migrated.get("question_entries")
+    if isinstance(entries, list):
+        updated_entries: List[Any] = []
+        for raw_entry in entries:
+            if not isinstance(raw_entry, dict):
+                updated_entries.append(raw_entry)
+                continue
+            entry = dict(raw_entry)
+            entry["multi_text_blank_modes"] = _normalize_multi_text_blank_modes(entry.get("multi_text_blank_modes"))
+            entry["multi_text_blank_ai_flags"] = _normalize_multi_text_blank_ai_flags(entry.get("multi_text_blank_ai_flags"))
+            updated_entries.append(entry)
+        migrated["question_entries"] = updated_entries
+
+    migrated["config_schema_version"] = 2
+    return migrated
+
+
+def _upgrade_config_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    current: Dict[str, Any] = dict(payload)
+    schema_version = _coerce_schema_version(current.get("config_schema_version"))
+
+    if schema_version < 2:
+        current = _migrate_v1_to_v2(current)
+        schema_version = 2
+
+    current["config_schema_version"] = schema_version
+    return current
+
+
 def load_config(path: Optional[str] = None, *, strict: bool = False) -> RuntimeConfig:
     """Load persisted runtime configuration.
 
@@ -567,6 +661,14 @@ def load_config(path: Optional[str] = None, *, strict: bool = False) -> RuntimeC
             raise ValueError(error_message)
         logging.warning(error_message)
         return RuntimeConfig()
+    try:
+        payload = _upgrade_config_payload(payload)
+    except Exception as exc:
+        error_message = f"迁移配置失败: {config_path} -> {exc}"
+        if strict:
+            raise ValueError(error_message) from exc
+        logging.warning(error_message)
+        return RuntimeConfig()
     return _sanitize_runtime_config_payload(payload)
 
 
@@ -575,6 +677,8 @@ def save_config(config: RuntimeConfig, path: Optional[str] = None) -> str:
     config_path = os.fspath(path or _default_config_path())
     payload: Dict[str, Any] = asdict(config)
     payload["question_entries"] = [serialize_question_entry(entry) for entry in config.question_entries]
+    payload["config_schema_version"] = _CURRENT_CONFIG_SCHEMA_VERSION
+    payload.pop("random_proxy_api", None)
     with open(config_path, "w", encoding="utf-8") as fp:
         json.dump(payload, fp, ensure_ascii=False, indent=2)
     return config_path

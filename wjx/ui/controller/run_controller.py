@@ -407,10 +407,22 @@ class RunController(QObject):
                     if q_type == "text"
                     else "none"
                 )
+                multi_text_blank_modes_from_existing = (
+                    copy.deepcopy(getattr(existing_config, "multi_text_blank_modes", []))
+                    if q_type == "multi_text"
+                    else []
+                )
+                multi_text_blank_ai_flags_from_existing = (
+                    copy.deepcopy(getattr(existing_config, "multi_text_blank_ai_flags", []))
+                    if q_type == "multi_text"
+                    else []
+                )
             else:
                 # 没有已配置的相同题型，使用默认配置
                 ai_enabled_from_existing = False
                 text_random_mode_from_existing = "none"
+                multi_text_blank_modes_from_existing = []
+                multi_text_blank_ai_flags_from_existing = []
                 if q_type in ("single", "dropdown", "scale"):
                     probabilities = -1
                     distribution = "random"
@@ -481,6 +493,8 @@ class RunController(QObject):
                 question_num=q.get("num"),
                 question_title=title_text or None,
                 ai_enabled=ai_enabled_from_existing if q_type in ("text", "multi_text") else False,
+                multi_text_blank_modes=multi_text_blank_modes_from_existing if q_type == "multi_text" else [],
+                multi_text_blank_ai_flags=multi_text_blank_ai_flags_from_existing if q_type == "multi_text" else [],
                 text_random_mode=text_random_mode_from_existing if q_type == "text" else "none",
                 option_fill_texts=None,
                 fillable_option_indices=q.get("fillable_options"),
@@ -657,9 +671,12 @@ class RunController(QObject):
     def _prefetch_proxies_and_start(self, config: RuntimeConfig) -> None:
         try:
             from wjx.core.services.proxy_service import prefetch_proxy_pool
+            proxy_source = str(getattr(config, "proxy_source", "default") or "default")
+            custom_proxy_api = str(getattr(config, "custom_proxy_api", "") or "").strip()
+            proxy_api_url = custom_proxy_api if (proxy_source == "custom" and custom_proxy_api) else get_effective_proxy_api_url()
             proxy_pool = prefetch_proxy_pool(
                 expected_count=max(1, config.threads),
-                proxy_api_url=config.random_proxy_api or get_effective_proxy_api_url(),
+                proxy_api_url=proxy_api_url,
                 stop_signal=self.stop_event,
             )
         except Exception as exc:

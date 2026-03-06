@@ -98,7 +98,8 @@ class MainWindow(
         icon_path = get_resource_path(APP_ICON_RELATIVE_PATH)
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
-        self.setMinimumSize(1080, 720)
+        self.setMinimumSize(900, 640)
+        self._apply_default_window_size()
         self._enable_window_material_effect()
 
         # 应用窗口置顶设置
@@ -134,7 +135,6 @@ class MainWindow(
         self._community_page = None
         self._about_page = None
         self._changelog_page = None
-        self._changelog_detail_page = None
         self._donate_page = None
         self._ip_usage_page = None
         self._settings_page = None
@@ -150,7 +150,7 @@ class MainWindow(
         self._init_community_hint_badge_state()
         self.stackedWidget.currentChanged.connect(self._on_stack_widget_changed)
         # 设置侧边栏宽度和折叠策略（延迟到事件循环中，避免时序问题）
-        self.navigationInterface.setExpandWidth(140)
+        self.navigationInterface.setExpandWidth(180)
         QTimer.singleShot(0, self._setup_sidebar_state)
         self._sidebar_expanded = False  # 标记侧边栏是否已展开
         self._bind_controller_signals()
@@ -210,6 +210,30 @@ class MainWindow(
             self.setMicaEffectEnabled(True)
         except Exception:
             logging.debug("启用窗口材质效果失败", exc_info=True)
+
+    def _apply_default_window_size(self):
+        """按屏幕可用区域设置默认窗口尺寸，避免高缩放场景越界。"""
+        fallback_width, fallback_height = 1180, 780
+        try:
+            screen = self.screen() or QGuiApplication.primaryScreen()
+            if not screen:
+                self.resize(fallback_width, fallback_height)
+                return
+
+            available = screen.availableGeometry()
+            target_width = int(available.width() * 0.88)
+            target_height = int(available.height() * 0.88)
+
+            target_width = max(900, min(target_width, 1280))
+            target_height = max(640, min(target_height, 860))
+
+            self.resize(
+                min(target_width, available.width()),
+                min(target_height, available.height()),
+            )
+        except Exception:
+            logging.debug("设置默认窗口尺寸失败", exc_info=True)
+            self.resize(fallback_width, fallback_height)
 
     def _on_theme_changed(self, _theme: Theme):
         """主题变化后刷新主题敏感组件。"""

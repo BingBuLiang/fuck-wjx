@@ -217,6 +217,27 @@ class DashboardEntriesMixin:
         self._refresh_entry_table()
         self._toast(f"已删除 {count} 个题目", "success")
 
+    def _clear_all_entries(self):
+        entries = self.question_page.get_entries()
+        count = len(entries)
+        if count <= 0:
+            self._toast("当前没有可清空的题目", "warning")
+            return
+
+        box = MessageBox(
+            "确认清空",
+            f"确定要清空所有已配置的 {count} 个题目吗？\n此操作无法撤销。",
+            self.window() or self,
+        )
+        box.yesButton.setText("确定")
+        box.cancelButton.setText("取消")
+        if not box.exec():
+            return
+
+        self.question_page.set_entries([], [])
+        self._refresh_entry_table()
+        self._toast("已清空所有已配置题目", "success")
+
     def _refresh_entry_table(self):
         entries = self.question_page.get_entries()
         self.entry_table.setRowCount(len(entries))

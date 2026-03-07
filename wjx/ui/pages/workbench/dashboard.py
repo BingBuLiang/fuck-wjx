@@ -302,6 +302,10 @@ class DashboardPage(
         # 删除选中
         self.del_action = Action(FluentIcon.DELETE, "删除选中")
         self.command_bar.addAction(self.del_action)
+
+        # 清空全部
+        self.clear_all_action = Action(FluentIcon.DELETE, "清空所有已配置题目")
+        self.command_bar.addAction(self.clear_all_action)
         
         list_layout.addWidget(self.command_bar)
         self.entry_table = TableWidget(self)
@@ -378,6 +382,7 @@ class DashboardPage(
         self.add_action.triggered.connect(self._show_add_question_dialog)
         self.edit_action.triggered.connect(self._edit_selected_entries)
         self.del_action.triggered.connect(self._delete_selected_entries)
+        self.clear_all_action.triggered.connect(self._clear_all_entries)
         # 连接问卷解析信号
         self.controller.surveyParsed.connect(self._on_survey_parsed)
         self.controller.surveyParseFailed.connect(self._on_survey_parse_failed)

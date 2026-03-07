@@ -21,62 +21,89 @@ class BootSplash:
         self.splash_screen = SplashScreen(window.windowIcon(), window)
         self.splash_screen.setIconSize(QSize(128, 128))
         self._finish_timer: Optional[QTimer] = None
+        self._icon_size = 128
+        self._scale = 1.0
 
         # 根据主题设置颜色
         is_dark = isDarkTheme()
-        title_color = "#ffffff" if is_dark else "#1f2937"
-        version_color = "#a1a1aa" if is_dark else "#6b7280"
-        badge_bg = "rgba(255, 255, 255, 0.1)" if is_dark else "rgba(0, 0, 0, 0.08)"
+        self._title_color = "#ffffff" if is_dark else "#1f2937"
+        self._version_color = "#a1a1aa" if is_dark else "#6b7280"
+        self._badge_bg = "rgba(255, 255, 255, 0.1)" if is_dark else "rgba(0, 0, 0, 0.08)"
 
-        # 添加应用名称标签（加粗）
+        # 添加应用名称标签
         self.title_label = QLabel("问卷星速填", self.splash_screen)
-        self.title_label.setStyleSheet(f"""
-            QLabel {{
-                color: {title_color};
-                font-size: 20px;
-                font-weight: bold;
-                font-family: 'Microsoft YaHei UI';
-            }}
-        """)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title_label.adjustSize()
 
         # 添加版本号徽章标签
         self.version_label = QLabel(f"v{__VERSION__}", self.splash_screen)
-        self.version_label.setStyleSheet(f"""
-            QLabel {{
-                color: {version_color};
-                font-size: 12px;
-                font-family: 'Microsoft YaHei UI';
-                background-color: {badge_bg};
-                border-radius: 11px;
-                padding: 4px 12px;
-            }}
-        """)
         self.version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.version_label.adjustSize()
 
         # 添加不确定进度条
         self.progress_bar = IndeterminateProgressBar(self.splash_screen)
         self.progress_bar.start()
+        self._apply_scale(window.width(), window.height())
+
+    def _apply_scale(self, width: int, height: int):
+        """按窗口尺寸动态放大启动页元素，避免大窗口里内容显得过小。"""
+        base_width, base_height = 1180, 780
+        width = max(width, 900)
+        height = max(height, 640)
+
+        scale = min(width / base_width, height / base_height)
+        self._scale = max(1.0, min(scale, 1.45))
+        self._icon_size = int(168 * self._scale)
+        self.splash_screen.setIconSize(QSize(self._icon_size, self._icon_size))
+
+        title_font_size = int(28 * self._scale)
+        version_font_size = int(14 * self._scale)
+        badge_radius = max(12, int(13 * self._scale))
+        pad_vertical = max(4, int(4 * self._scale))
+        pad_horizontal = max(12, int(14 * self._scale))
+
+        self.title_label.setStyleSheet(f"""
+            QLabel {{
+                color: {self._title_color};
+                font-size: {title_font_size}px;
+                font-weight: bold;
+                font-family: 'Microsoft YaHei UI';
+            }}
+        """)
+        self.title_label.adjustSize()
+
+        self.version_label.setStyleSheet(f"""
+            QLabel {{
+                color: {self._version_color};
+                font-size: {version_font_size}px;
+                font-family: 'Microsoft YaHei UI';
+                background-color: {self._badge_bg};
+                border-radius: {badge_radius}px;
+                padding: {pad_vertical}px {pad_horizontal}px;
+            }}
+        """)
+        self.version_label.adjustSize()
 
     def update_layout(self, width: int, height: int):
         """调整启动页面组件位置"""
+        self._apply_scale(width, height)
+
         # 标题位置：图标下方居中
-        icon_bottom = height // 2 + 64 + 15
+        icon_bottom = height // 2 + self._icon_size // 2 + int(18 * self._scale)
         title_width = self.title_label.width()
         self.title_label.move((width - title_width) // 2, icon_bottom)
+
         # 版本号徽章位置：标题下方居中
-        title_bottom = icon_bottom + self.title_label.height() + 8
+        title_bottom = icon_bottom + self.title_label.height() + int(10 * self._scale)
         badge_width = self.version_label.width()
         self.version_label.move((width - badge_width) // 2, title_bottom)
+
         # 进度条位置：底部
-        bar_width = 300
+        bar_width = int(max(340, min(width * 0.34, 520)))
+        bar_height = max(4, int(5 * self._scale))
         self.progress_bar.setGeometry(
             (width - bar_width) // 2,
-            height - 80,
+            height - int(82 * self._scale),
             bar_width,
-            4
+            bar_height
         )
 
     def finish(self):

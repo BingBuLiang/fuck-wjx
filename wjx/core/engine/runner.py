@@ -46,6 +46,7 @@ from wjx.network.session_policy import (
 )
 from wjx.utils.app.config import (
     BROWSER_PREFERENCE,
+    HEADLESS_POST_SUBMIT_CLOSE_GRACE_SECONDS,
     POST_SUBMIT_CLOSE_GRACE_SECONDS,
     POST_SUBMIT_URL_MAX_WAIT,
     POST_SUBMIT_URL_POLL_INTERVAL,
@@ -279,6 +280,13 @@ def _wait_for_completion_page(
             log_suppressed_exception("runner._wait_for_completion_page", exc, level=logging.WARNING)
         time.sleep(poll_interval)
     return False
+
+
+def _resolve_post_submit_close_grace_seconds(ctx: TaskContext) -> float:
+    """根据模式返回提交成功后的浏览器关闭缓冲时间。"""
+    if bool(getattr(ctx, "headless_mode", False)):
+        return float(HEADLESS_POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
+    return float(POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
 
 
 def _check_captcha_after_submit(
@@ -515,7 +523,7 @@ def run(
 
                 # 无头+httpx 已经拿到业务成功码时，直接按成功提交处理，避免完成页加载超时误判失败
                 if ctx.headless_mode and consume_headless_httpx_submit_success(session.driver):
-                    grace_seconds = float(POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
+                    grace_seconds = _resolve_post_submit_close_grace_seconds(ctx)
                     if grace_seconds > 0 and not stop_signal.is_set():
                         time.sleep(grace_seconds)
                     session.dispose()
@@ -590,7 +598,7 @@ def run(
                     raise TimeoutException("提交后未检测到完成页")
 
                 # ── 6. 记录成功 ──────────────────────────────────
-                grace_seconds = float(POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
+                grace_seconds = _resolve_post_submit_close_grace_seconds(ctx)
                 if grace_seconds > 0 and not stop_signal.is_set():
                     time.sleep(grace_seconds)
                 session.dispose()
@@ -653,7 +661,7 @@ def run(
 
             if completion_detected:
                 driver_had_error = False
-                grace_seconds = float(POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
+                grace_seconds = _resolve_post_submit_close_grace_seconds(ctx)
                 if grace_seconds > 0 and not stop_signal.is_set():
                     time.sleep(grace_seconds)
                 session.dispose()

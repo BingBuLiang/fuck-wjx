@@ -149,14 +149,13 @@ def _resolve_env_value(key: str, default: str) -> str:
 _IPZAN_ENV_ENDPOINT = "https://api-wjx.hungrym0.top/api/ipzan/env"
 _RANDOM_IP_API_BASE = "https://service.ipzan.com/core-extract?num=1&no=20260112572376490874&minute=1&format=json&repeat=1&protocol=1&pool=ordinary&mode=auth&secret="
 _DEFAULT_SECRET = "pf706vk77kknlo"
-_DEFAULT_PROXY_AUTH = "18170119808:tWJ5hLDoHwrHgTkij0zY"
 
 _ipzan_env_cache: Optional[dict] = None
 _ipzan_env_lock = threading.Lock()
 
 
 def _fetch_ipzan_env() -> dict:
-    """从远端拉取 ipzan 配置（secret / proxy auth），带缓存和降级。"""
+    """从远端拉取 ipzan 配置，带缓存和降级。"""
     global _ipzan_env_cache
     if _ipzan_env_cache is not None:
         return _ipzan_env_cache
@@ -172,11 +171,12 @@ def _fetch_ipzan_env() -> dict:
                 data = json.loads(resp.read().decode("utf-8"))
             _ipzan_env_cache = {
                 "secret": data.get("secret") or _DEFAULT_SECRET,
-                "proxy": data.get("proxy") or _DEFAULT_PROXY_AUTH,
+                # 优先使用远端返回值，缺失时保持空串
+                "proxy": str(data.get("proxy") or "").strip(),
             }
         except Exception:
-            logging.debug("获取 ipzan env 失败，使用默认值", exc_info=True)
-            _ipzan_env_cache = {"secret": _DEFAULT_SECRET, "proxy": _DEFAULT_PROXY_AUTH}
+            logging.debug("获取 ipzan env 失败，使用默认回退值", exc_info=True)
+            _ipzan_env_cache = {"secret": _DEFAULT_SECRET, "proxy": ""}
     return _ipzan_env_cache
 
 
@@ -190,7 +190,7 @@ def get_proxy_remote_url() -> str:
 
 
 def get_proxy_auth() -> str:
-    """获取代理认证字符串 'user:pass'（优先环境变量，其次远端配置）。"""
+    """获取代理认证信息（优先环境变量，其次远端配置）。"""
     env_auth = os.environ.get("WJX_PROXY_AUTH", "")
     if env_auth:
         return env_auth
@@ -214,11 +214,11 @@ USER_AGENT_PRESETS = {
     },
     "mobile_android": {
         "label": "安卓手机浏览器",
-        "ua": "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
+        "ua": "Mozilla/5.0 (Linux; Android 16; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
     },
     "wechat_android": {
         "label": "安卓微信端",
-        "ua": "Mozilla/5.0 (Linux; Android 13; Pixel 6 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.43.2460(0x28002B3B) Process/appbrand0 WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64",
+        "ua": "Mozilla/5.0 (Linux; Android 16; Pixel 8 Build/BP22.250124.009; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/121.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.43.2460(0x28002B3B) Process/appbrand0 WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64",
     },
 }
 
@@ -249,16 +249,26 @@ APP_ICON_RELATIVE_PATH = "icon.ico"
 SUBMIT_INITIAL_DELAY = 0.35
 # 点击提交后的稳定延迟（秒）
 SUBMIT_CLICK_SETTLE_DELAY = 0.25
+# 无头模式专属：提交流程前置等待（秒）
+HEADLESS_SUBMIT_INITIAL_DELAY = 0.08
+# 无头模式专属：点击提交后的稳定等待（秒）
+HEADLESS_SUBMIT_CLICK_SETTLE_DELAY = 0.05
+# 无头模式专属：翻页前后的缓冲等待（秒）
+HEADLESS_PAGE_BUFFER_DELAY = 0.1
+# 无头模式专属：点击下一页后的等待（秒）
+HEADLESS_PAGE_CLICK_DELAY = 0.1
 # 提交后等待 URL 变化的最大时间（秒）
-POST_SUBMIT_URL_MAX_WAIT = 0.5
+POST_SUBMIT_URL_MAX_WAIT = 0.8
 # 提交后 URL 变化检测轮询间隔（秒）
-POST_SUBMIT_URL_POLL_INTERVAL = 0.1
+POST_SUBMIT_URL_POLL_INTERVAL = 0.05
 # 判定提交成功后，关闭浏览器实例前的缓冲等待（秒）
 # 目的：避免过早关闭页面导致提交请求尚未发送/尚未完成就被中断。
-POST_SUBMIT_CLOSE_GRACE_SECONDS = 1.2
+POST_SUBMIT_CLOSE_GRACE_SECONDS = 0.8
+# 无头模式专属：提交成功后关闭浏览器前的缓冲等待（秒）
+HEADLESS_POST_SUBMIT_CLOSE_GRACE_SECONDS = 0.1
 # 停止操作的强制等待时间（秒）- 浏览器cleanup延迟启动时间
 # 降低此值可减少窗口关闭到重新打开的间隔
-STOP_FORCE_WAIT_SECONDS = 0.5
+STOP_FORCE_WAIT_SECONDS = 0.3
 
 # ==================== 代理配置 ====================
 PROXY_MAX_PROXIES = 80

@@ -147,14 +147,6 @@ class TaskContext:
                 self._browser_semaphore_max_instances = normalized
             return self._browser_semaphore
 
-    def is_fast_mode(self) -> bool:
-        """极速模式：时长控制/随机IP关闭且时间间隔为0时自动启用。"""
-        return (
-            not self.random_proxy_ip_enabled
-            and self.submit_interval_range_seconds == (0, 0)
-            and self.answer_duration_range_seconds == (0, 0)
-        )
-
     @staticmethod
     def _resolve_thread_index(thread_name: str) -> int:
         text = str(thread_name or "").strip()

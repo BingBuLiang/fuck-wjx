@@ -7,7 +7,7 @@ from urllib.parse import quote, urljoin, urlparse
 
 import httpx
 
-from wjx.core.engine.runtime_control import _is_fast_mode, _sleep_with_stop
+from wjx.core.engine.runtime_control import _is_headless_mode, _sleep_with_stop
 from wjx.core.questions.utils import extract_text_from_element as _extract_text_from_element
 from wjx.core.task_context import TaskContext
 from wjx.network.browser import By, BrowserDriver, NoSuchElementException, TimeoutException
@@ -17,7 +17,12 @@ from wjx.network.proxy import (
     _normalize_proxy_address,
     get_proxy_source,
 )
-from wjx.utils.app.config import SUBMIT_CLICK_SETTLE_DELAY, SUBMIT_INITIAL_DELAY
+from wjx.utils.app.config import (
+    HEADLESS_SUBMIT_CLICK_SETTLE_DELAY,
+    HEADLESS_SUBMIT_INITIAL_DELAY,
+    SUBMIT_CLICK_SETTLE_DELAY,
+    SUBMIT_INITIAL_DELAY,
+)
 from wjx.utils.app.config import get_proxy_auth
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
@@ -344,9 +349,9 @@ def submit(
     仅保留最基础的行为：可选等待 -> 点击提交 -> 可选稳定等待。
     不再做弹窗确认/验证码检测/JS 强行触发等兜底逻辑。
     """
-    fast_mode = _is_fast_mode(ctx) if ctx is not None else True
-    settle_delay = 0 if fast_mode else SUBMIT_CLICK_SETTLE_DELAY
-    pre_submit_delay = 0 if fast_mode else SUBMIT_INITIAL_DELAY
+    headless_mode = _is_headless_mode(ctx)
+    settle_delay = float(HEADLESS_SUBMIT_CLICK_SETTLE_DELAY if headless_mode else SUBMIT_CLICK_SETTLE_DELAY)
+    pre_submit_delay = float(HEADLESS_SUBMIT_INITIAL_DELAY if headless_mode else SUBMIT_INITIAL_DELAY)
 
     if pre_submit_delay > 0 and _sleep_with_stop(stop_signal, pre_submit_delay):
         return

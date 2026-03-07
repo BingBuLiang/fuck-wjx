@@ -14,7 +14,7 @@ from wjx.core.engine.dom_helpers import (
 from wjx.modes.duration_control import simulate_answer_duration_delay
 from wjx.core.engine.navigation import _click_next_page_button, _human_scroll_after_question
 from wjx.core.engine.question_detection import detect
-from wjx.core.engine.runtime_control import _is_fast_mode
+from wjx.core.engine.runtime_control import _is_headless_mode
 from wjx.core.engine.submission import submit
 from wjx.core.persona.context import reset_context as _reset_answer_context
 from wjx.core.persona.generator import generate_persona, reset_persona, set_current_persona
@@ -36,6 +36,7 @@ from wjx.core.questions.tendency import reset_tendency
 from wjx.core.psychometrics import build_psychometric_plan
 from wjx.core.survey.parser import _should_treat_question_as_text_like
 from wjx.network.browser import BrowserDriver, By, NoSuchElementException
+from wjx.utils.app.config import HEADLESS_PAGE_BUFFER_DELAY, HEADLESS_PAGE_CLICK_DELAY
 
 
 _PSYCHO_BIAS_CHOICES = {"left", "center", "right"}
@@ -342,7 +343,7 @@ def brush(
         )
     logging.debug("本轮画像：%s", persona.to_description())
     questions_per_page = detect(driver, stop_signal=stop_signal)
-    fast_mode = _is_fast_mode(ctx)
+    headless_mode = _is_headless_mode(ctx)
     try:
         total_steps = sum(max(0, int(count or 0)) for count in questions_per_page)
     except Exception:
@@ -496,7 +497,7 @@ def brush(
             except Exception:
                 logging.debug("更新线程状态失败：已中断", exc_info=True)
             return False
-        buffer_delay = 0.0 if fast_mode else 0.5
+        buffer_delay = float(HEADLESS_PAGE_BUFFER_DELAY if headless_mode else 0.5)
         if buffer_delay > 0:
             if active_stop:
                 if active_stop.wait(buffer_delay):
@@ -526,7 +527,7 @@ def brush(
         clicked = _click_next_page_button(driver)
         if not clicked:
             raise NoSuchElementException("Next page button not found")
-        click_delay = 0.0 if fast_mode else 0.5
+        click_delay = float(HEADLESS_PAGE_CLICK_DELAY if headless_mode else 0.5)
         if click_delay > 0:
             if active_stop:
                 if active_stop.wait(click_delay):

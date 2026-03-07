@@ -9,9 +9,9 @@ from wjx.utils.event_bus import bus as _event_bus, EVENT_TARGET_REACHED
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
-def _is_fast_mode(ctx: TaskContext) -> bool:
-    """极速模式：时长控制/随机IP关闭且时间间隔为0时自动启用。"""
-    return ctx.is_fast_mode()
+def _is_headless_mode(ctx: Optional[TaskContext]) -> bool:
+    """当前任务是否启用无头模式。"""
+    return bool(ctx is not None and getattr(ctx, "headless_mode", False))
 
 
 def _timed_mode_active(ctx: TaskContext) -> bool:

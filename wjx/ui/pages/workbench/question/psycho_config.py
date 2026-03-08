@@ -37,8 +37,11 @@ def build_bias_weights(option_count: int, bias: str) -> List[float]:
         # center: 越靠近中间越高
         center = (count - 1) / 2.0
         linear = [1.0 - abs(i - center) / center for i in range(count)]
-    # 居中用3次曲线（两端适度衰减），左右倾向用8次曲线（极端压制低端）
-    power = 3 if bias == "center" else 8
+    # 居中用3次曲线（两端适度衰减），左右倾向用5次曲线（平衡倾向性与自然度）
+    # 改进说明（2026-03-07）：从 power=8 降低到 power=5，使分布更自然
+    # - 5分制：最高分占比从 90.9% 降至 78.7%，仍保持明显倾向
+    # - 减少零权重选项，增加数据真实感和标准差
+    power = 3 if bias == "center" else 5
     raw = [math.pow(v, power) for v in linear]
     max_val = max(raw)
     if not max_val:

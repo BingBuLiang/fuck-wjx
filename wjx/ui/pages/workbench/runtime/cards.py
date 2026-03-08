@@ -22,6 +22,7 @@ from qfluentwidgets import (
     TransparentToolButton,
 )
 from wjx.ui.widgets.no_wheel import NoWheelSpinBox
+from wjx.ui.widgets.kuaidaili_area_select import KuaidailiAreaSelectWidget
 
 
 class SearchableComboBox(EditableComboBox):
@@ -80,6 +81,7 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         source_label = BodyLabel("代理源", self._groupContainer)
         self.proxyCombo = ComboBox(self._groupContainer)
         self.proxyCombo.addItem("默认", userData="default")
+        self.proxyCombo.addItem("快代理", userData="kuaidaili")
         self.proxyCombo.addItem("自定义", userData="custom")
         self.proxyCombo.setMinimumWidth(200)
         source_row.addWidget(source_label)
@@ -149,6 +151,12 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         self.customApiRow.hide()
         layout.addWidget(self.customApiRow)
 
+        # 快代理配置面板
+        self.kuaidailiPanel = QWidget(self._groupContainer)
+        self._build_kuaidaili_panel()
+        self.kuaidailiPanel.hide()
+        layout.addWidget(self.kuaidailiPanel)
+
         self._area_updating = False
         self._area_data = []
         self._supported_area_codes = set()
@@ -177,6 +185,9 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
         self.customApiRow.setVisible(source == "custom")
         self.proxyTrialLink.setVisible(source == "custom")
         self.areaRow.setVisible(source == "default")
+        self.kuaidailiPanel.setVisible(source == "kuaidaili")
+        # TODO: 快代理配置UI（Secret ID、Secret Key、地区选择等）
+        # 当前快代理配置通过代码设置，后续可添加UI界面
         if source != "default":
             self._apply_area_override(None)
         else:
@@ -407,6 +418,439 @@ class RandomIPSettingCard(ExpandGroupSettingCard):
             eff = QGraphicsOpacityEffect(self.areaRow)
             self.areaRow.setGraphicsEffect(eff)
         eff.setOpacity(1.0 if enabled else 0.4)  # type: ignore[union-attr]
+
+    def _build_kuaidaili_panel(self):
+        """构建快代理配置面板"""
+        from PySide6.QtWidgets import QFrame
+        from PySide6.QtCore import Signal as QtSignal
+        from qfluentwidgets import TransparentToolButton, IndeterminateProgressRing
+        
+        panel_layout = QVBoxLayout(self.kuaidailiPanel)
+        panel_layout.setContentsMargins(0, 8, 0, 0)
+        panel_layout.setSpacing(12)
+
+        # Secret ID
+        id_row = QHBoxLayout()
+        id_row.addWidget(BodyLabel("Secret ID"))
+        id_row.addStretch()
+        self.kuaidailiSecretIdEdit = LineEdit()
+        self.kuaidailiSecretIdEdit.setMinimumWidth(300)
+        self.kuaidailiSecretIdEdit.setPlaceholderText("请输入快代理 Secret ID")
+        id_row.addWidget(self.kuaidailiSecretIdEdit)
+        panel_layout.addLayout(id_row)
+
+        # Secret Key (密码模式)
+        key_row = QHBoxLayout()
+        key_row.addWidget(BodyLabel("Secret Key"))
+        key_row.addStretch()
+        self.kuaidailiSecretKeyEdit = LineEdit()
+        self.kuaidailiSecretKeyEdit.setMinimumWidth(300)
+        self.kuaidailiSecretKeyEdit.setEchoMode(LineEdit.EchoMode.Password)
+        self.kuaidailiSecretKeyEdit.setPlaceholderText("请输入快代理 Secret Key")
+        # 显示/隐藏密码按钮
+        self.kuaidailiShowKeyBtn = TransparentToolButton(FluentIcon.VIEW)
+        self.kuaidailiShowKeyBtn.setToolTip("显示/隐藏密钥")
+        self.kuaidailiShowKeyBtn.clicked.connect(self._toggle_kuaidaili_key_visibility)
+        key_row.addWidget(self.kuaidailiSecretKeyEdit)
+        key_row.addWidget(self.kuaidailiShowKeyBtn)
+        panel_layout.addLayout(key_row)
+
+        # 认证方式
+        auth_row = QHBoxLayout()
+        auth_row.addWidget(BodyLabel("认证方式"))
+        auth_row.addStretch()
+        self.kuaidailiAuthModeCombo = ComboBox()
+        self.kuaidailiAuthModeCombo.addItem("密钥令牌（推荐）", userData="token")
+        self.kuaidailiAuthModeCombo.addItem("数字签名（最安全）", userData="signature")
+        self.kuaidailiAuthModeCombo.setMinimumWidth(200)
+        auth_row.addWidget(self.kuaidailiAuthModeCombo)
+        panel_layout.addLayout(auth_row)
+
+        # 分隔线
+        separator1 = QFrame()
+        separator1.setFrameShape(QFrame.Shape.HLine)
+        separator1.setStyleSheet("background-color: #e0e0e0;")
+        separator1.setFixedHeight(1)
+        panel_layout.addWidget(separator1)
+
+        # 地区选择（多选）
+        area_row = QHBoxLayout()
+        area_row.addWidget(BodyLabel("地区选择"))
+        area_hint = BodyLabel("(留空表示全国随机)")
+        area_hint.setStyleSheet("color: gray; font-size: 11px;")
+        area_row.addWidget(area_hint)
+        area_row.addStretch()
+        self.kuaidailiAreaSelect = KuaidailiAreaSelectWidget()
+        self.kuaidailiAreaSelect.areasChanged.connect(self._on_kuaidaili_areas_changed)
+        area_row.addWidget(self.kuaidailiAreaSelect)
+        panel_layout.addLayout(area_row)
+
+        # 分隔线
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.HLine)
+        separator2.setStyleSheet("background-color: #e0e0e0;")
+        separator2.setFixedHeight(1)
+        panel_layout.addWidget(separator2)
+
+        # 本机IP + 白名单操作
+        ip_row = QHBoxLayout()
+        ip_row.addWidget(BodyLabel("本机IP"))
+        ip_row.addStretch()
+        self.kuaidailiPublicIpLabel = BodyLabel("点击刷新获取")
+        self.kuaidailiPublicIpLabel.setStyleSheet("color: gray;")
+        self.kuaidailiRefreshIpBtn = TransparentToolButton(FluentIcon.SYNC)
+        self.kuaidailiRefreshIpBtn.setToolTip("刷新本机公网IP")
+        self.kuaidailiRefreshIpBtn.clicked.connect(self._refresh_kuaidaili_public_ip)
+        self.kuaidailiAddWhitelistBtn = PushButton("添加到白名单")
+        self.kuaidailiAddWhitelistBtn.clicked.connect(self._on_add_kuaidaili_whitelist_clicked)
+        ip_row.addWidget(self.kuaidailiPublicIpLabel)
+        ip_row.addWidget(self.kuaidailiRefreshIpBtn)
+        ip_row.addWidget(self.kuaidailiAddWhitelistBtn)
+        panel_layout.addLayout(ip_row)
+
+        # 分隔线
+        separator3 = QFrame()
+        separator3.setFrameShape(QFrame.Shape.HLine)
+        separator3.setStyleSheet("background-color: #e0e0e0;")
+        separator3.setFixedHeight(1)
+        panel_layout.addWidget(separator3)
+
+        # 测试连接
+        test_row = QHBoxLayout()
+        test_row.addStretch()
+        self.kuaidailiLoadLocalBtn = PushButton("本地读取加载")
+        self.kuaidailiLoadLocalBtn.clicked.connect(self._on_load_local_credentials_clicked)
+        self.kuaidailiFetchAuthBtn = PushButton("获取代理鉴权")
+        self.kuaidailiFetchAuthBtn.setToolTip("获取代理用户名密码，用于跨设备使用")
+        self.kuaidailiFetchAuthBtn.clicked.connect(self._on_fetch_proxy_auth_clicked)
+        self.kuaidailiTestBtn = PushButton("测试连接")
+        self.kuaidailiTestBtn.clicked.connect(self._on_test_kuaidaili_clicked)
+        self.kuaidailiTestSpinner = IndeterminateProgressRing()
+        self.kuaidailiTestSpinner.setFixedSize(20, 20)
+        self.kuaidailiTestSpinner.hide()
+        test_row.addWidget(self.kuaidailiLoadLocalBtn)
+        test_row.addWidget(self.kuaidailiFetchAuthBtn)
+        test_row.addWidget(self.kuaidailiTestBtn)
+        test_row.addWidget(self.kuaidailiTestSpinner)
+        panel_layout.addLayout(test_row)
+
+        # 状态显示
+        self.kuaidailiStatusLabel = BodyLabel("")
+        self.kuaidailiStatusLabel.setWordWrap(True)
+        panel_layout.addWidget(self.kuaidailiStatusLabel)
+
+    def _toggle_kuaidaili_key_visibility(self):
+        """切换快代理密钥显示/隐藏"""
+        if self.kuaidailiSecretKeyEdit.echoMode() == LineEdit.EchoMode.Password:
+            self.kuaidailiSecretKeyEdit.setEchoMode(LineEdit.EchoMode.Normal)
+            self.kuaidailiShowKeyBtn.setIcon(FluentIcon.HIDE)
+        else:
+            self.kuaidailiSecretKeyEdit.setEchoMode(LineEdit.EchoMode.Password)
+            self.kuaidailiShowKeyBtn.setIcon(FluentIcon.VIEW)
+
+    def _on_test_kuaidaili_clicked(self):
+        """测试快代理连接"""
+        from PySide6.QtCore import QThread, Signal as QtSignal, QObject
+        
+        secret_id = self.kuaidailiSecretIdEdit.text().strip()
+        secret_key = self.kuaidailiSecretKeyEdit.text().strip()
+        if not secret_id or not secret_key:
+            InfoBar.warning("", "请先输入 Secret ID 和 Secret Key", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+            return
+
+        auth_mode = self.kuaidailiAuthModeCombo.currentData() or "token"
+        areas = self.kuaidailiAreaSelect.get_selected_areas()
+
+        self.kuaidailiTestBtn.hide()
+        self.kuaidailiTestSpinner.show()
+        self.kuaidailiStatusLabel.setText("正在测试连接...")
+        self.kuaidailiStatusLabel.setStyleSheet("color: gray;")
+
+        class TestWorker(QObject):
+            finished = QtSignal(bool, str, int)  # success, message, proxy_count
+
+            def __init__(self, secret_id, secret_key, auth_mode, areas):
+                super().__init__()
+                self.secret_id = secret_id
+                self.secret_key = secret_key
+                self.auth_mode = auth_mode
+                self.areas = areas
+
+            def run(self):
+                try:
+                    # 临时设置配置
+                    from wjx.network.proxy.kuaidaili_config import set_kuaidaili_config
+                    set_kuaidaili_config(
+                        secret_id=self.secret_id,
+                        secret_key=self.secret_key,
+                        auth_mode=self.auth_mode,
+                        areas=self.areas
+                    )
+                    
+                    # 测试连接
+                    from wjx.network.proxy.kuaidaili_adapter import test_kuaidaili_connection
+                    result = test_kuaidaili_connection()
+                    success = result.get("success", False)
+                    message = result.get("message", "")
+                    proxy_count = result.get("proxy_count", 0)
+                    self.finished.emit(success, message, proxy_count)
+                except Exception as e:
+                    self.finished.emit(False, str(e), 0)
+
+        self._kuaidaili_test_thread = QThread()
+        self._kuaidaili_test_worker = TestWorker(secret_id, secret_key, auth_mode, areas)
+        self._kuaidaili_test_worker.moveToThread(self._kuaidaili_test_thread)
+        self._kuaidaili_test_thread.started.connect(self._kuaidaili_test_worker.run)
+        self._kuaidaili_test_worker.finished.connect(self._on_kuaidaili_test_finished)
+        self._kuaidaili_test_worker.finished.connect(self._kuaidaili_test_thread.quit)
+        self._kuaidaili_test_worker.finished.connect(self._kuaidaili_test_worker.deleteLater)
+        self._kuaidaili_test_thread.finished.connect(self._kuaidaili_test_thread.deleteLater)
+        self._kuaidaili_test_thread.start()
+
+    def _on_kuaidaili_test_finished(self, success: bool, message: str, proxy_count: int):
+        """快代理测试完成回调"""
+        self.kuaidailiTestSpinner.hide()
+        self.kuaidailiTestBtn.show()
+
+        if success:
+            self.kuaidailiStatusLabel.setText(f"✔ 连接成功，获取到 {proxy_count} 个代理")
+            self.kuaidailiStatusLabel.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            self.kuaidailiStatusLabel.setText(f"✖ {message}")
+            self.kuaidailiStatusLabel.setStyleSheet("color: red;")
+
+    def _refresh_kuaidaili_public_ip(self):
+        """刷新本机公网IP"""
+        from PySide6.QtCore import QThread, Signal as QtSignal, QObject
+        
+        self.kuaidailiPublicIpLabel.setText("获取中...")
+        self.kuaidailiPublicIpLabel.setStyleSheet("color: gray;")
+        self.kuaidailiRefreshIpBtn.setEnabled(False)
+
+        class IpWorker(QObject):
+            finished = QtSignal(str, str)  # ip, error
+
+            def run(self):
+                try:
+                    from wjx.network.proxy.kuaidaili import get_public_ip
+                    ip = get_public_ip()
+                    self.finished.emit(ip, "")
+                except Exception as e:
+                    self.finished.emit("", str(e))
+
+        self._ip_thread = QThread()
+        self._ip_worker = IpWorker()
+        self._ip_worker.moveToThread(self._ip_thread)
+        self._ip_thread.started.connect(self._ip_worker.run)
+        self._ip_worker.finished.connect(self._on_public_ip_fetched)
+        self._ip_worker.finished.connect(self._ip_thread.quit)
+        self._ip_worker.finished.connect(self._ip_worker.deleteLater)
+        self._ip_thread.finished.connect(self._ip_thread.deleteLater)
+        self._ip_thread.start()
+
+    def _on_public_ip_fetched(self, ip: str, error: str):
+        """公网IP获取完成回调"""
+        self.kuaidailiRefreshIpBtn.setEnabled(True)
+        if ip:
+            self.kuaidailiPublicIpLabel.setText(ip)
+            self.kuaidailiPublicIpLabel.setStyleSheet("color: black;")
+        else:
+            self.kuaidailiPublicIpLabel.setText("获取失败")
+            self.kuaidailiPublicIpLabel.setStyleSheet("color: red;")
+            if error:
+                logging.error(f"获取公网IP失败: {error}")
+
+    def _on_add_kuaidaili_whitelist_clicked(self):
+        """添加本机IP到快代理白名单"""
+        from PySide6.QtCore import QThread, Signal as QtSignal, QObject
+        
+        ip = self.kuaidailiPublicIpLabel.text()
+        if not ip or ip in ("点击刷新获取", "获取中...", "获取失败"):
+            InfoBar.warning("", "请先获取本机公网IP", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+            return
+
+        secret_id = self.kuaidailiSecretIdEdit.text().strip()
+        secret_key = self.kuaidailiSecretKeyEdit.text().strip()
+        if not secret_id or not secret_key:
+            InfoBar.warning("", "请先输入 Secret ID 和 Secret Key", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+            return
+
+        auth_mode = self.kuaidailiAuthModeCombo.currentData() or "token"
+
+        self.kuaidailiAddWhitelistBtn.setEnabled(False)
+        self.kuaidailiAddWhitelistBtn.setText("添加中...")
+
+        class WhitelistWorker(QObject):
+            finished = QtSignal(bool, str)  # success, message
+
+            def __init__(self, secret_id, secret_key, ip, auth_mode):
+                super().__init__()
+                self.secret_id = secret_id
+                self.secret_key = secret_key
+                self.ip = ip
+                self.auth_mode = auth_mode
+
+            def run(self):
+                try:
+                    from wjx.network.proxy.kuaidaili import KuaidailiAuth, add_ip_to_whitelist
+                    auth = KuaidailiAuth(self.secret_id, self.secret_key)
+                    success = add_ip_to_whitelist(auth, self.ip, self.auth_mode)
+                    if success:
+                        self.finished.emit(True, f"IP {self.ip} 已添加到白名单")
+                    else:
+                        self.finished.emit(False, "添加白名单失败")
+                except Exception as e:
+                    self.finished.emit(False, str(e))
+
+        self._whitelist_thread = QThread()
+        self._whitelist_worker = WhitelistWorker(secret_id, secret_key, ip, auth_mode)
+        self._whitelist_worker.moveToThread(self._whitelist_thread)
+        self._whitelist_thread.started.connect(self._whitelist_worker.run)
+        self._whitelist_worker.finished.connect(self._on_whitelist_added)
+        self._whitelist_worker.finished.connect(self._whitelist_thread.quit)
+        self._whitelist_worker.finished.connect(self._whitelist_worker.deleteLater)
+        self._whitelist_thread.finished.connect(self._whitelist_thread.deleteLater)
+        self._whitelist_thread.start()
+
+    def _on_whitelist_added(self, success: bool, message: str):
+        """白名单添加完成回调"""
+        self.kuaidailiAddWhitelistBtn.setEnabled(True)
+        self.kuaidailiAddWhitelistBtn.setText("添加到白名单")
+        if success:
+            InfoBar.success("", message, parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+        else:
+            # 检查是否是 -108 错误（IP不在API调用授权白名单）
+            if "-108" in message or "whitelist not match" in message.lower():
+                InfoBar.error(
+                    "API调用授权白名单错误", 
+                    "当前IP不在API调用授权白名单中，请先登录快代理后台手动添加",
+                    parent=self.window(), 
+                    position=InfoBarPosition.TOP, 
+                    duration=8000
+                )
+                self.kuaidailiStatusLabel.setText(
+                    "⚠ 请先在快代理后台添加本机IP到API调用授权白名单：\n"
+                    "登录快代理 → API接口 → 密钥管理 → API调用授权 → 添加IP"
+                )
+                self.kuaidailiStatusLabel.setStyleSheet("color: orange;")
+            else:
+                InfoBar.error("添加白名单失败", message, parent=self.window(), position=InfoBarPosition.TOP, duration=5000)
+
+    def _on_load_local_credentials_clicked(self):
+        """从本地 credentials.yml 加载快代理凭证"""
+        from wjx.utils.io.kuaidaili_credentials import load_kuaidaili_credentials
+        
+        credentials = load_kuaidaili_credentials()
+        if credentials.secret_id or credentials.secret_key:
+            self.kuaidailiSecretIdEdit.setText(credentials.secret_id)
+            self.kuaidailiSecretKeyEdit.setText(credentials.secret_key)
+            InfoBar.success("", "凭证加载成功", parent=self.window(), position=InfoBarPosition.TOP, duration=2000)
+        else:
+            InfoBar.warning("", "未找到本地凭证或凭证为空", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+
+    def _on_fetch_proxy_auth_clicked(self):
+        """获取代理鉴权信息（用户名密码）并保存"""
+        from PySide6.QtCore import QThread, Signal as QtSignal, QObject
+        
+        secret_id = self.kuaidailiSecretIdEdit.text().strip()
+        secret_key = self.kuaidailiSecretKeyEdit.text().strip()
+        if not secret_id or not secret_key:
+            InfoBar.warning("", "请先输入 Secret ID 和 Secret Key", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+            return
+
+        auth_mode = self.kuaidailiAuthModeCombo.currentData() or "token"
+
+        self.kuaidailiFetchAuthBtn.setEnabled(False)
+        self.kuaidailiFetchAuthBtn.setText("获取中...")
+
+        class FetchAuthWorker(QObject):
+            finished = QtSignal(bool, str, str, str)  # success, message, username, password
+
+            def __init__(self, secret_id, secret_key, auth_mode):
+                super().__init__()
+                self.secret_id = secret_id
+                self.secret_key = secret_key
+                self.auth_mode = auth_mode
+
+            def run(self):
+                try:
+                    from wjx.network.proxy.kuaidaili import KuaidailiAuth, get_proxy_authorization
+                    auth = KuaidailiAuth(self.secret_id, self.secret_key)
+                    # plaintext=1 获取明文密码
+                    result = get_proxy_authorization(auth, self.auth_mode, plaintext=1)
+                    username = result.get("username", "")
+                    password = result.get("password", "")
+                    if username and password:
+                        self.finished.emit(True, "获取成功", username, password)
+                    else:
+                        self.finished.emit(False, "返回的鉴权信息为空", "", "")
+                except Exception as e:
+                    self.finished.emit(False, str(e), "", "")
+
+        self._fetch_auth_thread = QThread()
+        self._fetch_auth_worker = FetchAuthWorker(secret_id, secret_key, auth_mode)
+        self._fetch_auth_worker.moveToThread(self._fetch_auth_thread)
+        self._fetch_auth_thread.started.connect(self._fetch_auth_worker.run)
+        self._fetch_auth_worker.finished.connect(self._on_proxy_auth_fetched)
+        self._fetch_auth_worker.finished.connect(self._fetch_auth_thread.quit)
+        self._fetch_auth_worker.finished.connect(self._fetch_auth_worker.deleteLater)
+        self._fetch_auth_thread.finished.connect(self._fetch_auth_thread.deleteLater)
+        self._fetch_auth_thread.start()
+
+    def _on_proxy_auth_fetched(self, success: bool, message: str, username: str, password: str):
+        """代理鉴权信息获取完成回调"""
+        self.kuaidailiFetchAuthBtn.setEnabled(True)
+        self.kuaidailiFetchAuthBtn.setText("获取代理鉴权")
+        
+        if success:
+            # 保存到凭证文件
+            from wjx.utils.io.kuaidaili_credentials import (
+                KuaidailiCredentials,
+                load_kuaidaili_credentials,
+                save_kuaidaili_credentials,
+            )
+            existing = load_kuaidaili_credentials()
+            save_kuaidaili_credentials(KuaidailiCredentials(
+                secret_id=self.kuaidailiSecretIdEdit.text().strip() or existing.secret_id,
+                secret_key=self.kuaidailiSecretKeyEdit.text().strip() or existing.secret_key,
+                proxy_username=username,
+                proxy_password=password,
+            ))
+            InfoBar.success("", f"代理鉴权已保存 (用户名: {username[:4]}***)", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
+        else:
+            InfoBar.error("获取代理鉴权失败", message, parent=self.window(), position=InfoBarPosition.TOP, duration=5000)
+
+    def _on_kuaidaili_areas_changed(self, areas: list):
+        """快代理地区选择变化时同步到代理模块"""
+        try:
+            from wjx.network.proxy.kuaidaili_config import set_kuaidaili_config
+            # 只更新地区，保留其他配置
+            set_kuaidaili_config(areas=areas)
+            logging.debug(f"快代理地区已更新: {areas}")
+        except Exception as e:
+            logging.error(f"同步快代理地区配置失败: {e}")
+
+    def get_kuaidaili_config(self) -> dict:
+        """获取快代理配置"""
+        return {
+            "secret_id": self.kuaidailiSecretIdEdit.text().strip(),
+            "secret_key": self.kuaidailiSecretKeyEdit.text().strip(),
+            "auth_mode": self.kuaidailiAuthModeCombo.currentData() or "token",
+            "areas": self.kuaidailiAreaSelect.get_selected_areas(),
+        }
+
+    def set_kuaidaili_config(self, secret_id: str = "", secret_key: str = "", auth_mode: str = "token", areas: Optional[list] = None):
+        """设置快代理配置"""
+        self.kuaidailiSecretIdEdit.setText(secret_id)
+        self.kuaidailiSecretKeyEdit.setText(secret_key)
+        
+        # 设置认证方式
+        auth_idx = self.kuaidailiAuthModeCombo.findData(auth_mode)
+        if auth_idx >= 0:
+            self.kuaidailiAuthModeCombo.setCurrentIndex(auth_idx)
+        
+        # 设置地区
+        self.kuaidailiAreaSelect.set_selected_areas(areas)
 
 
 class TimedModeSettingCard(SettingCard):

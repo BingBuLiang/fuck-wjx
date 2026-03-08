@@ -6,3 +6,4 @@ class ProxySource(str, Enum):
     """代理源类型"""
     DEFAULT = "default"
     CUSTOM = "custom"
+    KUAIDAILI = "kuaidaili"  # 快代理

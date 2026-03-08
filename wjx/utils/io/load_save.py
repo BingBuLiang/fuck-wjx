@@ -392,7 +392,7 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     config.random_ip_enabled = normalize_random_ip_enabled_value(bool(raw.get("random_ip_enabled", False)))
     config.random_proxy_api = raw.get("random_proxy_api") or None
     proxy_source = str(raw.get("proxy_source") or "default")
-    if proxy_source not in ("default", "custom"):
+    if proxy_source not in ("default", "custom", "kuaidaili"):
         proxy_source = "default"
     config.proxy_source = proxy_source
     config.custom_proxy_api = str(raw.get("custom_proxy_api") or "")

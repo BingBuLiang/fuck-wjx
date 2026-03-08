@@ -29,6 +29,7 @@ _proxy_area_code_override: Optional[str] = None
 PROXY_SOURCE_DEFAULT = "default"
 PROXY_SOURCE_PIKACHU = "pikachu"
 PROXY_SOURCE_CUSTOM = "custom"
+PROXY_SOURCE_KUAIDAILI = "kuaidaili"  # 快代理
 
 _current_proxy_source: str = PROXY_SOURCE_DEFAULT
 _IP_PORT_RE = re.compile(
@@ -569,6 +570,16 @@ def _fetch_new_proxy_batch(
 ) -> List[str]:
     current_source = get_proxy_source()
     is_custom = current_source == PROXY_SOURCE_CUSTOM or is_custom_proxy_api_active()
+    
+    # 快代理源处理
+    if current_source == PROXY_SOURCE_KUAIDAILI:
+        try:
+            from wjx.network.proxy.kuaidaili_adapter import fetch_proxies_from_kuaidaili
+            proxies = fetch_proxies_from_kuaidaili(count=expected_count)
+            return proxies
+        except Exception as e:
+            logging.error(f"从快代理获取代理失败: {e}")
+            raise RuntimeError(f"快代理获取失败: {e}")
 
     if is_custom:
         if not is_custom_proxy_api_active():

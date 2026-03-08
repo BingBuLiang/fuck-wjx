@@ -1,6 +1,5 @@
 """
-数学工具函数 - 从 demo/wjx/core/statistics/utils.py 移植
-用于信效度计算和潜变量模型
+数学工具函数
 """
 import math
 import random
@@ -41,12 +40,7 @@ _NORMAL_INV_COEFFS = {
 
 
 def randn() -> float:
-    """
-    生成标准正态分布随机数（Box-Muller变换）
-    
-    Returns:
-        标准正态分布的随机数 (均值=0, 标准差=1)
-    """
+    """生成标准正态分布随机数（Box-Muller变换）"""
     u = 0.0
     v = 0.0
     while u == 0:
@@ -57,16 +51,7 @@ def randn() -> float:
 
 
 def normal_inv(p: float) -> float:
-    """
-    逆正态分布函数（分位数函数）
-    将概率值转换为对应的 Z 分数
-    
-    Args:
-        p: 概率值 (0, 1)
-        
-    Returns:
-        对应的 Z 分数
-    """
+    """逆正态分布函数（分位数函数）"""
     if p <= 0:
         return float("-inf")
     if p >= 1:
@@ -101,19 +86,7 @@ def normal_inv(p: float) -> float:
 
 
 def z_to_category(z: float, option_count: int) -> int:
-    """
-    将连续的 Z 分数转换为离散的选项索引
-    
-    使用正态分布的分位点将连续值划分到离散类别中。
-    例如，5个选项时，会在 -1.28, -0.52, 0.52, 1.28 处划分。
-    
-    Args:
-        z: Z 分数（标准正态分布值）
-        option_count: 选项数量（2-50）
-        
-    Returns:
-        选项索引（0-based，范围 0 到 option_count-1）
-    """
+    """将连续的 Z 分数转换为离散的选项索引"""
     m = max(2, min(50, option_count))
     
     for j in range(1, m):
@@ -125,15 +98,7 @@ def z_to_category(z: float, option_count: int) -> int:
 
 
 def variance(values: List[float]) -> float:
-    """
-    计算样本方差
-    
-    Args:
-        values: 数值列表
-        
-    Returns:
-        样本方差（使用 n-1 作为分母）
-    """
+    """计算样本方差"""
     if not values or len(values) < 2:
         return 0.0
     
@@ -143,16 +108,7 @@ def variance(values: List[float]) -> float:
 
 
 def correlation(xs: List[float], ys: List[float]) -> float:
-    """
-    计算 Pearson 相关系数
-    
-    Args:
-        xs: 第一组数值
-        ys: 第二组数值
-        
-    Returns:
-        相关系数 (-1 到 1)
-    """
+    """计算 Pearson 相关系数"""
     if not xs or not ys or len(xs) != len(ys) or len(xs) < 2:
         return 0.0
     
@@ -176,15 +132,7 @@ def correlation(xs: List[float], ys: List[float]) -> float:
 
 
 def cronbach_alpha(matrix: List[List[float]]) -> float:
-    """
-    计算 Cronbach's Alpha 系数
-    
-    Args:
-        matrix: 数据矩阵，每行是一个样本，每列是一个题目
-        
-    Returns:
-        Cronbach's Alpha 系数
-    """
+    """计算 Cronbach's Alpha 系数"""
     if not matrix or len(matrix) == 0:
         return 0.0
     

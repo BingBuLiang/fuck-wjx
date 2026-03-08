@@ -6,11 +6,7 @@ _API_URL = "https://api-wjx.hungrym0.top/ipzan/usage"
 
 
 def get_usage_history() -> list:
-    """返回近 30 日每日 IP 提取记录，按日期升序排列。
-
-    Returns:
-        [{"label": "2026-02-23", "total": "5010"}, ...]
-    """
+    """返回近 30 日每日 IP 提取记录，按日期升序排列。"""
     resp = http_client.get(_API_URL, timeout=10, headers=DEFAULT_HTTP_HEADERS, proxies={})
     resp.raise_for_status()
     return resp.json()

@@ -194,12 +194,14 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.amount_edit = LineEdit(self)
         self.amount_edit.setPlaceholderText("🙏😭🙏")
         self.amount_edit.setMaximumWidth(100)
-        validator = QDoubleValidator(0.0, 9999.99, 2, self)
+        validator = QDoubleValidator(0.01, 9999.99, 2, self)
         validator.setNotation(QDoubleValidator.Notation.StandardNotation)
         self.amount_edit.setValidator(validator)
         self.amount_edit.textChanged.connect(self._on_amount_changed)
+        self.amount_edit.editingFinished.connect(self._on_amount_editing_finished)
+        self.amount_edit.installEventFilter(self)
 
-        self.quantity_label = BodyLabel("大概需求份数：", self)
+        self.quantity_label = BodyLabel("大概需求额度：", self)
         self.quantity_edit = LineEdit(self)
         self.quantity_edit.setPlaceholderText("1~9999")
         self.quantity_edit.setMaximumWidth(110)
@@ -344,11 +346,14 @@ class ContactForm(StatusPollingMixin, QWidget):
             self.cancel_btn.clicked.connect(self.cancelRequested.emit)
 
     def eventFilter(self, watched, event):
-        if watched is self.message_edit and event.type() == QEvent.Type.KeyPress:
+        message_edit = getattr(self, "message_edit", None)
+        if message_edit is not None and watched is message_edit and event.type() == QEvent.Type.KeyPress:
             key_event = cast(QKeyEvent, event)
             if key_event.matches(QKeySequence.StandardKey.Paste):
                 if self._handle_clipboard_image():
                     return True
+        if watched is self.amount_edit and event.type() == QEvent.Type.FocusOut:
+            self._normalize_amount_if_needed()
         return super().eventFilter(watched, event)
 
     def _on_context_paste(self, target: QWidget) -> bool:
@@ -654,6 +659,22 @@ class ContactForm(StatusPollingMixin, QWidget):
         """金额输入框文本改变时同步卡密获取的元信息到消息框"""
         self._sync_card_request_message_meta()
 
+    def _normalize_amount_if_needed(self) -> None:
+        """将 0 自动纠正为 0.01，避免提交无效金额。"""
+        text = (self.amount_edit.text() or "").strip()
+        if not text:
+            return
+        try:
+            value = float(text)
+        except ValueError:
+            return
+        if value == 0.0 and text != "0.01":
+            self.amount_edit.setText("0.01")
+
+    def _on_amount_editing_finished(self):
+        self._normalize_amount_if_needed()
+        self._sync_card_request_message_meta()
+
     def _on_quantity_changed(self, text: str):
         """份数输入框文本改变时同步卡密获取的元信息到消息框"""
         self._sync_card_request_message_meta()
@@ -671,7 +692,7 @@ class ContactForm(StatusPollingMixin, QWidget):
             line = lines[idx]
             if (
                 line.startswith("捐助金额：￥")
-                or line.startswith("需求份数：")
+                or line.startswith("需求额度：")
                 or line.startswith("紧急程度：")
             ):
                 idx += 1
@@ -695,7 +716,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         if amount_text:
             meta_lines.append(f"捐助金额：￥{amount_text}")
         if quantity_text:
-            meta_lines.append(f"需求份数：{quantity_text}份")
+            meta_lines.append(f"需求额度：{quantity_text}份")
         if (amount_text or quantity_text) and urgency_text:
             meta_lines.append(f"紧急程度：{urgency_text}")
 
@@ -743,7 +764,7 @@ class ContactForm(StatusPollingMixin, QWidget):
                 from wjx.utils.system.registry_manager import RegistryManager
                 if RegistryManager.read_submit_count() <= 0:
                     InfoBar.warning(
-                        "", "你都还没开始用呢，咋就来申请了😡",
+                        "", "你都还没开始用随机ip呢，咋就来申请了😡",
                         parent=self, position=InfoBarPosition.TOP, duration=3000,
                     )
                     return
@@ -751,6 +772,7 @@ class ContactForm(StatusPollingMixin, QWidget):
                 log_suppressed_exception("_on_send_clicked: from wjx.utils.system.registry_manager import RegistryManager", exc, level=logging.WARNING)
 
         if mtype == "卡密获取":
+            self._normalize_amount_if_needed()
             amount_text = (self.amount_edit.text() or "").strip()
             quantity_text = (self.quantity_edit.text() or "").strip()
             verify_code = (self.verify_code_edit.text() or "").strip()
@@ -759,13 +781,13 @@ class ContactForm(StatusPollingMixin, QWidget):
                 InfoBar.warning("", "请输入捐助金额", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
             if not quantity_text:
-                InfoBar.warning("", "请输入大概需求份数", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                InfoBar.warning("", "请输入大概需求额度", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
             if not quantity_text.isdigit() or int(quantity_text) <= 0:
-                InfoBar.warning("", "需求份数必须为正整数", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                InfoBar.warning("", "需求额度必须为正整数", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
             if int(quantity_text) > 9999:
-                InfoBar.warning("", "需求份数不能超过 9999", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                InfoBar.warning("", "需求额度不能超过 9999", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
             if not self._verify_code_requested:
                 InfoBar.warning("", "请先点击发送验证码", parent=self, position=InfoBarPosition.TOP, duration=2000)

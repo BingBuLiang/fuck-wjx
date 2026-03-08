@@ -9,9 +9,9 @@ from wjx.utils.event_bus import bus as _event_bus, EVENT_TARGET_REACHED
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
-def _is_fast_mode(ctx: TaskContext) -> bool:
-    """极速模式：时长控制/随机IP关闭且时间间隔为0时自动启用。"""
-    return ctx.is_fast_mode()
+def _is_headless_mode(ctx: Optional[TaskContext]) -> bool:
+    """当前任务是否启用无头模式。"""
+    return bool(ctx is not None and getattr(ctx, "headless_mode", False))
 
 
 def _timed_mode_active(ctx: TaskContext) -> bool:
@@ -21,19 +21,25 @@ def _timed_mode_active(ctx: TaskContext) -> bool:
 def _handle_submission_failure(
     ctx: TaskContext,
     stop_signal: Optional[threading.Event],
+    thread_name: Optional[str] = None,
 ) -> bool:
     """
-    递增失败计数；当开启失败止损时超过阈值会触发停止。
+    递增连续失败计数；当开启失败止损时超过阈值会触发停止。
     返回 True 表示已触发强制停止。
     """
     with ctx.lock:
         ctx.cur_fail += 1
         if ctx.stop_on_fail_enabled:
-            print(f"已失败{ctx.cur_fail}次, 失败次数达到{int(ctx.fail_threshold)}次将强制停止")
+            print(f"已连续失败{ctx.cur_fail}次, 连续失败达到{int(ctx.fail_threshold)}次将强制停止")
         else:
-            print(f"已失败{ctx.cur_fail}次（失败止损已关闭）")
+            print(f"已连续失败{ctx.cur_fail}次（失败止损已关闭）")
+    if thread_name:
+        try:
+            ctx.increment_thread_fail(thread_name, status_text="失败重试")
+        except Exception:
+            logging.debug("更新线程失败计数失败", exc_info=True)
     if ctx.stop_on_fail_enabled and ctx.cur_fail >= ctx.fail_threshold:
-        logging.critical("失败次数过多，强制停止，请检查配置是否正确")
+        logging.critical("连续失败次数过多，强制停止，请检查配置是否正确")
         if stop_signal:
             stop_signal.set()
         return True

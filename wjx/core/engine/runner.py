@@ -24,7 +24,11 @@ from wjx.core.engine.runtime_control import (
     _trigger_target_reached_stop,
     _wait_if_paused,
 )
-from wjx.core.engine.submission import _is_device_quota_limit_page, _normalize_url_for_compare
+from wjx.core.engine.submission import (
+    _is_device_quota_limit_page,
+    _normalize_url_for_compare,
+    consume_headless_httpx_submit_success,
+)
 from wjx.core.task_context import TaskContext
 from wjx.network.browser import (
     BrowserManager,
@@ -42,6 +46,7 @@ from wjx.network.session_policy import (
 )
 from wjx.utils.app.config import (
     BROWSER_PREFERENCE,
+    HEADLESS_POST_SUBMIT_CLOSE_GRACE_SECONDS,
     POST_SUBMIT_CLOSE_GRACE_SECONDS,
     POST_SUBMIT_URL_MAX_WAIT,
     POST_SUBMIT_URL_POLL_INTERVAL,
@@ -49,7 +54,7 @@ from wjx.utils.app.config import (
 
 
 def _submission_blocked_by_security_check(driver: BrowserDriver) -> bool:
-    """检测提交后是否出现"需要安全校验/请重新提交"等拦截提示。"""
+    """检测提交后是否出现阿里云智能验证 DOM。"""
 
     script = r"""
         return (() => {
@@ -62,16 +67,6 @@ def _submission_blocked_by_security_check(driver: BrowserDriver) -> bool:
                 'aliyunCaptcha-checkbox-left',
                 'aliyunCaptcha-checkbox-text',
                 'aliyunCaptcha-certifyId',
-            ];
-
-            const textPatterns = [
-                /请完成安全验证/,
-                /点击开始智能验证/,
-                /需要安全校验/,
-                /请重新提交/,
-                /人机验证/,
-                /滑动验证/,
-                /安全验证失败/,
             ];
 
             const visible = (el, win) => {
@@ -88,29 +83,13 @@ def _submission_blocked_by_security_check(driver: BrowserDriver) -> bool:
                 for (const id of popupIds) {
                     const el = doc.getElementById(id);
                     if (visible(el, win)) return true;
-                }
-                return false;
-            };
-
-            const docHasStrongSecurityText = (doc) => {
-                const nodes = doc.querySelectorAll('button, a, span, div, p');
-                for (const el of nodes) {
-                    const win = doc.defaultView;
-                    if (!visible(el, win)) continue;
-                    const txt = (el.innerText || el.textContent || '').replace(/\s+/g, '');
-                    if (!txt) continue;
-                    for (const p of textPatterns) {
-                        if (p.test(txt)) return true;
                     }
-                }
                 return false;
             };
 
             const scanDoc = (doc) => {
                 if (!doc) return false;
-                if (docHasVisibleCaptchaDom(doc)) return true;
-                if (docHasStrongSecurityText(doc)) return true;
-                return false;
+                return docHasVisibleCaptchaDom(doc);
             };
 
             if (scanDoc(document)) return true;
@@ -230,6 +209,13 @@ class _BrowserSession:
             else:
                 _reset_bad_proxy_streak(self.ctx)
 
+        browser_proxy_address = self.proxy_address
+        submit_proxy_address = None
+        if self.ctx.headless_mode and self.proxy_address:
+            # 无头模式下将页面流量固定走本机，只让最终提交请求走代理。
+            browser_proxy_address = None
+            submit_proxy_address = self.proxy_address
+
         ua_value, _ = _select_user_agent_for_session(self.ctx)
 
         if not self.sem_acquired:
@@ -247,7 +233,7 @@ class _BrowserSession:
             self.driver, active_browser = create_playwright_driver(
                 headless=self.ctx.headless_mode,
                 prefer_browsers=list(preferred_browsers) if preferred_browsers else None,
-                proxy_address=self.proxy_address,
+                proxy_address=browser_proxy_address,
                 user_agent=ua_value,
                 window_position=(window_x_pos, window_y_pos),
                 manager=self._browser_manager,
@@ -261,6 +247,7 @@ class _BrowserSession:
             raise
 
         self._register_driver(self.driver)
+        setattr(self.driver, "_submit_proxy_address", submit_proxy_address)
         self.driver.set_window_size(550, 650)
         return active_browser
 
@@ -295,24 +282,39 @@ def _wait_for_completion_page(
     return False
 
 
+def _resolve_post_submit_close_grace_seconds(ctx: TaskContext) -> float:
+    """根据模式返回提交成功后的浏览器关闭缓冲时间。"""
+    if bool(getattr(ctx, "headless_mode", False)):
+        return float(HEADLESS_POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
+    return float(POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
+
+
 def _check_captcha_after_submit(
     driver: BrowserDriver,
     ctx: TaskContext,
     stop_signal: threading.Event,
     gui_instance: Any,
+    thread_name: Optional[str] = None,
 ) -> bool:
     """提交后检测阿里云验证码。返回 True 表示命中验证码。"""
     try:
-        handle_aliyun_captcha(
+        random_ip_enabled = bool(getattr(ctx, "random_proxy_ip_enabled", False))
+        detected = handle_aliyun_captcha(
             driver,
             timeout=3,
             stop_signal=stop_signal,
-            raise_on_detect=True,
+            raise_on_detect=not random_ip_enabled,
+            notify_on_detect=not random_ip_enabled,
         )
+        if detected and random_ip_enabled:
+            logging.warning("随机IP模式命中阿里云智能验证：仅记录失败并继续任务（不暂停、不弹窗）")
+            _handle_submission_failure(ctx, stop_signal, thread_name=thread_name)
+            _handle_aliyun_captcha_detected(ctx, gui_instance, stop_signal)
+            return True
         return False
     except AliyunCaptchaBypassError:
-        logging.warning("提交后检测到阿里云智能验证，触发全局暂停")
-        _handle_submission_failure(ctx, stop_signal)
+        logging.warning("提交后检测到阿里云智能验证，触发验证码处理流程")
+        _handle_submission_failure(ctx, stop_signal, thread_name=thread_name)
         _handle_aliyun_captcha_detected(ctx, gui_instance, stop_signal)
         return True
     except Exception as exc:
@@ -324,24 +326,38 @@ def _record_successful_submission(
     ctx: TaskContext,
     stop_signal: threading.Event,
     gui_instance: Any,
+    thread_name: Optional[str] = None,
 ) -> bool:
     """记录一次成功提交。返回 True 表示应该停止（已达目标）。"""
     should_handle_random_ip = False
     trigger_target_stop = False
     should_break = False
+    record_thread_success = False
+    previous_consecutive_failures = 0
 
     with ctx.lock:
         if ctx.target_num <= 0 or ctx.cur_num < ctx.target_num:
+            previous_consecutive_failures = int(ctx.cur_fail or 0)
             ctx.cur_num += 1
+            # 连续失败计数：一旦出现成功提交，立即全局清零。
+            ctx.cur_fail = 0
+            record_thread_success = True
             logging.info(
-                f"[OK] 已填写{ctx.cur_num}份 - 失败{ctx.cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
+                f"[OK] 已填写{ctx.cur_num}份 - 连续失败{ctx.cur_fail}次 - {time.strftime('%H:%M:%S', time.localtime(time.time()))}"
             )
+            if previous_consecutive_failures > 0:
+                logging.debug("提交成功，连续失败计数已清零（重置前=%s）", previous_consecutive_failures)
             should_handle_random_ip = ctx.random_proxy_ip_enabled
             if ctx.target_num > 0 and ctx.cur_num >= ctx.target_num:
                 trigger_target_stop = True
         else:
             should_break = True
 
+    if record_thread_success and thread_name:
+        try:
+            ctx.increment_thread_success(thread_name, status_text="提交成功")
+        except Exception:
+            logging.debug("更新线程成功计数失败", exc_info=True)
     if should_break:
         stop_signal.set()
     if trigger_target_stop:
@@ -364,20 +380,17 @@ def run(
     gui_instance: Any = None,
     ctx: Optional[TaskContext] = None,
 ):
-    """引擎主循环 - 创建浏览器、填写问卷、处理结果。
-
-    Args:
-        window_x_pos: 浏览器窗口 X 位置
-        window_y_pos: 浏览器窗口 Y 位置
-        stop_signal: 停止信号
-        gui_instance: EngineGuiAdapter 实例
-        ctx: 任务上下文（传入后使用 ctx 配置，不再依赖全局 state）
-    """
+    """引擎主循环 - 创建浏览器、填写问卷、处理结果。"""
     # 如果没传 ctx，从 gui_instance 获取
     if ctx is None and gui_instance and hasattr(gui_instance, 'task_ctx'):
         ctx = gui_instance.task_ctx
     if ctx is None:
         raise ValueError("run() 必须传入 TaskContext，全局 state 兼容层已移除")
+    thread_name = threading.current_thread().name or "Worker-?"
+    try:
+        ctx.update_thread_status(thread_name, "线程启动", running=True)
+    except Exception:
+        logging.debug("更新线程状态失败：线程启动", exc_info=True)
 
     timed_mode_on = _timed_mode_active(ctx)
     try:
@@ -415,6 +428,16 @@ def run(
         # ── 1. 准备浏览器 ────────────────────────────────────────
         if session.driver is None:
             try:
+                ctx.update_thread_step(
+                    thread_name,
+                    0,
+                    0,
+                    status_text="准备浏览器",
+                    running=True,
+                )
+            except Exception:
+                logging.debug("更新线程状态失败：准备浏览器", exc_info=True)
+            try:
                 active_browser = session.create_browser(
                     preferred_browsers, window_x_pos, window_y_pos,
                 )
@@ -448,6 +471,10 @@ def run(
             _wait_if_paused(gui_instance, stop_signal)
 
             # ── 2. 导航到问卷页面 ────────────────────────────────
+            try:
+                ctx.update_thread_status(thread_name, "加载问卷", running=True)
+            except Exception:
+                logging.debug("更新线程状态失败：加载问卷", exc_info=True)
             if timed_mode_on:
                 logging.debug("[Action Log] 定时模式：开始刷新等待问卷开放")
                 ready = timed_mode.wait_until_open(
@@ -469,7 +496,12 @@ def run(
             # ── 3. 设备配额限制检查 ──────────────────────────────
             if _is_device_quota_limit_page(session.driver):
                 logging.warning('检测到设备已达到最大填写次数提示页，直接放弃当前浏览器实例并标记为成功。')
-                stopped = _record_successful_submission(ctx, stop_signal, gui_instance)
+                stopped = _record_successful_submission(
+                    ctx,
+                    stop_signal,
+                    gui_instance,
+                    thread_name=thread_name,
+                )
                 session.dispose()
                 if stopped:
                     break
@@ -489,6 +521,22 @@ def run(
                 if stop_signal.is_set() or not finished:
                     break
 
+                # 无头+httpx 已经拿到业务成功码时，直接按成功提交处理，避免完成页加载超时误判失败
+                if ctx.headless_mode and consume_headless_httpx_submit_success(session.driver):
+                    grace_seconds = _resolve_post_submit_close_grace_seconds(ctx)
+                    if grace_seconds > 0 and not stop_signal.is_set():
+                        time.sleep(grace_seconds)
+                    session.dispose()
+                    stopped = _record_successful_submission(
+                        ctx,
+                        stop_signal,
+                        gui_instance,
+                        thread_name=thread_name,
+                    )
+                    if stopped:
+                        pass
+                    break
+
                 # 提交后短暂等待
                 post_submit_wait = random.uniform(0.2, 0.6)
                 if stop_signal.wait(post_submit_wait):
@@ -497,15 +545,21 @@ def run(
                 # ── 5. 验证提交结果 ──────────────────────────────
                 # 5a. 立即检测阿里云验证码
                 if not stop_signal.is_set():
-                    if _check_captcha_after_submit(session.driver, ctx, stop_signal, gui_instance):
+                    if _check_captcha_after_submit(
+                        session.driver,
+                        ctx,
+                        stop_signal,
+                        gui_instance,
+                        thread_name=thread_name,
+                    ):
                         driver_had_error = True
                         break
 
-                # 5b. 安全校验文案检测
+                # 5b. 阿里云验证码 DOM 检测
                 if not stop_signal.is_set() and _submission_blocked_by_security_check(session.driver):
                     driver_had_error = True
-                    logging.warning("提交后检测到安全校验拦截提示，触发全局暂停")
-                    _handle_submission_failure(ctx, stop_signal)
+                    logging.warning("提交后检测到阿里云智能验证DOM，触发验证码处理流程")
+                    _handle_submission_failure(ctx, stop_signal, thread_name=thread_name)
                     _handle_aliyun_captcha_detected(ctx, gui_instance, stop_signal)
                     break
 
@@ -516,12 +570,12 @@ def run(
                     session.driver, stop_signal, wait_seconds, poll_interval,
                 )
 
-                # 等待期间检查安全校验
+                # 等待期间再次检查阿里云验证码 DOM
                 if not completion_detected and not stop_signal.is_set():
                     if _submission_blocked_by_security_check(session.driver):
                         driver_had_error = True
-                        logging.warning("提交后等待完成页期间命中安全校验提示，触发全局暂停")
-                        _handle_submission_failure(ctx, stop_signal)
+                        logging.warning("提交后等待完成页期间命中阿里云智能验证DOM，触发验证码处理流程")
+                        _handle_submission_failure(ctx, stop_signal, thread_name=thread_name)
                         _handle_aliyun_captcha_detected(ctx, gui_instance, stop_signal)
                         break
 
@@ -530,7 +584,13 @@ def run(
 
                 # 5d. 未检测到完成页时再次检测验证码
                 if not completion_detected:
-                    if _check_captcha_after_submit(session.driver, ctx, stop_signal, gui_instance):
+                    if _check_captcha_after_submit(
+                        session.driver,
+                        ctx,
+                        stop_signal,
+                        gui_instance,
+                        thread_name=thread_name,
+                    ):
                         driver_had_error = True
                         break
 
@@ -538,18 +598,23 @@ def run(
                     raise TimeoutException("提交后未检测到完成页")
 
                 # ── 6. 记录成功 ──────────────────────────────────
-                grace_seconds = float(POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
+                grace_seconds = _resolve_post_submit_close_grace_seconds(ctx)
                 if grace_seconds > 0 and not stop_signal.is_set():
                     time.sleep(grace_seconds)
                 session.dispose()
-                stopped = _record_successful_submission(ctx, stop_signal, gui_instance)
+                stopped = _record_successful_submission(
+                    ctx,
+                    stop_signal,
+                    gui_instance,
+                    thread_name=thread_name,
+                )
                 if stopped:
                     pass  # 会在外层 while 检查 stop_signal 后 break
                 break
 
         except AliyunCaptchaBypassError:
             driver_had_error = True
-            _handle_submission_failure(ctx, stop_signal)
+            _handle_submission_failure(ctx, stop_signal, thread_name=thread_name)
             _handle_aliyun_captcha_detected(ctx, gui_instance, stop_signal)
             break
         except AIRuntimeError as exc:
@@ -571,7 +636,13 @@ def run(
             )
 
             if not completion_detected and not stop_signal.is_set():
-                if _check_captcha_after_submit(session.driver, ctx, stop_signal, gui_instance):
+                if _check_captcha_after_submit(
+                    session.driver,
+                    ctx,
+                    stop_signal,
+                    gui_instance,
+                    thread_name=thread_name,
+                ):
                     driver_had_error = True
                     break
 
@@ -590,17 +661,22 @@ def run(
 
             if completion_detected:
                 driver_had_error = False
-                grace_seconds = float(POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
+                grace_seconds = _resolve_post_submit_close_grace_seconds(ctx)
                 if grace_seconds > 0 and not stop_signal.is_set():
                     time.sleep(grace_seconds)
                 session.dispose()
-                stopped = _record_successful_submission(ctx, stop_signal, gui_instance)
+                stopped = _record_successful_submission(
+                    ctx,
+                    stop_signal,
+                    gui_instance,
+                    thread_name=thread_name,
+                )
                 if stopped:
                     continue  # 外层 while 会 break
                 continue
 
             driver_had_error = True
-            if _handle_submission_failure(ctx, stop_signal):
+            if _handle_submission_failure(ctx, stop_signal, thread_name=thread_name):
                 break
 
         except ProxyConnectionError:
@@ -615,20 +691,20 @@ def run(
                     break
                 stop_signal.wait(0.8)
                 continue
-            if _handle_submission_failure(ctx, stop_signal):
+            if _handle_submission_failure(ctx, stop_signal, thread_name=thread_name):
                 break
         except EmptySurveySubmissionError:
             driver_had_error = True
             if stop_signal.is_set():
                 break
-            if _handle_submission_failure(ctx, stop_signal):
+            if _handle_submission_failure(ctx, stop_signal, thread_name=thread_name):
                 break
         except Exception:
             driver_had_error = True
             if stop_signal.is_set():
                 break
             traceback.print_exc()
-            if _handle_submission_failure(ctx, stop_signal):
+            if _handle_submission_failure(ctx, stop_signal, thread_name=thread_name):
                 break
         finally:
             if driver_had_error:
@@ -638,8 +714,16 @@ def run(
             break
         min_wait, max_wait = ctx.submit_interval_range_seconds
         if max_wait > 0:
+            try:
+                ctx.update_thread_status(thread_name, "等待提交间隔", running=True)
+            except Exception:
+                logging.debug("更新线程状态失败：等待提交间隔", exc_info=True)
             wait_seconds = min_wait if max_wait == min_wait else random.uniform(min_wait, max_wait)
             if stop_signal.wait(wait_seconds):
                 break
 
+    try:
+        ctx.mark_thread_finished(thread_name, status_text="已停止")
+    except Exception:
+        logging.debug("更新线程状态失败：已停止", exc_info=True)
     session.shutdown()

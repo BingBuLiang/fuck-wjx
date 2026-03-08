@@ -3,6 +3,7 @@ import logging
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
 
+from PySide6.QtCore import QPoint, QTimer
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -20,6 +21,7 @@ from wjx.ui.pages.workbench.runtime.ai import RuntimeAISection
 from wjx.ui.pages.workbench.runtime.cards import (
     RandomIPSettingCard,
     RandomUASettingCard,
+    ReliabilitySettingCard,
     TimeRangeSettingCard,
     TimedModeSettingCard,
 )
@@ -74,18 +76,16 @@ class RuntimePage(ScrollArea):
             min_val=1, max_val=9999, default=10, parent=run_group
         )
         self.thread_card = SpinBoxSettingCard(
-            FluentIcon.APPLICATION, "并发浏览器", "无头关闭时 1-8，无头开启时 1-16",
+            FluentIcon.APPLICATION, "并发浏览器", "同时开多个浏览器窗口提交问卷，启用无头模式可设置更高的并发数",
             min_val=self.MIN_THREADS, max_val=self.NON_HEADLESS_MAX_THREADS, default=2, parent=run_group
         )
         spin_width = self.target_card.suggestSpinBoxWidthForDigits(4)
         self.target_card.setSpinBoxWidth(spin_width)
         self.thread_card.setSpinBoxWidth(spin_width)
 
-        self.reliability_mode_card = SwitchSettingCard(
-            FluentIcon.CERTIFICATE, "提升问卷信效度", "启用后量表/矩阵/评价题将共享答题倾向，针对信效度优化作答策略",
-            parent=run_group
-        )
-        self.reliability_mode_card.setChecked(True)
+        self.reliability_card = ReliabilitySettingCard(parent=run_group)
+        self.reliability_card.setChecked(True)
+        self.reliability_card.set_alpha(0.85)
 
         self.headless_card = SwitchSettingCard(
             FluentIcon.SPEED_HIGH,
@@ -93,11 +93,11 @@ class RuntimePage(ScrollArea):
             "开启后浏览器在后台运行，不显示窗口，可提高并发性能",
             parent=run_group,
         )
-        self.headless_card.setChecked(False)
+        self.headless_card.setChecked(True)
 
         run_group.addSettingCard(self.target_card)
         run_group.addSettingCard(self.thread_card)
-        run_group.addSettingCard(self.reliability_mode_card)
+        run_group.addSettingCard(self.reliability_card)
         run_group.addSettingCard(self.headless_card)
         layout.addWidget(run_group)
 
@@ -152,7 +152,7 @@ class RuntimePage(ScrollArea):
         # 兼容旧代码的属性别名
         self.target_spin = self.target_card.spinBox
         self.thread_spin = self.thread_card.spinBox
-        self.reliability_mode_switch = self.reliability_mode_card.switchButton
+        self.reliability_mode_switch = self.reliability_card.switchButton
         self.timed_switch = self.timed_card.switchButton
         self.random_ip_switch = self.random_ip_card.switchButton
         self.random_ua_switch = self.random_ua_card.switchButton
@@ -169,6 +169,34 @@ class RuntimePage(ScrollArea):
         self.timed_card.helpButton.clicked.connect(self._show_timed_mode_help)
         self.proxy_source_combo.currentIndexChanged.connect(self._on_proxy_source_changed)
         self.reliability_mode_switch.checkedChanged.connect(self._on_reliability_mode_toggled)
+
+    def focus_answer_duration_setting(self):
+        """跳转并聚焦到“作答时长”设置项。"""
+
+        def _focus_target():
+            target_edit = getattr(self.answer_card, "inputEdit", None)
+            try:
+                # 把“作答时长”滚动到视口靠上位置，而不是仅仅可见
+                top_y = self.answer_card.mapTo(self.view, QPoint(0, 0)).y()
+                target_scroll = max(0, int(top_y - 16))
+                self.verticalScrollBar().setValue(target_scroll)
+            except Exception as exc:
+                log_suppressed_exception("focus_answer_duration_setting: verticalScrollBar().setValue(...)", exc, level=logging.DEBUG)
+            try:
+                if target_edit is not None:
+                    target_edit.setFocus()
+                    target_edit.selectAll()
+            except Exception as exc:
+                log_suppressed_exception("focus_answer_duration_setting: self.answer_card.inputEdit.setFocus()", exc, level=logging.DEBUG)
+            try:
+                # 兜底：极端布局场景下再做一次“至少可见”
+                self.ensureWidgetVisible(self.answer_card, 0, 24)
+            except Exception as exc:
+                log_suppressed_exception("focus_answer_duration_setting: ensureWidgetVisible", exc, level=logging.DEBUG)
+
+        # 页面切换后做两次定位，避免首帧布局尚未稳定导致的偏移
+        QTimer.singleShot(0, _focus_target)
+        QTimer.singleShot(80, _focus_target)
 
     def _resolve_thread_max(self, headless_enabled: bool) -> int:
         return self.HEADLESS_MAX_THREADS if headless_enabled else self.NON_HEADLESS_MAX_THREADS
@@ -295,7 +323,10 @@ class RuntimePage(ScrollArea):
             log_suppressed_exception("_sync_timed_mode: self.interval_card.setEnabled(not enabled)", exc, level=logging.WARNING)
 
     def _on_reliability_mode_toggled(self, enabled: bool):
-        pass
+        try:
+            self.reliability_card._sync_enabled(bool(enabled))
+        except Exception as exc:
+            log_suppressed_exception("_on_reliability_mode_toggled: reliability_card._sync_enabled", exc, level=logging.DEBUG)
 
     def update_config(self, cfg: RuntimeConfig):
         cfg.target = max(1, self.target_spin.value())
@@ -312,6 +343,10 @@ class RuntimePage(ScrollArea):
         cfg.fail_stop_enabled = True
         cfg.pause_on_aliyun_captcha = True
         cfg.reliability_mode_enabled = self.reliability_mode_switch.isChecked()
+        try:
+            cfg.psycho_target_alpha = self.reliability_card.get_alpha()
+        except Exception as exc:
+            log_suppressed_exception("update_config: reliability_card.get_alpha()", exc, level=logging.DEBUG)
         cfg.headless_mode = self.headless_card.switchButton.isChecked()
         try:
             idx = self.proxy_source_combo.currentIndex()
@@ -361,10 +396,15 @@ class RuntimePage(ScrollArea):
 
         self._sync_random_ua(self.random_ua_switch.isChecked())
         self.reliability_mode_switch.setChecked(getattr(cfg, "reliability_mode_enabled", True))
+        try:
+            self.reliability_card.set_alpha(getattr(cfg, "psycho_target_alpha", 0.85))
+            self.reliability_card._sync_enabled(self.reliability_mode_switch.isChecked())
+        except Exception as exc:
+            log_suppressed_exception("apply_config: reliability_card.set_alpha", exc, level=logging.DEBUG)
 
         self._suppress_headless_tip = True
         try:
-            self.headless_card.setChecked(getattr(cfg, "headless_mode", False))
+            self.headless_card.setChecked(getattr(cfg, "headless_mode", True))
             self._apply_thread_limit_by_headless(self.headless_card.isChecked())
         finally:
             self._suppress_headless_tip = False

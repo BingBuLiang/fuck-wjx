@@ -16,19 +16,7 @@ from wjx.utils.app.config import DEFAULT_HTTP_HEADERS
 
 
 def parse_survey(url: str) -> Tuple[List[Dict[str, Any]], str]:
-    """解析问卷结构，返回 (questions_info, title)。
-
-    先尝试 httpx 拉取 HTML 解析；失败后回退到 Playwright 无头浏览器。
-
-    Args:
-        url: 问卷星链接
-
-    Returns:
-        (questions_info, title) 二元组
-
-    Raises:
-        RuntimeError: 两种方式均无法解析时抛出
-    """
+    """解析问卷结构，返回 (questions_info, title)。"""
     info: Optional[List[Dict[str, Any]]] = None
     title = ""
 

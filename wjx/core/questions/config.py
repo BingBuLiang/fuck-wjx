@@ -92,6 +92,8 @@ class QuestionEntry:
     question_num: Optional[int] = None
     question_title: Optional[str] = None
     ai_enabled: bool = False
+    multi_text_blank_modes: List[str] = field(default_factory=list)
+    multi_text_blank_ai_flags: List[bool] = field(default_factory=list)
     text_random_mode: str = _TEXT_RANDOM_NONE
     option_fill_texts: Optional[List[Optional[str]]] = None
     fillable_option_indices: Optional[List[int]] = None
@@ -223,6 +225,7 @@ def configure_probabilities(
     _target.question_config_index_map = {}
     _target.question_dimension_map = {}
     _target.question_reverse_map = {}
+    _target.question_psycho_bias_map = {}
 
     # 各题型的当前索引,用于构建 question_config_index_map
     _idx_single = 0
@@ -273,6 +276,11 @@ def configure_probabilities(
                 _target.question_reverse_map[question_num] = list(_row_flags)
             else:
                 _target.question_reverse_map[question_num] = bool(getattr(entry, "is_reverse", False))
+            bias_value = getattr(entry, "psycho_bias", "custom")
+            if isinstance(bias_value, list):
+                _target.question_psycho_bias_map[question_num] = list(bias_value)
+            else:
+                _target.question_psycho_bias_map[question_num] = str(bias_value or "custom")
             _idx_matrix += rows
             option_count = max(1, _infer_option_count(entry))
 
@@ -325,6 +333,7 @@ def configure_probabilities(
             _target.question_config_index_map[question_num] = (entry.question_type, _idx_scale)
             _target.question_dimension_map[question_num] = _RELIABILITY_GLOBAL_DIMENSION if reliability_mode_enabled else None
             _target.question_reverse_map[question_num] = getattr(entry, "is_reverse", False)
+            _target.question_psycho_bias_map[question_num] = str(getattr(entry, "psycho_bias", "custom") or "custom")
             _idx_scale += 1
             _target.scale_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
         elif entry.question_type == "slider":
@@ -393,16 +402,7 @@ def configure_probabilities(
 
 
 def validate_question_config(entries: List[QuestionEntry], questions_info: Optional[List[dict]] = None) -> Optional[str]:
-    """
-    验证题目配置是否存在冲突，返回错误信息（如果有）。
-
-    Args:
-        entries: 题目配置列表
-        questions_info: 问卷解析信息（包含多选题限制等）
-
-    Returns:
-        错误信息字符串，如果验证通过则返回 None
-    """
+    """验证题目配置是否存在冲突，返回错误信息（如果有）。"""
     if not entries:
         return "未配置任何题目"
 

@@ -11,13 +11,7 @@ class RatioSlider(QWidget):
     valueChanged = Signal(dict)  # 发射 {"key1": value1, "key2": value2, "key3": value3}
 
     def __init__(self, labels: dict, parent=None):
-        """
-        初始化三联动占比滑块
-
-        Args:
-            labels: 字典，格式为 {"key1": "显示名称1", "key2": "显示名称2", "key3": "显示名称3"}
-            parent: 父组件
-        """
+        """初始化三联动占比滑块"""
         super().__init__(parent)
 
         if len(labels) != 3:

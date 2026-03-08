@@ -31,13 +31,7 @@ class StatusPollingMixin:
         status_formatter: Optional[Callable],
         interval_ms: int = 5000
     ):
-        """初始化状态轮询
-        
-        Args:
-            status_fetcher: 获取状态的函数
-            status_formatter: 格式化状态的函数，返回 (text, color) 元组
-            interval_ms: 轮询间隔（毫秒）
-        """
+        """初始化状态轮询"""
         self._status_fetcher = status_fetcher
         self._status_formatter = status_formatter
         self._status_timer = None

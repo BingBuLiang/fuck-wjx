@@ -18,6 +18,10 @@
 
 ```markdown
 仓库根目录
+├── .github/
+│   ├── workflows/
+│   │   └── release-to-r2.yml  # CI/CD 自动发布到 R2
+│   └── ISSUE_TEMPLATE/        # Issue 模板（报错反馈、新功能请求）
 ├── fuck-wjx.py
 ├── rthook_pyside6.py     # PySide6 打包钩子
 ├── test_wjx_imports.py   # 导入检测脚本
@@ -46,7 +50,7 @@ wjx/
 ├── ui/                    # 界面层
 │   ├── main_window.py     # 主窗口编排
 │   ├── main_window_parts/ # 主窗口拆分模块（lazy_pages/popup_compat/update）
-│   ├── controller/        # 运行控制器（run_controller.py）
+│   ├── controller/        # 运行控制器入口（run_controller.py）与拆分模块（run_controller_parts/）
 │   ├── dialogs/           # 对话框（card_unlock/contact/terms_of_service）
 │   ├── helpers/           # 界面辅助逻辑（ai_fill/image_attachments）
 │   ├── workers/           # 后台任务（ai_test_worker/update_worker）
@@ -59,7 +63,7 @@ wjx/
 │           ├── dashboard.py
 │           ├── answer_rules.py   # 作答规则页（条件 -> 动作）
 │           ├── log.py
-│           ├── dashboard_parts/  # dashboard 拆分模块（clipboard/entries/random_ip）
+│           ├── dashboard_parts/  # dashboard 拆分模块（clipboard/entries/progress/random_ip）
 │           ├── question/         # 题目配置界面（page/add_dialog/add_preview/wizard_dialog/wizard_sections/psycho_config/constants/utils）
 │           └── runtime/          # 运行时界面（main/cards/ai/dialogs）
 ├── network/               # 网络相关

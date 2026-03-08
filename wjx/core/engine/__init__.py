@@ -17,7 +17,7 @@ from wjx.core.engine.question_detection import detect
 from wjx.core.engine.runner import run
 from wjx.core.engine.runtime_control import (
     _handle_submission_failure,
-    _is_fast_mode,
+    _is_headless_mode,
     _sleep_with_stop,
     _timed_mode_active,
     _trigger_target_reached_stop,
@@ -45,7 +45,7 @@ __all__ = [
     "_normalize_html_text",
     "_normalize_question_type_code",
     "create_playwright_driver",
-    "_is_fast_mode",
+    "_is_headless_mode",
     "_timed_mode_active",
     "_handle_submission_failure",
     "_wait_if_paused",

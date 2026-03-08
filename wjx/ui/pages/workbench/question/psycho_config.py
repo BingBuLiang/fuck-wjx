@@ -15,15 +15,7 @@ BIAS_PRESET_CHOICES = [
 
 
 def build_bias_weights(option_count: int, bias: str) -> List[float]:
-    """根据倾向方向生成一组权重（归一化到 0-100，使用指数曲线使倾向更激进）。
-
-    Args:
-        option_count: 选项数量
-        bias: 倾向方向 (left/center/right)
-
-    Returns:
-        权重列表，最大值为 100，最小值趋近 0
-    """
+    """根据倾向方向生成一组权重（归一化到 0-100，使用指数曲线使倾向更激进）。"""
     import math
     count = max(1, int(option_count or 1))
     if count == 1:

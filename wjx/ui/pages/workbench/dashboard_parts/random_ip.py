@@ -6,7 +6,8 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from PySide6.QtCore import QSettings, QTimer
+from PySide6.QtCore import QSettings, QTimer, Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QDialog
 from qfluentwidgets import FluentIcon
 
@@ -27,7 +28,7 @@ from wjx.utils.logging.log_utils import log_suppressed_exception
 from wjx.utils.system.registry_manager import RegistryManager
 
 if TYPE_CHECKING:
-    from qfluentwidgets import BodyLabel, CheckBox, LineEdit, PushButton
+    from qfluentwidgets import BodyLabel, CheckBox, PushButton
     from wjx.ui.controller import RunController
     from wjx.ui.pages.workbench.runtime import RuntimePage
     from wjx.ui.widgets.full_width_infobar import FullWidthInfoBar
@@ -38,7 +39,6 @@ class DashboardRandomIPMixin:
 
     if TYPE_CHECKING:
         # 以下属性由 DashboardPage 主类提供，此处仅用于 Pylance 类型检查
-        url_edit: LineEdit
         card_btn: PushButton
         random_ip_hint: BodyLabel
         random_ip_cb: CheckBox
@@ -55,29 +55,37 @@ class DashboardRandomIPMixin:
         _ip_balance_fetch_interval_sec: float
         _debug_reset_in_progress: bool
         _debug_reset_started_at: float
+        _debug_reset_shortcut: Optional[QShortcut]
         _debugResetFinished: Any  # PySide6.QtCore.Signal，Mixin 中无法精确声明描述符类型
         _ipBalanceChecked: Any   # 同上
 
         def _toast(self, text: str, level: str = "info", duration: int = 2000, show_progress: bool = False) -> Any: ...
         def window(self) -> Any: ...  # 继承自 QWidget，此处仅供类型检查
 
-    def _on_url_text_changed(self, text: str):
-        """监听问卷链接输入框文本变化，检测 reset 命令（仅调试模式下可用）"""
-        if text.strip().lower() != "reset":
-            return
-
+    @staticmethod
+    def _is_debug_mode_enabled() -> bool:
         settings = QSettings("FuckWjx", "Settings")
-        debug_mode = get_bool_from_qsettings(settings.value("debug_mode"), False)
-        if not debug_mode:
+        return get_bool_from_qsettings(settings.value("debug_mode"), False)
+
+    def _bind_debug_reset_shortcut(self) -> None:
+        """绑定全局调试重置快捷键：Alt+Shift+R。"""
+        if getattr(self, "_debug_reset_shortcut", None) is not None:
+            return
+        shortcut = QShortcut(QKeySequence("Alt+Shift+R"), self)
+        shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        shortcut.activated.connect(self._on_debug_reset_shortcut_activated)
+        self._debug_reset_shortcut = shortcut
+
+    def _on_debug_reset_shortcut_activated(self) -> None:
+        """仅在调试模式下触发随机IP额度重置。"""
+        if not self._is_debug_mode_enabled():
             return
 
         if self._debug_reset_in_progress:
-            self.url_edit.clear()
             return
 
         self._debug_reset_in_progress = True
         self._debug_reset_started_at = time.monotonic()
-        self.url_edit.clear()
         self._toast("正在重置随机IP额度...", "info", duration=-1, show_progress=True)
 
         thread = threading.Thread(
@@ -149,18 +157,25 @@ class DashboardRandomIPMixin:
         # 三态按钮：未验证 → 已验证(可申请更多) → 二次验证(禁用)
         is_verified = RegistryManager.is_card_verified()
         is_extra = RegistryManager.is_extra_quota_verified()
+        has_used_random_ip = int(count or 0) > 0
+        debug_mode = self._is_debug_mode_enabled()
+        can_request_quota = has_used_random_ip or debug_mode
         if is_verified and is_extra:
             self.card_btn.setEnabled(False)
             self.card_btn.setText("已解锁")
             self.card_btn.setIcon(FluentIcon.FINGERPRINT)
         elif is_verified:
-            self.card_btn.setEnabled(True)
+            self.card_btn.setEnabled(can_request_quota)
             self.card_btn.setText("申请更多额度")
             self.card_btn.setIcon(FluentIcon.SHOPPING_CART)
         else:
-            self.card_btn.setEnabled(True)
+            self.card_btn.setEnabled(can_request_quota)
             self.card_btn.setText("解锁大额IP")
             self.card_btn.setIcon(FluentIcon.FINGERPRINT)
+        if (not can_request_quota) and (not (is_verified and is_extra)):
+            self.card_btn.setToolTip("请先使用随机IP提交至少1次后再申请")
+        else:
+            self.card_btn.setToolTip("")
 
         if custom_api:
             self.random_ip_hint.setText("自定义接口")
@@ -267,7 +282,7 @@ class DashboardRandomIPMixin:
                 refresh_ip_counter_display(self.controller.adapter)
                 return
             if (not custom_api) and count >= limit:
-                self._toast(f"随机IP已达{limit}份限制，请验证卡密后再启用。", "warning")
+                self._toast(f"随机IP已达{limit}份限制，请核销卡密后再启用。", "warning")
                 self.random_ip_cb.blockSignals(True)
                 self.random_ip_cb.setChecked(False)
                 self.random_ip_cb.blockSignals(False)
@@ -316,6 +331,9 @@ class DashboardRandomIPMixin:
 
     def _on_card_code_clicked(self):
         """用户主动输入卡密解锁大额随机IP。"""
+        if RegistryManager.read_submit_count() <= 0 and (not self._is_debug_mode_enabled()):
+            self._toast("请先使用随机IP提交至少1次后再申请额度。", "warning", duration=2500)
+            return
         was_already_verified = RegistryManager.is_card_verified()
         dialog = CardUnlockDialog(
             self,

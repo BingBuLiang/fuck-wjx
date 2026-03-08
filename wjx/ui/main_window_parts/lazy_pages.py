@@ -13,7 +13,7 @@ from qfluentwidgets import (
 )
 
 if TYPE_CHECKING:
-    from PySide6.QtWidgets import QStackedWidget, QWidget
+    from PySide6.QtWidgets import QStackedWidget
     from wjx.ui.pages.workbench.answer_rules import AnswerRulesPage
     from wjx.ui.pages.workbench.dashboard import DashboardPage
     from wjx.ui.pages.workbench.runtime import RuntimePage
@@ -29,10 +29,9 @@ class MainWindowLazyPagesMixin:
         answer_rules_page: AnswerRulesPage
         stackedWidget: QStackedWidget
         navigationInterface: Any  # qfluentwidgets.NavigationInterface
-
-        def addSubInterface(self, interface: QWidget, icon: Any, text: str, position: Any = ..., parent: Any = None, isTransparent: bool = False) -> Any: ...
-        def switchTo(self, interface: QWidget) -> None: ...
-        def close(self) -> bool: ...  # 继承自 QWidget
+        addSubInterface: Any
+        switchTo: Any
+        close: Any  # 继承自 QWidget
 
     def _init_navigation(self):
         self.addSubInterface(self.dashboard, FluentIcon.HOME, "概览", NavigationItemPosition.TOP)
@@ -83,8 +82,8 @@ class MainWindowLazyPagesMixin:
                 self.stackedWidget.addWidget(self._support_page)
             if hasattr(self, "_on_card_request_contact_sent") and hasattr(self._support_page, "contact_form"):
                 if not getattr(self._support_page, "_card_badge_signal_connected", False):
-                    self._support_page.contact_form.cardRequestSucceeded.connect(self._on_card_request_contact_sent)
-                    self._support_page._card_badge_signal_connected = True
+                    self._support_page.contact_form.cardRequestSucceeded.connect(getattr(self, "_on_card_request_contact_sent"))
+                    setattr(self._support_page, "_card_badge_signal_connected", True)
         return self._support_page
 
     def _get_community_page(self):
@@ -108,7 +107,7 @@ class MainWindowLazyPagesMixin:
         return self._about_page
 
     def _get_changelog_page(self):
-        """懒加载更新日志页面"""
+        """懒加载更新日志页面（列表+详情已整合为单一页面）"""
         if self._changelog_page is None:
             from wjx.ui.pages.more.changelog import ChangelogPage
 
@@ -117,17 +116,6 @@ class MainWindowLazyPagesMixin:
             if self.stackedWidget.indexOf(self._changelog_page) == -1:
                 self.stackedWidget.addWidget(self._changelog_page)
         return self._changelog_page
-
-    def _get_changelog_detail_page(self):
-        """懒加载更新日志详情页面"""
-        if self._changelog_detail_page is None:
-            from wjx.ui.pages.more.changelog import ChangelogDetailPage
-
-            self._changelog_detail_page = ChangelogDetailPage(self)
-            self._changelog_detail_page.setObjectName("changelog_detail")
-            if self.stackedWidget.indexOf(self._changelog_detail_page) == -1:
-                self.stackedWidget.addWidget(self._changelog_detail_page)
-        return self._changelog_detail_page
 
     def _get_ip_usage_page(self):
         """懒加载 IP 使用记录页面"""
@@ -152,20 +140,8 @@ class MainWindowLazyPagesMixin:
         return self._donate_page
 
     def _init_changelog_navigation(self):
-        """初始化更新日志页面导航"""
-        changelog_page = self._get_changelog_page()
-        changelog_detail_page = self._get_changelog_detail_page()
-
-        # 连接信号：点击列表项时切换到详情页
-        changelog_page.detailRequested.connect(self._show_changelog_detail)
-        # 连接信号：点击返回按钮时切换回列表页
-        changelog_detail_page.backRequested.connect(lambda: self._switch_to_more_page(changelog_page))
-
-    def _show_changelog_detail(self, release: dict):
-        """显示更新日志详情"""
-        changelog_detail_page = self._get_changelog_detail_page()
-        changelog_detail_page.setRelease(release)
-        self._switch_to_more_page(changelog_detail_page)
+        """初始化更新日志导航（切换逻辑已整合到 ChangelogPage 内部）"""
+        self._get_changelog_page()  # 预先初始化，使信号连接就绪
 
     def _show_about_menu(self):
         """显示关于子菜单"""
@@ -219,9 +195,9 @@ class MainWindowLazyPagesMixin:
             menu.exec(pos, aniType=MenuAnimationType.DROP_DOWN)
 
     def _switch_to_more_page(self, page):
-        """切换到“更多”相关页面，并同步侧边栏高亮"""
+        """切换到更多相关页面，并同步侧边栏高亮"""
         self.switchTo(page)
         try:
             self.navigationInterface.setCurrentItem("about_menu")
         except Exception:
-            logging.debug("同步“更多”侧边栏高亮失败", exc_info=True)
+            logging.debug("同步更多侧边栏高亮失败", exc_info=True)

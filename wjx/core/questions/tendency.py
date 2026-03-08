@@ -188,7 +188,10 @@ def _apply_consistency(
     if isinstance(probabilities, list) and len(probabilities) == option_count:
         adjusted_probs = []
         for i in range(option_count):
-            if low <= i <= high:
+            # 如果原始概率为0，则不应该选择这个选项
+            if probabilities[i] <= 0:
+                adjusted_probs.append(0.0)
+            elif low <= i <= high:
                 distance = abs(i - effective_base)
                 decay = _window_decay(distance, fluctuation_window)
                 adjusted_probs.append(probabilities[i] * decay)
@@ -199,6 +202,10 @@ def _apply_consistency(
         if total > 0:
             adjusted_probs = [p / total for p in adjusted_probs]
             return weighted_index(adjusted_probs)
+        else:
+            # 如果所有概率都是0（不应该发生），回退到基准
+            logging.warning(f"所有选项概率都为0，回退到基准索引 {effective_base}")
+            return effective_base
 
     # 随机模式或无有效概率：在约束范围内按距离衰减抽样，偏向基准
     candidates = list(range(low, high + 1))

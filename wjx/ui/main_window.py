@@ -6,7 +6,7 @@ import logging
 import os
 import sys
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from PySide6.QtCore import Qt, QTimer, QSettings, Signal, QEvent
 from PySide6.QtGui import QIcon, QGuiApplication, QColor
@@ -30,7 +30,7 @@ from wjx.ui.pages.workbench.runtime import RuntimePage
 from wjx.ui.pages.workbench.question import QuestionPage
 from wjx.ui.pages.workbench.answer_rules import AnswerRulesPage
 
-from wjx.ui.dialogs.card_unlock import CardUnlockDialog
+from wjx.ui.dialogs.quota_request import QuotaRequestDialog
 from wjx.ui.dialogs.contact import ContactDialog
 
 from wjx.ui.controller import RunController
@@ -111,10 +111,10 @@ class MainWindow(
 
         self.controller = RunController(self)
         self.controller.on_ip_counter = None  # will be set after dashboard creation
-        # 沿用旧 provider 桥接，兼容随机IP链路里触发额度申请弹窗的调用方式。
-        self.controller.card_code_provider = self._ask_card_code
+        # 额度申请入口桥接，供随机IP链路触发申请弹窗。
+        self.controller.quota_request_handler = self._open_quota_request_dialog
         try:
-            self.controller.adapter._card_code_provider = self._ask_card_code
+            self.controller.adapter._quota_request_handler = self._open_quota_request_dialog
         except Exception as exc:
             log_suppressed_exception("__init__: sync adapter quota request provider", exc, level=logging.WARNING)
         # 立即初始化关键页面
@@ -587,16 +587,14 @@ class MainWindow(
         self._toast(text, "error")
         self.dashboard._open_wizard_after_parse = False
 
-    def _ask_card_code(self) -> Optional[str]:
-        dialog = CardUnlockDialog(
+    def _open_quota_request_dialog(self) -> bool:
+        dialog = QuotaRequestDialog(
             self,
             status_fetcher=get_status,
             status_formatter=_format_status_payload,
             contact_handler=lambda: self._open_contact_dialog(default_type="额度申请"),
         )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            return dialog.get_card_code()
-        return None
+        return dialog.exec() == QDialog.DialogCode.Accepted
 
 
 def create_window() -> MainWindow:

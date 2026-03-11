@@ -1,35 +1,35 @@
 """随机IP额度申请对话框。"""
+import logging
 import webbrowser
 from typing import Optional
-import logging
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout
 from qfluentwidgets import (
     BodyLabel,
-    TitleLabel,
-    StrongBodyLabel,
     CardWidget,
-    PushButton,
-    IndeterminateProgressRing,
     FluentIcon,
     IconWidget,
+    IndeterminateProgressRing,
     MessageBox,
+    PushButton,
+    StrongBodyLabel,
+    TitleLabel,
 )
 
+from wjx.network.proxy import _format_status_payload, get_status
+from wjx.ui.pages.more.donate import DonatePage
 from wjx.ui.widgets import StatusPollingMixin
-from wjx.network.proxy import get_status, _format_status_payload
 from wjx.utils.app.version import ISSUE_FEEDBACK_URL
 from wjx.utils.logging.log_utils import log_suppressed_exception
-from wjx.ui.pages.more.donate import DonatePage
 
 
-class CardUnlockDialog(StatusPollingMixin, QDialog):
-    """保留原弹窗结构，但已改为随机IP额度申请说明窗。"""
+class QuotaRequestDialog(StatusPollingMixin, QDialog):
+    """随机IP额度申请说明窗。"""
 
     _statusLoaded = Signal(str, str)  # text, color
 
-    def __init__(self, parent=None, status_fetcher=None, status_formatter=None, contact_handler=None, card_validator=None):
+    def __init__(self, parent=None, status_fetcher=None, status_formatter=None, contact_handler=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.setWindowTitle("申请随机IP额度")
@@ -146,6 +146,7 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
                     self.accept()
                 return
             from wjx.ui.dialogs import ContactDialog
+
             dlg = ContactDialog(
                 self.window() or self,
                 default_type="额度申请",
@@ -184,11 +185,5 @@ class CardUnlockDialog(StatusPollingMixin, QDialog):
             log_suppressed_exception("_open_donate: show donate dialog", exc, level=logging.WARNING)
             webbrowser.open("https://github.com/hungryM0/fuck-wjx")
 
-    def get_card_code(self) -> Optional[str]:
-        return None
-
     def get_validation_result(self) -> Optional[bool]:
         return self._validation_result
-
-    def get_validation_quota(self) -> Optional[int]:
-        return None

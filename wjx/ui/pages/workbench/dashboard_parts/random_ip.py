@@ -17,7 +17,7 @@ from wjx.network.proxy import (
     on_random_ip_toggle,
     refresh_ip_counter_display,
 )
-from wjx.ui.dialogs.card_unlock import CardUnlockDialog
+from wjx.ui.dialogs.quota_request import QuotaRequestDialog
 from wjx.ui.dialogs.contact import ContactDialog
 from wjx.utils.logging.log_utils import log_suppressed_exception
 
@@ -194,24 +194,6 @@ class DashboardRandomIPMixin:
         self._set_runtime_ip_switch(enabled)
         refresh_ip_counter_display(self.controller.adapter)
 
-    def _ask_card_code(self) -> Optional[str]:
-        """兼容旧入口：弹出额度申请说明窗。"""
-        win = self.window()
-        if hasattr(win, "_ask_card_code"):
-            try:
-                return win._ask_card_code()  # type: ignore[union-attr]
-            except Exception as exc:
-                log_suppressed_exception("_ask_card_code: main window passthrough", exc, level=logging.WARNING)
-        dialog = CardUnlockDialog(
-            self,
-            status_fetcher=get_status,
-            status_formatter=_format_status_payload,
-            contact_handler=lambda: self._open_contact_dialog(default_type="额度申请"),
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            return dialog.get_card_code()
-        return None
-
     def _open_contact_dialog(self, default_type: str = "报错反馈"):
         """打开联系对话框"""
         win = self.window()
@@ -225,7 +207,7 @@ class DashboardRandomIPMixin:
 
     def _on_request_quota_clicked(self):
         """用户主动打开额度申请说明窗。"""
-        dialog = CardUnlockDialog(
+        dialog = QuotaRequestDialog(
             self,
             status_fetcher=get_status,
             status_formatter=_format_status_payload,

@@ -188,13 +188,12 @@ def _open_quota_request_dialog(gui: Any, default_type: str = "额度申请") -> 
             return bool(handler(default_type))
         except Exception as exc:
             log_suppressed_exception("_open_quota_request_dialog passthrough", exc)
-    legacy_handler = getattr(gui, "request_card_code", None) if gui is not None else None
-    if callable(legacy_handler):
+    adapter_handler = getattr(gui, "open_quota_request_dialog", None) if gui is not None else None
+    if callable(adapter_handler):
         try:
-            legacy_handler()
-            return False
+            return bool(adapter_handler())
         except Exception as exc:
-            log_suppressed_exception("_open_quota_request_dialog legacy request_card_code", exc)
+            log_suppressed_exception("_open_quota_request_dialog adapter open_quota_request_dialog", exc)
     _invoke_popup(gui, "warning", "需要申请额度", "请在“联系开发者”中提交随机IP额度申请。")
     return False
 
@@ -301,11 +300,6 @@ def show_quota_request_dialog(gui: Any = None, *, require_confirm: bool = True) 
         if not _invoke_popup(gui, "confirm", "申请随机IP额度", prompt):
             return False
     return _open_quota_request_dialog(gui, "额度申请")
-
-
-def show_card_validation_dialog(gui: Any = None, *, require_confirm: bool = True) -> bool:
-    """兼容旧调用名，实际行为已切换为打开额度申请。"""
-    return show_quota_request_dialog(gui, require_confirm=require_confirm)
 
 
 def refresh_ip_counter_display(gui: Any) -> None:

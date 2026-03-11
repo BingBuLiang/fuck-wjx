@@ -610,5 +610,5 @@ from .gui_bridge import (  # noqa: F401
     ensure_random_ip_ready,
     refresh_ip_counter_display,
     handle_random_ip_submission,
-    show_card_validation_dialog,
+    show_quota_request_dialog,
 )

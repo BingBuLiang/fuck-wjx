@@ -60,7 +60,7 @@ class RunControllerRuntimeMixin:
         adapter = adapter_cls(
             self._dispatch_to_ui,
             stop_signal,
-            card_code_provider=getattr(self, "card_code_provider", None),
+            quota_request_handler=getattr(self, "quota_request_handler", None),
             on_ip_counter=getattr(self, "on_ip_counter", None),
             on_random_ip_loading=getattr(self, "on_random_ip_loading", None),
             async_dispatcher=self._dispatch_to_ui_async,

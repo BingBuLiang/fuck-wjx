@@ -147,11 +147,9 @@ def get_proxy_auth() -> str:
     """获取代理认证信息（仅保留环境变量兼容）。"""
     return os.environ.get("WJX_PROXY_AUTH", "")
 _DEFAULT_CONTACT_API = "https://bot.hungrym0.top"
-_DEFAULT_AUTH_ACTIVATE = "https://api-wjx.hungrym0.top/api/auth/activate"
 _DEFAULT_AUTH_TRIAL = "https://api-wjx.hungrym0.top/api/auth/trial"
 _DEFAULT_AUTH_REFRESH = "https://api-wjx.hungrym0.top/api/auth/refresh"
 _DEFAULT_AUTH_BONUS_CLAIM = "https://api-wjx.hungrym0.top/api/bonus"
-_DEFAULT_CARD_VALIDATION = "https://api-wjx.hungrym0.top/api/card/verify"
 _DEFAULT_IP_EXTRACT_ENDPOINT = "https://api-wjx.hungrym0.top/api/ip/extract"
 _DEFAULT_STATUS_ENDPOINT = "https://api-wjx.hungrym0.top/api/status"
 _DEFAULT_EMAIL_VERIFY_ENDPOINT = "https://api-wjx.hungrym0.top/api/email"
@@ -232,11 +230,9 @@ PROXY_HEALTH_CHECK_URL = "https://www.wjx.cn"
 PROXY_HEALTH_CHECK_TIMEOUT = 15
 # ==================== API 端点配置 ====================
 CONTACT_API_URL = _resolve_env_value("CONTACT_API_URL", _DEFAULT_CONTACT_API)
-AUTH_ACTIVATE_ENDPOINT = _resolve_env_value("AUTH_ACTIVATE_ENDPOINT", _DEFAULT_AUTH_ACTIVATE)
 AUTH_TRIAL_ENDPOINT = _resolve_env_value("AUTH_TRIAL_ENDPOINT", _DEFAULT_AUTH_TRIAL)
 AUTH_REFRESH_ENDPOINT = _resolve_env_value("AUTH_REFRESH_ENDPOINT", _DEFAULT_AUTH_REFRESH)
 AUTH_BONUS_CLAIM_ENDPOINT = _resolve_env_value("AUTH_BONUS_CLAIM_ENDPOINT", _DEFAULT_AUTH_BONUS_CLAIM)
-CARD_VALIDATION_ENDPOINT = _resolve_env_value("CARD_VALIDATION_ENDPOINT", _DEFAULT_CARD_VALIDATION)
 IP_EXTRACT_ENDPOINT = _resolve_env_value("IP_EXTRACT_ENDPOINT", _DEFAULT_IP_EXTRACT_ENDPOINT)
 STATUS_ENDPOINT = _resolve_env_value("STATUS_ENDPOINT", _DEFAULT_STATUS_ENDPOINT)
 EMAIL_VERIFY_ENDPOINT = _resolve_env_value("EMAIL_VERIFY_ENDPOINT", _DEFAULT_EMAIL_VERIFY_ENDPOINT)

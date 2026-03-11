@@ -51,7 +51,7 @@ wjx/
 │   ├── main_window.py     # 主窗口编排
 │   ├── main_window_parts/ # 主窗口拆分模块（lazy_pages/popup_compat/update）
 │   ├── controller/        # 运行控制器入口（run_controller.py）与拆分模块（run_controller_parts/）
-│   ├── dialogs/           # 对话框（card_unlock/contact/terms_of_service）
+│   ├── dialogs/           # 对话框（quota_request/contact/terms_of_service）
 │   ├── helpers/           # 界面辅助逻辑（ai_fill/image_attachments）
 │   ├── workers/           # 后台任务（ai_test_worker/update_worker）
 │   ├── widgets/           # 通用 UI 组件（setting_cards/config_drawer/contact_form/full_width_infobar/log_highlighter/no_wheel/ratio_slider/status_polling_mixin/status_worker/time_range_slider）
@@ -73,7 +73,6 @@ wjx/
 │   │   ├── auth.py        # 随机IP鉴权、会话与令牌刷新
 │   │   ├── provider.py    # 代理获取、URL构建、代理源管理
 │   │   ├── quota.py       # 额度管理（以后端会话与默认额度缓存为准）
-│   │   ├── card.py        # 卡密激活（纯逻辑）
 │   │   └── gui_bridge.py  # GUI交互桥接（弹窗、线程派发、开关控制）
 │   ├── http_client.py     # 请求策略
 │   └── session_policy.py  # 会话策略

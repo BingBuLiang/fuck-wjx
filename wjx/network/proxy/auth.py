@@ -13,7 +13,6 @@ from PySide6.QtCore import QSettings
 
 import wjx.network.http_client as http_client
 from wjx.utils.app.config import (
-    AUTH_ACTIVATE_ENDPOINT,
     AUTH_BONUS_CLAIM_ENDPOINT,
     AUTH_REFRESH_ENDPOINT,
     AUTH_TRIAL_ENDPOINT,
@@ -255,16 +254,6 @@ def format_random_ip_error(exc: BaseException) -> str:
         return "设备标识缺失，请重启软件后重试"
     if detail == "invalid_request_body":
         return "请求格式不正确，请更新客户端后重试"
-    if detail == "code_required":
-        return "请输入激活码"
-    if detail == "invalid_code":
-        return "激活码无效，请检查后重试"
-    if detail == "device_owned_by_other_user":
-        return "当前设备已绑定其他账号，请联系开发者处理"
-    if detail == "activate_rate_limited":
-        if exc.retry_after_seconds > 0:
-            return f"验证过于频繁，请 {exc.retry_after_seconds} 秒后再试"
-        return "验证过于频繁，请稍后再试"
     if detail in {"trial_already_claimed", "trial_already_used", "device_trial_already_claimed"}:
         return "当前设备已领取过免费试用，请前往申请随机IP额度"
     if detail == "trial_rate_limited":
@@ -436,17 +425,6 @@ def _parse_session_response(response: Any) -> RandomIPSession:
     if not session.refresh_token:
         raise RandomIPAuthError("invalid_response")
     return session
-
-
-def activate_card(card_code: str) -> RandomIPSession:
-    code = str(card_code or "").strip()
-    if not code:
-        raise RandomIPAuthError("code_required")
-    response = _post_json(AUTH_ACTIVATE_ENDPOINT, json_body={"code": code})
-    if int(getattr(response, "status_code", 0) or 0) != 200:
-        raise _extract_error_payload(response)
-    session = _parse_session_response(response)
-    return _set_session(session)
 
 
 def activate_trial() -> RandomIPSession:

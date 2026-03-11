@@ -38,7 +38,7 @@ class EngineGuiAdapter:
         self,
         dispatcher: Callable[[Callable[[], None]], None],
         stop_signal: threading.Event,
-        card_code_provider: Optional[Callable[[], Optional[str]]] = None,
+        quota_request_handler: Optional[Callable[[], bool]] = None,
         on_ip_counter: Optional[Callable[[int, int, bool], None]] = None,
         on_random_ip_loading: Optional[Callable[[bool, str], None]] = None,
         async_dispatcher: Optional[Callable[[Callable[[], None]], None]] = None,
@@ -49,7 +49,7 @@ class EngineGuiAdapter:
         self._dispatcher = dispatcher
         self._async_dispatcher = async_dispatcher or dispatcher
         self._stop_signal = stop_signal
-        self._card_code_provider = card_code_provider
+        self._quota_request_handler = quota_request_handler
         self.update_random_ip_counter = on_ip_counter
         self._on_random_ip_loading = on_random_ip_loading
         self.task_ctx: Optional[TaskContext] = None
@@ -102,14 +102,14 @@ class EngineGuiAdapter:
     def stop_run(self):
         self._stop_signal.set()
 
-    def request_card_code(self) -> Optional[str]:
-        if callable(self._card_code_provider):
+    def open_quota_request_dialog(self) -> bool:
+        if callable(self._quota_request_handler):
             try:
-                return self._card_code_provider()
+                return bool(self._quota_request_handler())
             except Exception:
-                logging.warning("打开额度申请入口失败，返回空值", exc_info=True)
-                return None
-        return None
+                logging.warning("打开额度申请入口失败", exc_info=True)
+                return False
+        return False
 
     def set_random_ip_loading(self, loading: bool, message: str = "") -> None:
         callback = self._on_random_ip_loading
@@ -158,7 +158,7 @@ class RunController(
         self._task_ctx: Optional[TaskContext] = None
         self._cleanup_runner = CleanupRunner()
         self.on_ip_counter: Optional[Callable[[int, int, bool], None]] = None
-        self.card_code_provider: Optional[Callable[[], Optional[str]]] = None
+        self.quota_request_handler: Optional[Callable[[], bool]] = None
         self._engine_adapter_cls = EngineGuiAdapter
         self.adapter = self._create_adapter(self.stop_event, random_ip_enabled=False)
         self.running = False

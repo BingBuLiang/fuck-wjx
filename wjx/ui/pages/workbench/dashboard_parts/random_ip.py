@@ -1,17 +1,15 @@
-"""DashboardPage 随机 IP 与卡密相关方法。"""
+"""DashboardPage 随机 IP 与额度申请相关方法。"""
 from __future__ import annotations
 
 import logging
 import threading
 from typing import TYPE_CHECKING, Any, Optional
-
 from PySide6.QtWidgets import QDialog
 from qfluentwidgets import FluentIcon
 
 from wjx.network.proxy.auth import has_authenticated_session
 from wjx.network.proxy import (
     _format_status_payload,
-    _validate_card,
     get_proxy_minute_by_answer_seconds,
     get_quota_cost_by_minute,
     get_random_ip_counter_snapshot_local,
@@ -31,7 +29,7 @@ if TYPE_CHECKING:
 
 
 class DashboardRandomIPMixin:
-    """随机 IP、额度提示、卡密与调试重置逻辑。"""
+    """随机 IP、额度提示、额度申请与调试重置逻辑。"""
 
     if TYPE_CHECKING:
         # 以下属性由 DashboardPage 主类提供，此处仅用于 Pylance 类型检查
@@ -82,14 +80,16 @@ class DashboardRandomIPMixin:
 
     def update_random_ip_counter(self, count: int, limit: int, custom_api: bool):
         authenticated = has_authenticated_session()
-        remaining = max(0, int(limit or 0) - int(count or 0))
+        used = max(0, int(count or 0))
+        total = max(0, int(limit or 0))
+        remaining = max(0, total - used)
         self.card_btn.setEnabled(True)
-        self.card_btn.setText("解锁更高额度")
+        self.card_btn.setText("申请额度")
         self.card_btn.setIcon(FluentIcon.FINGERPRINT)
         if authenticated:
-            self.card_btn.setToolTip("输入卡密可补充更高的随机IP额度")
+            self.card_btn.setToolTip("提交额度申请后，开发者会人工补充随机IP额度")
         else:
-            self.card_btn.setToolTip("勾选随机IP会自动尝试试用激活；这里可直接输入卡密解锁更高额度")
+            self.card_btn.setToolTip("勾选随机IP会自动尝试领取试用；试用不可用时可在这里提交额度申请")
 
         if custom_api:
             self.random_ip_hint.setText("自定义接口")
@@ -107,7 +107,7 @@ class DashboardRandomIPMixin:
                 self.random_ip_cb.setChecked(False)
                 self.random_ip_cb.blockSignals(False)
             return
-        self.random_ip_hint.setText(f"剩余 {remaining}/{limit}")
+        self.random_ip_hint.setText(f"{used}/{total}")
         if remaining <= 0:
             self.random_ip_hint.setStyleSheet("color:red;")
         else:
@@ -195,7 +195,7 @@ class DashboardRandomIPMixin:
         refresh_ip_counter_display(self.controller.adapter)
 
     def _ask_card_code(self) -> Optional[str]:
-        """向主窗口请求卡密输入，兜底弹出输入框。"""
+        """兼容旧入口：弹出额度申请说明窗。"""
         win = self.window()
         if hasattr(win, "_ask_card_code"):
             try:
@@ -206,7 +206,7 @@ class DashboardRandomIPMixin:
             self,
             status_fetcher=get_status,
             status_formatter=_format_status_payload,
-            contact_handler=lambda: self._open_contact_dialog(default_type="卡密获取"),
+            contact_handler=lambda: self._open_contact_dialog(default_type="额度申请"),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             return dialog.get_card_code()
@@ -223,18 +223,15 @@ class DashboardRandomIPMixin:
         dlg = ContactDialog(self, default_type=default_type, status_fetcher=get_status, status_formatter=_format_status_payload)
         dlg.exec()
 
-    def _on_card_code_clicked(self):
-        """用户主动输入卡密解锁更高随机IP额度。"""
+    def _on_request_quota_clicked(self):
+        """用户主动打开额度申请说明窗。"""
         dialog = CardUnlockDialog(
             self,
             status_fetcher=get_status,
             status_formatter=_format_status_payload,
-            contact_handler=lambda: self._open_contact_dialog(default_type="卡密获取"),
-            card_validator=_validate_card,
+            contact_handler=lambda: self._open_contact_dialog(default_type="额度申请"),
         )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        if bool(dialog.get_validation_result()):
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             refresh_ip_counter_display(self.controller.adapter)
 
     def _on_ip_low_infobar_closed(self):

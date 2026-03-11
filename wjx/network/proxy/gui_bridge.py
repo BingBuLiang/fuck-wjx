@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Any, Callable, Optional
 
 from PySide6.QtCore import QEventLoop, QTimer
@@ -12,12 +13,12 @@ from wjx.network.proxy.auth import (
     activate_trial,
     format_random_ip_error,
     get_fresh_quota_snapshot,
+    get_quota_snapshot,
     get_session_snapshot,
     has_authenticated_session,
     load_session_for_startup,
 )
 from wjx.network.proxy.quota import get_random_ip_counter_snapshot_local
-from wjx.network.proxy.card import _validate_card, get_last_card_error_message
 from wjx.utils.logging.log_utils import (
     log_popup_confirm,
     log_popup_error,
@@ -25,6 +26,24 @@ from wjx.utils.logging.log_utils import (
     log_popup_warning,
     log_suppressed_exception,
 )
+
+_COUNTER_REFRESH_TTL_SECONDS = 2.0
+_counter_refresh_lock = threading.Lock()
+_counter_refresh_cache: Optional[tuple[int, int, float]] = None
+
+
+def _apply_counter_snapshot_to_gui(gui: Any, *, used: int, total: int, custom_api: bool = False) -> None:
+    def _apply() -> None:
+        handler = getattr(gui, "update_random_ip_counter", None)
+        if not callable(handler):
+            return
+        safe_used = max(0, int(used or 0))
+        safe_total = max(0, int(total or 0))
+        handler(safe_used, safe_total, bool(custom_api))
+        if not custom_api and safe_total > 0 and safe_used >= safe_total:
+            _set_random_ip_enabled(gui, False)
+
+    _schedule_on_gui_thread(gui, _apply)
 
 
 def _set_random_ip_loading(gui: Any, loading: bool, message: str = "") -> None:
@@ -135,8 +154,49 @@ def confirm_random_ip_usage(gui: Any) -> bool:
 
 
 def _build_counter_snapshot() -> tuple[int, int]:
+    global _counter_refresh_cache
+    from wjx.network.proxy.provider import is_custom_proxy_api_active
+
+    if not is_custom_proxy_api_active() and has_authenticated_session():
+        now = time.monotonic()
+        cached = _counter_refresh_cache
+        if cached and (now - cached[2]) < _COUNTER_REFRESH_TTL_SECONDS:
+            return cached[0], cached[1]
+        with _counter_refresh_lock:
+            now = time.monotonic()
+            cached = _counter_refresh_cache
+            if cached and (now - cached[2]) < _COUNTER_REFRESH_TTL_SECONDS:
+                return cached[0], cached[1]
+            try:
+                snapshot = get_fresh_quota_snapshot()
+                used = int(snapshot["used_quota"])
+                total = int(snapshot["total_quota"])
+                _counter_refresh_cache = (used, total, time.monotonic())
+                return used, total
+            except Exception as exc:
+                log_suppressed_exception("_build_counter_snapshot: get_fresh_quota_snapshot", exc, level=logging.DEBUG)
+                snapshot = get_quota_snapshot()
+                return int(snapshot["used_quota"]), int(snapshot["total_quota"])
     count, limit, _custom_api = get_random_ip_counter_snapshot_local()
     return int(count), int(limit)
+
+
+def _open_quota_request_dialog(gui: Any, default_type: str = "额度申请") -> bool:
+    handler = getattr(gui, "_open_contact_dialog", None) if gui is not None else None
+    if callable(handler):
+        try:
+            return bool(handler(default_type))
+        except Exception as exc:
+            log_suppressed_exception("_open_quota_request_dialog passthrough", exc)
+    legacy_handler = getattr(gui, "request_card_code", None) if gui is not None else None
+    if callable(legacy_handler):
+        try:
+            legacy_handler()
+            return False
+        except Exception as exc:
+            log_suppressed_exception("_open_quota_request_dialog legacy request_card_code", exc)
+    _invoke_popup(gui, "warning", "需要申请额度", "请在“联系开发者”中提交随机IP额度申请。")
+    return False
 
 
 def on_random_ip_toggle(gui: Any) -> None:
@@ -191,6 +251,7 @@ def ensure_random_ip_ready(gui: Any) -> bool:
 
 
 def _try_activate_trial(gui: Any = None) -> tuple[bool, bool]:
+    global _counter_refresh_cache
     try:
         session = _run_with_loading_dialog(
             gui,
@@ -210,11 +271,11 @@ def _try_activate_trial(gui: Any = None) -> tuple[bool, bool]:
         return False, False
 
     quota_left = max(0, int(session.remaining_quota or 0))
+    total_quota = max(int(session.total_quota or 0), quota_left)
+    used_quota = max(0, total_quota - quota_left)
+    _counter_refresh_cache = (used_quota, total_quota, time.monotonic())
+    _apply_counter_snapshot_to_gui(gui, used=used_quota, total=total_quota, custom_api=False)
     _invoke_popup(gui, "info", "试用已领取", f"已领取免费试用，随机IP剩余额度：{quota_left}。")
-    try:
-        refresh_ip_counter_display(gui)
-    except Exception as exc:
-        log_suppressed_exception("_try_activate_trial refresh counter", exc)
     return True, False
 
 
@@ -228,41 +289,23 @@ def show_random_ip_activation_dialog(gui: Any = None) -> bool:
     if not should_fallback_to_card:
         return False
 
-    return show_card_validation_dialog(gui, require_confirm=False)
+    return show_quota_request_dialog(gui, require_confirm=False)
+
+
+def show_quota_request_dialog(gui: Any = None, *, require_confirm: bool = True) -> bool:
+    if require_confirm:
+        prompt = (
+            "默认随机IP现已改为账号额度模式。\n\n"
+            "若免费试用已用完，请提交额度申请；开发者会根据你的随机IP用户ID人工补充额度。"
+        )
+        if not _invoke_popup(gui, "confirm", "申请随机IP额度", prompt):
+            return False
+    return _open_quota_request_dialog(gui, "额度申请")
 
 
 def show_card_validation_dialog(gui: Any = None, *, require_confirm: bool = True) -> bool:
-    if require_confirm:
-        prompt = (
-            "默认随机IP现已改为账号鉴权。\n\n"
-            "请输入卡密激活随机IP服务；若暂时不想激活，可取消后继续使用自定义代理接口。"
-        )
-        if not _invoke_popup(gui, "confirm", "随机IP激活", prompt):
-            return False
-    code_getter = getattr(gui, "request_card_code", None)
-    if not callable(code_getter):
-        log_popup_warning("需要卡密", "请在界面中输入卡密激活随机IP服务")
-        return False
-    card_code = code_getter()
-    if not str(card_code or "").strip():
-        return False
-    ok, remaining = _run_with_loading_dialog(
-        gui,
-        title="核销卡密中",
-        message="正在核销卡密...",
-        worker=lambda: _validate_card(str(card_code) if card_code else ""),
-    )
-    if ok:
-        quota_left = max(0, int(remaining or 0))
-        _invoke_popup(gui, "info", "激活成功", f"卡密验证通过，随机IP剩余额度：{quota_left}。")
-        try:
-            refresh_ip_counter_display(gui)
-        except Exception as exc:
-            log_suppressed_exception("show_card_validation_dialog refresh counter", exc)
-        return True
-    message = get_last_card_error_message() or "卡密验证失败，请检查后重试。"
-    _invoke_popup(gui, "error", "验证失败", message)
-    return False
+    """兼容旧调用名，实际行为已切换为打开额度申请。"""
+    return show_quota_request_dialog(gui, require_confirm=require_confirm)
 
 
 def refresh_ip_counter_display(gui: Any) -> None:
@@ -275,16 +318,7 @@ def refresh_ip_counter_display(gui: Any) -> None:
     def _compute_and_update():
         custom_api = is_custom_proxy_api_active()
         count, limit = _build_counter_snapshot()
-
-        def _apply():
-            handler = getattr(gui, "update_random_ip_counter", None)
-            if not callable(handler):
-                return
-            handler(count, limit, custom_api)
-            if not custom_api and limit > 0 and count >= limit:
-                _set_random_ip_enabled(gui, False)
-
-        _schedule_on_gui_thread(gui, _apply)
+        _apply_counter_snapshot_to_gui(gui, used=count, total=limit, custom_api=custom_api)
 
     if threading.current_thread() is threading.main_thread():
         threading.Thread(target=_compute_and_update, daemon=True, name="IPCounterRefresh").start()

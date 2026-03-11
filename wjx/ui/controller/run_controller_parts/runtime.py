@@ -532,7 +532,7 @@ class RunControllerRuntimeMixin:
                 if not has_authenticated_session():
                     logging.warning("随机IP未激活，无法启动默认随机IP模式")
                     self._starting = False
-                    self.runFailed.emit("默认随机IP需要先领取免费试用或核销卡密激活，请先激活后再试，或改用自定义代理接口")
+                    self.runFailed.emit("默认随机IP需要先领取免费试用或提交额度申请，请先完成后再试，或改用自定义代理接口")
                     return
                 try:
                     remaining = int(get_fresh_quota_snapshot()["remaining_quota"])

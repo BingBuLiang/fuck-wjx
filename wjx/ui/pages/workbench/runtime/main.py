@@ -422,6 +422,7 @@ class RuntimePage(ScrollArea):
                 self.proxy_source_combo.setCurrentIndex(idx)
             self.custom_api_edit.setText(custom_api)
             self.random_ip_card.customApiRow.setVisible(proxy_source == "custom")
+            self.random_ip_card.proxyTrialLink.setVisible(proxy_source == "custom")
             from wjx.network.proxy import set_proxy_source, set_proxy_api_override
             if proxy_source == "custom" and custom_api:
                 set_proxy_api_override(custom_api)

@@ -80,9 +80,9 @@ class MainWindowLazyPagesMixin:
             self._support_page.setObjectName("support")
             if self.stackedWidget.indexOf(self._support_page) == -1:
                 self.stackedWidget.addWidget(self._support_page)
-            if hasattr(self, "_on_card_request_contact_sent") and hasattr(self._support_page, "contact_form"):
+            if hasattr(self, "_on_quota_request_sent") and hasattr(self._support_page, "contact_form"):
                 if not getattr(self._support_page, "_card_badge_signal_connected", False):
-                    self._support_page.contact_form.cardRequestSucceeded.connect(getattr(self, "_on_card_request_contact_sent"))
+                    self._support_page.contact_form.quotaRequestSucceeded.connect(getattr(self, "_on_quota_request_sent"))
                     setattr(self._support_page, "_card_badge_signal_connected", True)
         return self._support_page
 

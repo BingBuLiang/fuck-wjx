@@ -44,7 +44,6 @@ from wjx.utils.app.version import __VERSION__
 from wjx.network.proxy import (
     get_status,
     _format_status_payload,
-    get_random_ip_counter_snapshot_local,
     refresh_ip_counter_display,
 )
 from wjx.utils.app.runtime_paths import _get_resource_path as get_resource_path
@@ -112,12 +111,12 @@ class MainWindow(
 
         self.controller = RunController(self)
         self.controller.on_ip_counter = None  # will be set after dashboard creation
+        # 沿用旧 provider 桥接，兼容随机IP链路里触发额度申请弹窗的调用方式。
         self.controller.card_code_provider = self._ask_card_code
         try:
             self.controller.adapter._card_code_provider = self._ask_card_code
         except Exception as exc:
-            log_suppressed_exception("__init__: sync adapter card_code_provider", exc, level=logging.WARNING)
-
+            log_suppressed_exception("__init__: sync adapter quota request provider", exc, level=logging.WARNING)
         # 立即初始化关键页面
         self.runtime_page = RuntimePage(self.controller, self)
         self.question_page = QuestionPage(self)
@@ -466,7 +465,7 @@ class MainWindow(
         badge.deleteLater()
         self._community_hint_badge = None
 
-    def _on_card_request_contact_sent(self):
+    def _on_quota_request_sent(self):
         self._set_community_hint_pending(True)
 
     def _on_stack_widget_changed(self, _index: int):
@@ -476,8 +475,8 @@ class MainWindow(
 
     def _open_contact_dialog(self, default_type: str = "报错反馈"):
         dlg = ContactDialog(self, default_type=default_type, status_fetcher=get_status, status_formatter=_format_status_payload)
-        dlg.form.cardRequestSucceeded.connect(self._on_card_request_contact_sent)
-        dlg.exec()
+        dlg.form.quotaRequestSucceeded.connect(self._on_quota_request_sent)
+        return dlg.exec() == QDialog.DialogCode.Accepted
 
     def _center_on_screen(self):
         """窗口居中显示，适配多显示器与缩放。"""
@@ -551,13 +550,7 @@ class MainWindow(
         self.question_page.set_entries(cfg.question_entries or [], self.controller.questions_info)
         self.answer_rules_page.set_questions_info(self.controller.questions_info)
         self.answer_rules_page.set_rules(getattr(cfg, "answer_rules", []) or [])
-        # 先显示本地快照，避免启动阶段显示 --/--
-        try:
-            count, limit, custom_api = get_random_ip_counter_snapshot_local()
-            self.dashboard.update_random_ip_counter(count, limit, custom_api)
-        except Exception:
-            logging.debug("初始化随机IP本地计数失败", exc_info=True)
-        # 后台异步刷新随机 IP 计数，避免阻塞启动
+        # 启动后异步请求线上余额，避免展示过期的本地额度缓存。
         threading.Thread(
             target=lambda: refresh_ip_counter_display(self.controller.adapter),
             daemon=True
@@ -599,7 +592,7 @@ class MainWindow(
             self,
             status_fetcher=get_status,
             status_formatter=_format_status_payload,
-            contact_handler=lambda: self._open_contact_dialog(default_type="卡密获取"),
+            contact_handler=lambda: self._open_contact_dialog(default_type="额度申请"),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             return dialog.get_card_code()

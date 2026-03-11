@@ -107,7 +107,7 @@ class EngineGuiAdapter:
             try:
                 return self._card_code_provider()
             except Exception:
-                logging.warning("获取卡密失败，返回空值", exc_info=True)
+                logging.warning("打开额度申请入口失败，返回空值", exc_info=True)
                 return None
         return None
 

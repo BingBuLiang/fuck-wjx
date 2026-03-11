@@ -10,8 +10,6 @@ from wjx.network.proxy.auth import (
     RandomIPAuthError,
     claim_easter_egg_bonus,
     format_random_ip_error,
-    get_quota_snapshot,
-    get_fresh_quota_snapshot,
     has_authenticated_session,
 )
 from wjx.network.proxy import refresh_ip_counter_display
@@ -384,15 +382,13 @@ class InteractiveChartView(QChartView):
 
 
 class IpUsagePage(ScrollArea):
-    _dataLoaded = Signal(list, str)
-    _quotaLoaded = Signal(object)
+    _dataLoaded = Signal(object, str)
     _bonusClaimFinished = Signal(object)
     _ENABLE_CONFETTI = True
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._dataLoaded.connect(self._on_data_loaded)
-        self._quotaLoaded.connect(self._on_quota_loaded)
         self._bonusClaimFinished.connect(self._on_bonus_claim_finished)
         self._load_requested_once = False
         self._last_load_failed = False
@@ -436,7 +432,7 @@ class IpUsagePage(ScrollArea):
         title_row = QHBoxLayout()
         title_row.addWidget(TitleLabel("IP 使用记录", self))
         title_row.addStretch(1)
-        self._ip_balance_label = StrongBodyLabel("", self)
+        self._ip_balance_label = StrongBodyLabel("IP池剩余数量：同步中...", self)
         title_row.addWidget(self._ip_balance_label)
         layout.addLayout(title_row)
 
@@ -544,22 +540,34 @@ class IpUsagePage(ScrollArea):
 
         def _do():
             try:
-                from wjx.utils.io.ip_usage_log import get_usage_history
-                records = get_usage_history()
-                self._dataLoaded.emit(records, "")
+                from wjx.utils.io.ip_usage_log import get_usage_summary
+
+                summary = get_usage_summary()
+                self._dataLoaded.emit(summary, "")
             except Exception as exc:
-                self._dataLoaded.emit([], str(exc))
+                self._dataLoaded.emit({}, str(exc))
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def _on_data_loaded(self, records: list, error: str):
+    def _on_data_loaded(self, payload: Any, error: str):
         self._set_loading(False)
         self._last_load_failed = bool(error)
 
         if error:
             InfoBar.error("", f"获取失败：{error}", parent=self.window(), position=InfoBarPosition.TOP, duration=4000)
             self._date_label.setText("加载失败，请切换页面后重试")
+            self._ip_balance_label.setText("IP池剩余数量：同步失败")
             return
+
+        data = payload if isinstance(payload, dict) else {}
+        records = data.get("records")
+        if not isinstance(records, list):
+            records = []
+        remaining_ip = self._try_int(data.get("remaining_ip"))
+        if remaining_ip is None:
+            self._ip_balance_label.setText("IP池剩余数量：未知")
+        else:
+            self._ip_balance_label.setText(f"IP池剩余数量：{max(0, remaining_ip)}")
 
         self._series.clear()
         self._point_meta.clear()
@@ -648,70 +656,15 @@ class IpUsagePage(ScrollArea):
             except Exception:
                 return 0
 
-    def _load_quota_summary(self):
-        def _do():
-            cached_snapshot = get_quota_snapshot()
-            cached_remaining = int(cached_snapshot.get("remaining_quota") or 0)
-            cached_total = int(cached_snapshot.get("total_quota") or 0)
+    @staticmethod
+    def _try_int(raw: Any) -> int | None:
+        try:
+            return int(raw)
+        except Exception:
             try:
-                if not has_authenticated_session():
-                    if cached_total > 0:
-                        payload = {
-                            "authenticated": False,
-                            "cached": True,
-                            "remaining_quota": cached_remaining,
-                            "total_quota": cached_total,
-                        }
-                    else:
-                        payload = {"authenticated": False}
-                else:
-                    snapshot = get_fresh_quota_snapshot()
-                    payload = {
-                        "authenticated": True,
-                        "cached": False,
-                        "remaining_quota": int(snapshot.get("remaining_quota") or 0),
-                        "total_quota": int(snapshot.get("total_quota") or 0),
-                    }
-                try:
-                    self._quotaLoaded.emit(payload)
-                except Exception as exc:
-                    log_suppressed_exception("_load_quota_summary emit", exc, level=logging.WARNING)
-            except Exception as exc:
-                if cached_total > 0:
-                    try:
-                        self._quotaLoaded.emit(
-                            {
-                                "authenticated": False,
-                                "cached": True,
-                                "remaining_quota": cached_remaining,
-                                "total_quota": cached_total,
-                            }
-                        )
-                        return
-                    except Exception as emit_exc:
-                        log_suppressed_exception("_load_quota_summary emit cached", emit_exc, level=logging.WARNING)
-                try:
-                    self._quotaLoaded.emit({"error": str(exc)})
-                except Exception as emit_exc:
-                    log_suppressed_exception("_load_quota_summary emit error", emit_exc, level=logging.WARNING)
-                log_suppressed_exception("_load_quota_summary request", exc, level=logging.WARNING)
-        threading.Thread(target=_do, daemon=True).start()
-
-    def _on_quota_loaded(self, payload: Any):
-        data = payload if isinstance(payload, dict) else {}
-        if data.get("error"):
-            self._ip_balance_label.setText("随机IP额度：同步失败")
-            return
-        remaining = self._to_int(data.get("remaining_quota"))
-        total = self._to_int(data.get("total_quota"))
-        if total > 0:
-            suffix = "（缓存）" if data.get("cached") else ""
-            self._ip_balance_label.setText(f"随机IP额度：{remaining}/{total}{suffix}")
-            return
-        if not data.get("authenticated"):
-            self._ip_balance_label.setText("随机IP额度：未激活")
-            return
-        self._ip_balance_label.setText(f"随机IP额度：{remaining}/{total}")
+                return int(float(str(raw).strip()))
+            except Exception:
+                return None
 
     def _set_loading(self, loading: bool) -> None:
         self._loading = bool(loading)
@@ -728,7 +681,6 @@ class IpUsagePage(ScrollArea):
         if (not self._load_requested_once) or self._last_load_failed:
             self._load_requested_once = True
             self._load_data()
-            self._load_quota_summary()
 
     def _update_chart_height(self) -> None:
         viewport_height = max(self.viewport().height(), 480)

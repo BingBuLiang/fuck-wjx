@@ -37,8 +37,11 @@ from qfluentwidgets import (
 from wjx.ui.widgets.status_polling_mixin import StatusPollingMixin
 from wjx.ui.helpers.image_attachments import ImageAttachmentManager
 import wjx.network.http_client as http_client
+from wjx.network.proxy.auth import get_session_snapshot
 from wjx.utils.app.config import CONTACT_API_URL, EMAIL_VERIFY_ENDPOINT
 from wjx.utils.app.version import __VERSION__
+
+REQUEST_MESSAGE_TYPE = "额度申请"
 
 
 class PasteOnlyLineEdit(LineEdit):
@@ -103,7 +106,7 @@ class ContactForm(StatusPollingMixin, QWidget):
     _verifyCodeFinished = Signal(bool, str, str)  # success, message, email
 
     sendSucceeded = Signal()
-    cardRequestSucceeded = Signal()
+    quotaRequestSucceeded = Signal()
     cancelRequested = Signal()
 
     def __init__(
@@ -131,6 +134,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         self._polling_started = False
         self._auto_clear_on_success = auto_clear_on_success
         self._manage_polling = manage_polling
+        self._random_ip_user_id: int = 0
 
         wrapper = QVBoxLayout(self)
         wrapper.setContentsMargins(0, 0, 0, 0)
@@ -148,7 +152,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.type_label_static = BodyLabel("消息类型：", self)
         self.type_label_static.setFixedWidth(LABEL_WIDTH)
         self.type_combo = ComboBox(self)
-        self.base_options = ["报错反馈", "卡密获取", "新功能建议", "纯聊天"]
+        self.base_options = ["报错反馈", REQUEST_MESSAGE_TYPE, "新功能建议", "纯聊天"]
         for item in self.base_options:
             self.type_combo.addItem(item, item)
         self.type_combo.setMinimumWidth(160)
@@ -188,7 +192,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.send_verify_btn.hide()
         self.verify_send_spinner.hide()
 
-        # 4. 卡密参数
+        # 4. 额度申请参数
         self.amount_row = QHBoxLayout()
         self.amount_label = BodyLabel("捐(施)助(舍)金额：￥", self)
         self.amount_edit = LineEdit(self)
@@ -201,7 +205,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.amount_edit.editingFinished.connect(self._on_amount_editing_finished)
         self.amount_edit.installEventFilter(self)
 
-        self.quantity_label = BodyLabel("大概需求额度：", self)
+        self.quantity_label = BodyLabel("申请额度：", self)
         self.quantity_edit = LineEdit(self)
         self.quantity_edit.setPlaceholderText("1~9999")
         self.quantity_edit.setMaximumWidth(110)
@@ -248,9 +252,14 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.message_edit.setPlaceholderText("请详细描述您的问题、需求或留言…")
         self.message_edit.setMinimumHeight(140)
         self.message_edit.installEventFilter(self)
+        self.random_ip_user_id_label = BodyLabel("", self)
+        self.random_ip_user_id_label.setWordWrap(True)
+        self.random_ip_user_id_label.setStyleSheet("color: #666; font-size: 12px;")
+        self.random_ip_user_id_label.hide()
 
         msg_layout.addLayout(msg_label_row)
         msg_layout.addWidget(self.message_edit, 1)
+        msg_layout.addWidget(self.random_ip_user_id_label)
 
         # 第三部分：图片附件
         attachments_box = QVBoxLayout()
@@ -344,6 +353,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         self.attach_clear_btn.clicked.connect(self._on_clear_attachments)
         if self.cancel_btn is not None:
             self.cancel_btn.clicked.connect(self.cancelRequested.emit)
+        self.refresh_random_ip_user_id_hint()
 
     def eventFilter(self, watched, event):
         message_edit = getattr(self, "message_edit", None)
@@ -366,6 +376,7 @@ class ContactForm(StatusPollingMixin, QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.refresh_random_ip_user_id_hint()
         if self._manage_polling:
             self.start_status_polling()
 
@@ -411,6 +422,21 @@ class ContactForm(StatusPollingMixin, QWidget):
                     pass
         except Exception as exc:
             log_suppressed_exception("_close_all_infobars", exc, level=logging.WARNING)
+
+    def refresh_random_ip_user_id_hint(self) -> None:
+        """刷新消息框下方的随机IP账号提示。"""
+        try:
+            snapshot = get_session_snapshot()
+        except Exception as exc:
+            log_suppressed_exception("refresh_random_ip_user_id_hint", exc, level=logging.WARNING)
+            snapshot = {}
+        user_id = int(snapshot.get("user_id") or 0)
+        self._random_ip_user_id = user_id
+        if user_id > 0:
+            self.random_ip_user_id_label.setText(f"随机IP用户ID：{user_id}")
+            self.random_ip_user_id_label.show()
+        else:
+            self.random_ip_user_id_label.hide()
 
 
     def start_status_polling(self):
@@ -519,8 +545,8 @@ class ContactForm(StatusPollingMixin, QWidget):
     def _on_type_changed(self):
         current_type = self.type_combo.currentText()
 
-        # 控制金额行显示/隐藏
-        if current_type == "卡密获取":
+        # 控制额度申请参数显示/隐藏
+        if current_type == REQUEST_MESSAGE_TYPE:
             self.amount_label.show()
             self.amount_edit.show()
             self.quantity_label.show()
@@ -530,8 +556,8 @@ class ContactForm(StatusPollingMixin, QWidget):
             self.verify_code_edit.show()
             self.send_verify_btn.show()
             self.email_edit.setPlaceholderText("name@example.com")
-            self.message_label.setText("消息内容：")
-            self._sync_card_request_message_meta()
+            self.message_label.setText("补充说明：")
+            self.message_edit.setPlaceholderText("请简单说明你的使用场景、需要的额度和紧急情况…")
         else:
             self.amount_label.hide()
             self.amount_edit.hide()
@@ -549,6 +575,7 @@ class ContactForm(StatusPollingMixin, QWidget):
             self._stop_cooldown()
             self.email_edit.setPlaceholderText("name@example.com")
             self.message_label.setText("消息内容：")
+            self.message_edit.setPlaceholderText("请详细描述您的问题、需求或留言…")
 
     def _set_verify_code_sending(self, sending: bool):
         self._verify_code_sending = sending
@@ -656,8 +683,8 @@ class ContactForm(StatusPollingMixin, QWidget):
         InfoBar.error("", ui_msg, parent=self, position=InfoBarPosition.TOP, duration=2500)
 
     def _on_amount_changed(self, text: str):
-        """金额输入框文本改变时同步卡密获取的元信息到消息框"""
-        self._sync_card_request_message_meta()
+        """金额输入框文本改变时预留钩子。"""
+        return
 
     def _normalize_amount_if_needed(self) -> None:
         """将 0 自动纠正为 0.01，避免提交无效金额。"""
@@ -673,60 +700,14 @@ class ContactForm(StatusPollingMixin, QWidget):
 
     def _on_amount_editing_finished(self):
         self._normalize_amount_if_needed()
-        self._sync_card_request_message_meta()
 
     def _on_quantity_changed(self, text: str):
-        """份数输入框文本改变时同步卡密获取的元信息到消息框"""
-        self._sync_card_request_message_meta()
+        """申请额度输入框文本改变时预留钩子。"""
+        return
 
     def _on_urgency_changed(self):
-        """紧急程度改变时同步卡密获取的元信息到消息框"""
-        self._sync_card_request_message_meta()
-
-    @staticmethod
-    def _strip_card_request_meta_prefix_lines(message: str) -> str:
-        """移除消息顶部连续的卡密元信息前缀行，避免重复叠加。"""
-        lines = message.split('\n')
-        idx = 0
-        while idx < len(lines):
-            line = lines[idx]
-            if (
-                line.startswith("捐助金额：￥")
-                or line.startswith("需求额度：")
-                or line.startswith("紧急程度：")
-            ):
-                idx += 1
-                continue
-            break
-        return '\n'.join(lines[idx:])
-
-    def _sync_card_request_message_meta(self):
-        """将卡密获取的金额/份数/紧急程度同步为消息前置行。"""
-        if self.type_combo.currentText() != "卡密获取":
-            return
-
-        current_msg = self.message_edit.toPlainText()
-        body = self._strip_card_request_meta_prefix_lines(current_msg)
-
-        amount_text = (self.amount_edit.text() or "").strip()
-        quantity_text = (self.quantity_edit.text() or "").strip()
-        urgency_text = (self.urgency_combo.currentText() or "").strip()
-
-        meta_lines = []
-        if amount_text:
-            meta_lines.append(f"捐助金额：￥{amount_text}")
-        if quantity_text:
-            meta_lines.append(f"需求额度：{quantity_text}份")
-        if (amount_text or quantity_text) and urgency_text:
-            meta_lines.append(f"紧急程度：{urgency_text}")
-
-        if meta_lines:
-            new_msg = '\n'.join(meta_lines + ([body] if body else []))
-        else:
-            new_msg = body
-
-        if new_msg != current_msg:
-            self.message_edit.setPlainText(new_msg)
+        """紧急程度改变时预留钩子。"""
+        return
 
     def _on_status_loaded(self, text: str, color: str):
         """信号槽：在主线程更新状态标签"""
@@ -759,23 +740,28 @@ class ContactForm(StatusPollingMixin, QWidget):
 
         mtype = self.type_combo.currentText() or "报错反馈"
 
-        if mtype == "卡密获取":
+        request_amount_text = ""
+        request_quota_text = ""
+        request_urgency_text = ""
+        if mtype == REQUEST_MESSAGE_TYPE:
             self._normalize_amount_if_needed()
             amount_text = (self.amount_edit.text() or "").strip()
             quantity_text = (self.quantity_edit.text() or "").strip()
             verify_code = (self.verify_code_edit.text() or "").strip()
-
+            request_amount_text = amount_text
+            request_quota_text = quantity_text
+            request_urgency_text = (self.urgency_combo.currentText() or "").strip()
             if not amount_text:
                 InfoBar.warning("", "请输入捐助金额", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
             if not quantity_text:
-                InfoBar.warning("", "请输入大概需求额度", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                InfoBar.warning("", "请输入申请额度", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
             if not quantity_text.isdigit() or int(quantity_text) <= 0:
-                InfoBar.warning("", "需求额度必须为正整数", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                InfoBar.warning("", "申请额度必须为正整数", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
             if int(quantity_text) > 9999:
-                InfoBar.warning("", "需求额度不能超过 9999", parent=self, position=InfoBarPosition.TOP, duration=2000)
+                InfoBar.warning("", "申请额度不能超过 9999", parent=self, position=InfoBarPosition.TOP, duration=2000)
                 return
             if not self._verify_code_requested:
                 InfoBar.warning("", "请先点击发送验证码", parent=self, position=InfoBarPosition.TOP, duration=2000)
@@ -786,26 +772,21 @@ class ContactForm(StatusPollingMixin, QWidget):
             if verify_code != "114514":
                 InfoBar.warning("", "验证码错误，请重试", parent=self, position=InfoBarPosition.TOP, duration=2200)
                 return
-            self._sync_card_request_message_meta()
 
         message = (self.message_edit.toPlainText() or "").strip()
-        if mtype == "卡密获取":
-            if not message or not message.startswith("捐助金额：￥"):
-                InfoBar.warning("", "请输入捐助金额", parent=self, position=InfoBarPosition.TOP, duration=2000)
-                return
-        else:
-            if not message:
-                InfoBar.warning("", "请输入消息内容", parent=self, position=InfoBarPosition.TOP, duration=2000)
-                return
-
-        if mtype == "卡密获取" and not email:
-            InfoBar.warning("", "卡密获取必须填写邮箱地址", parent=self, position=InfoBarPosition.TOP, duration=2000)
+        if not message:
+            warn_text = "请填写补充说明" if mtype == REQUEST_MESSAGE_TYPE else "请输入消息内容"
+            InfoBar.warning("", warn_text, parent=self, position=InfoBarPosition.TOP, duration=2000)
             return
 
-        if mtype == "卡密获取":
+        if mtype == REQUEST_MESSAGE_TYPE and not email:
+            InfoBar.warning("", "额度申请必须填写邮箱地址", parent=self, position=InfoBarPosition.TOP, duration=2000)
+            return
+
+        if mtype == REQUEST_MESSAGE_TYPE:
             confirm_email_box = MessageBox(
                 "确认邮箱地址",
-                f"当前输入的邮箱地址是：{email}\n\n申请发送后，卡密会于6小时内发送到该邮箱，请及时检查邮箱信息！\n\n若迟迟未收到邮件，可在“社区”页加入QQ群反馈解决",
+                f"当前输入的邮箱地址是：{email}\n\n申请提交后，开发者会根据随机IP用户ID人工处理额度，请确认该邮箱可以正常接收回复。",
                 self.window() or self,
             )
             confirm_email_box.yesButton.setText("确认发送")
@@ -813,7 +794,7 @@ class ContactForm(StatusPollingMixin, QWidget):
             if not confirm_email_box.exec():
                 return
 
-        if mtype != "卡密获取" and not email:
+        if mtype != REQUEST_MESSAGE_TYPE and not email:
             confirm_box = MessageBox(
                 "未填写邮箱",
                 "当前未输入邮箱地址，开发者可能无法联系你回复处理进度。是否继续发送？",
@@ -828,12 +809,21 @@ class ContactForm(StatusPollingMixin, QWidget):
             InfoBar.warning("", "邮箱格式不正确", parent=self, position=InfoBarPosition.TOP, duration=2000)
             return
 
+        self.refresh_random_ip_user_id_hint()
         version_str = __VERSION__
         full_message = f"来源：fuck-wjx v{version_str}\n类型：{mtype}\n"
         if email:
             full_message += f"联系邮箱： {email}\n"
         full_message += f"已捐助：{'是' if self.donated_cb.isChecked() else '否'}\n"
-        full_message += f"消息：{message}"
+        if self._random_ip_user_id > 0:
+            full_message += f"随机IP用户ID：{self._random_ip_user_id}\n"
+        if mtype == REQUEST_MESSAGE_TYPE:
+            full_message += f"捐助金额：￥{request_amount_text}\n"
+            full_message += f"申请额度：{request_quota_text}\n"
+            full_message += f"紧急程度：{request_urgency_text or '中'}\n"
+            full_message += f"补充说明：{message}"
+        else:
+            full_message += f"消息：{message}"
 
         api_url = CONTACT_API_URL
         if not api_url:
@@ -891,15 +881,15 @@ class ContactForm(StatusPollingMixin, QWidget):
 
         if success:
             current_type = getattr(self, "_current_message_type", "")
-            if current_type == "卡密获取":
-                msg = "发送成功！请留意邮件信息！"
+            if current_type == REQUEST_MESSAGE_TYPE:
+                msg = "申请已提交，请等待人工处理"
             else:
                 msg = "消息已成功发送！"
             if getattr(self, "_current_has_email", False):
-                msg += " 开发者将于6小时内回复"
+                msg += "，开发者会优先通过邮箱联系你"
             InfoBar.success("", msg, parent=self, position=InfoBarPosition.TOP, duration=2500)
-            if current_type == "卡密获取":
-                self.cardRequestSucceeded.emit()
+            if current_type == REQUEST_MESSAGE_TYPE:
+                self.quotaRequestSucceeded.emit()
             if self._auto_clear_on_success:
                 self.amount_edit.clear()
                 self.quantity_edit.clear()

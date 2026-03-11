@@ -87,8 +87,8 @@ def _trigger_aliyun_captcha_stop(
             if not has_authenticated_session():
                 message = (
                     "检测到阿里云智能验证，为避免继续失败提交已停止所有任务。\n\n"
-                    "默认随机IP现已需要先领取免费试用或核销卡密激活。\n"
-                    "请先激活随机IP，或切换自定义代理接口后再试。"
+                    "默认随机IP现已需要先领取免费试用或提交额度申请。\n"
+                    "请先完成试用激活或额度申请，或切换自定义代理接口后再试。"
                 )
                 if gui_instance and hasattr(gui_instance, "_log_popup_warning"):
                     gui_instance._log_popup_warning("智能验证提示", message, icon="warning")

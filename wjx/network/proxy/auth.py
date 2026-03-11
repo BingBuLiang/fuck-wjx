@@ -34,6 +34,7 @@ _SENSITIVE_PREVIEW_PATTERNS = (
     (re.compile(r'("?(?:access_token|refresh_token|account|password)"?\s*:\s*")[^"]*(")', re.IGNORECASE), r"\1***\2"),
     (re.compile(r"(Authorization\s*:\s*Bearer\s+)[^\s]+", re.IGNORECASE), r"\1***"),
 )
+_QUOTA_SETTING_KEYS = ("remaining_quota", "total_quota")
 
 
 class RandomIPAuthError(RuntimeError):
@@ -47,6 +48,7 @@ class RandomIPAuthError(RuntimeError):
 @dataclass(frozen=True)
 class RandomIPSession:
     device_id: str = ""
+    user_id: int = 0
     access_token: str = ""
     refresh_token: str = ""
     expires_at: Optional[datetime] = None
@@ -78,6 +80,13 @@ def _get_settings() -> QSettings:
 
 def _settings_key(name: str) -> str:
     return f"{_SESSION_PREFIX}{name}"
+
+
+def _clear_persisted_quota_settings(settings: Optional[QSettings] = None) -> None:
+    target = settings or _get_settings()
+    for key in _QUOTA_SETTING_KEYS:
+        target.remove(_settings_key(key))
+    target.sync()
 
 
 def _parse_datetime(raw: Any) -> Optional[datetime]:
@@ -126,14 +135,14 @@ def _ensure_loaded() -> None:
             refresh_token = ""
             refresh_expires_at = None
             delete_secret(_REFRESH_SECRET_KEY)
-        remaining_quota = _to_non_negative_int(settings.value(_settings_key("remaining_quota")), 0)
-        total_quota = _to_non_negative_int(settings.value(_settings_key("total_quota")), remaining_quota)
+        _clear_persisted_quota_settings(settings)
         _session = RandomIPSession(
             device_id=device_id,
+            user_id=_to_non_negative_int(settings.value(_settings_key("user_id")), 0),
             refresh_token=refresh_token,
             refresh_expires_at=refresh_expires_at,
-            remaining_quota=remaining_quota,
-            total_quota=max(total_quota, remaining_quota),
+            remaining_quota=0,
+            total_quota=0,
         )
         _session_loaded = True
 
@@ -141,9 +150,10 @@ def _ensure_loaded() -> None:
 def _persist_session_locked() -> None:
     settings = _get_settings()
     settings.setValue(_settings_key("device_id"), str(_session.device_id or "").strip())
-    settings.setValue(_settings_key("remaining_quota"), int(_session.remaining_quota))
-    settings.setValue(_settings_key("total_quota"), int(max(_session.total_quota, _session.remaining_quota)))
+    settings.setValue(_settings_key("user_id"), int(_session.user_id or 0))
     settings.setValue(_settings_key("refresh_expires_at"), _serialize_datetime(_session.refresh_expires_at))
+    for key in _QUOTA_SETTING_KEYS:
+        settings.remove(_settings_key(key))
     settings.sync()
     set_secret(_DEVICE_SECRET_KEY, _session.device_id)
     set_secret(_REFRESH_SECRET_KEY, _session.refresh_token)
@@ -197,9 +207,10 @@ def clear_session() -> None:
         _session = RandomIPSession(device_id=_session.device_id)
         delete_secret(_REFRESH_SECRET_KEY)
         settings = _get_settings()
-        settings.remove(_settings_key("remaining_quota"))
-        settings.remove(_settings_key("total_quota"))
+        settings.remove(_settings_key("user_id"))
         settings.remove(_settings_key("refresh_expires_at"))
+        for key in _QUOTA_SETTING_KEYS:
+            settings.remove(_settings_key(key))
         settings.sync()
 
 
@@ -213,6 +224,7 @@ def get_session_snapshot() -> Dict[str, Any]:
     return {
         "authenticated": bool(session.has_refresh_token or session.has_access_token),
         "device_id": session.device_id,
+        "user_id": int(session.user_id or 0),
         "remaining_quota": int(session.remaining_quota),
         "total_quota": int(session.total_quota),
         "has_access_token": bool(session.has_access_token),
@@ -244,9 +256,9 @@ def format_random_ip_error(exc: BaseException) -> str:
     if detail == "invalid_request_body":
         return "请求格式不正确，请更新客户端后重试"
     if detail == "code_required":
-        return "请输入卡密"
+        return "请输入激活码"
     if detail == "invalid_code":
-        return "卡密无效，请检查后重试"
+        return "激活码无效，请检查后重试"
     if detail == "device_owned_by_other_user":
         return "当前设备已绑定其他账号，请联系开发者处理"
     if detail == "activate_rate_limited":
@@ -254,19 +266,19 @@ def format_random_ip_error(exc: BaseException) -> str:
             return f"验证过于频繁，请 {exc.retry_after_seconds} 秒后再试"
         return "验证过于频繁，请稍后再试"
     if detail in {"trial_already_claimed", "trial_already_used", "device_trial_already_claimed"}:
-        return "当前设备已领取过免费试用，请改用卡密激活"
+        return "当前设备已领取过免费试用，请前往申请随机IP额度"
     if detail == "trial_rate_limited":
         if exc.retry_after_seconds > 0:
             return f"领取试用过于频繁，请 {exc.retry_after_seconds} 秒后再试"
         return "领取试用过于频繁，请稍后再试"
     if detail == "invalid_refresh_token":
-        return "登录状态已失效，请重新核销卡密"
+        return "登录状态已失效，请重新领取试用或申请随机IP额度"
     if detail == "device_banned":
         return "当前设备已被封禁，请联系开发者"
     if detail == "user_banned":
         return "当前账号已被封禁，请联系开发者"
     if detail == "unauthorized":
-        return "随机IP登录状态失效，请重新核销卡密"
+        return "随机IP登录状态失效，请重新领取试用或申请随机IP额度"
     if detail == "minute_not_allowed":
         return "代理时长参数不被后端接受，请更新客户端"
     if detail == "pool_not_allowed":
@@ -292,7 +304,7 @@ def format_random_ip_error(exc: BaseException) -> str:
     if detail == "upstream_rejected":
         return "上游代理服务拒绝了请求，请稍后重试"
     if detail == "not_authenticated":
-        return "请先领取免费试用或核销卡密激活随机IP"
+        return "请先领取免费试用或提交额度申请后再使用随机IP"
     if detail.startswith("network_error:"):
         return f"网络请求失败：{detail.split(':', 1)[1].strip()}"
     if detail.startswith("invalid_response"):
@@ -413,6 +425,7 @@ def _parse_session_response(response: Any) -> RandomIPSession:
         raise RandomIPAuthError("invalid_response")
     session = RandomIPSession(
         device_id=get_device_id(),
+        user_id=_to_non_negative_int(data.get("user_id"), 0),
         access_token=str(data.get("access_token") or "").strip(),
         refresh_token=str(data.get("refresh_token") or "").strip(),
         expires_at=_parse_datetime(data.get("expires_at")),
@@ -474,6 +487,7 @@ def refresh_session(*, force: bool = False) -> RandomIPSession:
         raise RandomIPAuthError("invalid_response")
     refreshed = RandomIPSession(
         device_id=session.device_id,
+        user_id=_to_non_negative_int(data.get("user_id"), session.user_id),
         access_token=str(data.get("access_token") or "").strip(),
         refresh_token=str(data.get("refresh_token") or "").strip(),
         expires_at=_parse_datetime(data.get("expires_at")),

@@ -1,7 +1,11 @@
 """随机 IP 额度管理 - 以后端会话状态为准。"""
 from __future__ import annotations
 
-from wjx.network.proxy.auth import get_quota_snapshot, get_session_snapshot, has_authenticated_session
+from wjx.network.proxy.auth import (
+    get_quota_snapshot,
+    get_session_snapshot,
+    has_authenticated_session,
+)
 
 
 def get_random_ip_limit() -> int:

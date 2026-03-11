@@ -13,6 +13,8 @@ from wjx.core.task_context import TaskContext
 from wjx.network.browser import By, BrowserDriver, NoSuchElementException, TimeoutException
 from wjx.network.proxy import (
     PROXY_SOURCE_CUSTOM,
+    _fetch_new_proxy_batch,
+    _mask_proxy_for_log,
     _normalize_proxy_address,
     get_proxy_source,
 )
@@ -24,6 +26,14 @@ from wjx.utils.app.config import (
 )
 from wjx.utils.app.config import get_proxy_auth
 from wjx.utils.logging.log_utils import log_suppressed_exception
+
+_HEADLESS_SUBMIT_PROXY_RETRY_LIMIT = 1
+_HEADLESS_SUBMIT_RETRYABLE_ERRORS = (
+    httpx.RemoteProtocolError,
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+)
 
 
 def _click_submit_button(driver: BrowserDriver, max_wait: float = 10.0) -> bool:
@@ -262,6 +272,78 @@ def _build_submit_proxy_url(proxy_address: Optional[str]) -> Optional[str]:
     return f"{scheme}://{netloc}"
 
 
+def _is_retryable_submit_proxy_error(exc: BaseException) -> bool:
+    return isinstance(exc, _HEADLESS_SUBMIT_RETRYABLE_ERRORS)
+
+
+def _remove_proxy_from_ctx_pool(ctx: TaskContext, proxy_address: Optional[str]) -> bool:
+    normalized = _normalize_proxy_address(proxy_address)
+    if not normalized:
+        return False
+
+    removed = False
+    with ctx.lock:
+        while True:
+            try:
+                ctx.proxy_ip_pool.remove(normalized)
+                removed = True
+            except ValueError:
+                break
+    return removed
+
+
+def _acquire_replacement_submit_proxy(
+    driver: BrowserDriver,
+    ctx: Optional[TaskContext],
+    *,
+    stop_signal: Optional[threading.Event],
+) -> Optional[str]:
+    if ctx is None or not bool(getattr(ctx, "random_proxy_ip_enabled", False)):
+        return None
+    if stop_signal and stop_signal.is_set():
+        return None
+
+    current_proxy = _normalize_proxy_address(getattr(driver, "_submit_proxy_address", None))
+    removed_from_pool = _remove_proxy_from_ctx_pool(ctx, current_proxy)
+    if current_proxy:
+        logging.warning("无头提交代理疑似失效，已废弃：%s", _mask_proxy_for_log(current_proxy))
+    elif removed_from_pool:
+        logging.debug("已从代理池移除重复的失效提交代理")
+
+    with ctx.lock:
+        while ctx.proxy_ip_pool:
+            candidate = _normalize_proxy_address(ctx.proxy_ip_pool.pop(0))
+            if candidate and candidate != current_proxy:
+                setattr(driver, "_submit_proxy_address", candidate)
+                logging.info("无头提交改用代理池中的新代理：%s", _mask_proxy_for_log(candidate))
+                return candidate
+
+    with ctx._proxy_fetch_lock:
+        with ctx.lock:
+            while ctx.proxy_ip_pool:
+                candidate = _normalize_proxy_address(ctx.proxy_ip_pool.pop(0))
+                if candidate and candidate != current_proxy:
+                    setattr(driver, "_submit_proxy_address", candidate)
+                    logging.info("无头提交改用代理池中的新代理：%s", _mask_proxy_for_log(candidate))
+                    return candidate
+
+        if stop_signal and stop_signal.is_set():
+            return None
+
+        try:
+            fetched = _fetch_new_proxy_batch(expected_count=1, stop_signal=stop_signal)
+        except Exception as exc:
+            logging.warning("无头提交切换新代理失败：%s", exc)
+            return None
+        for item in fetched or []:
+            candidate = _normalize_proxy_address(item)
+            if candidate and candidate != current_proxy:
+                setattr(driver, "_submit_proxy_address", candidate)
+                logging.info("无头提交已切换为新提取代理：%s", _mask_proxy_for_log(candidate))
+                return candidate
+    return None
+
+
 def _capture_submit_request_via_route(
     driver: BrowserDriver,
     *,
@@ -418,6 +500,7 @@ def _capture_submit_request_via_route(
 def _submit_via_headless_httpx(
     driver: BrowserDriver,
     *,
+    ctx: Optional[TaskContext],
     stop_signal: Optional[threading.Event],
     settle_delay: float,
 ) -> None:
@@ -437,21 +520,55 @@ def _submit_via_headless_httpx(
 
     request_headers = _sanitize_request_headers(captured.get("headers") or {})
     cookies = _collect_page_cookies(driver, submit_url)
-    submit_proxy = _build_submit_proxy_url(getattr(driver, "_submit_proxy_address", None))
-    logging.debug("无头+httpx 提交代理状态: %s", "enabled" if submit_proxy else "disabled")
     timeout = httpx.Timeout(20.0, connect=10.0)
+    response = None
+    used_proxy_retry = False
 
-    try:
-        with httpx.Client(timeout=timeout, follow_redirects=False, proxy=submit_proxy) as client:
-            response = client.request(
-                method=method,
-                url=submit_url,
-                headers=request_headers,
-                content=payload,
-                cookies=cookies,
+    for attempt in range(_HEADLESS_SUBMIT_PROXY_RETRY_LIMIT + 1):
+        submit_proxy_address = getattr(driver, "_submit_proxy_address", None)
+        submit_proxy = _build_submit_proxy_url(submit_proxy_address)
+        masked_proxy = _mask_proxy_for_log(submit_proxy_address)
+        logging.debug(
+            "无头+httpx 提交代理状态: %s, attempt=%s, proxy=%s",
+            "enabled" if submit_proxy else "disabled",
+            attempt + 1,
+            masked_proxy or "<none>",
+        )
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=False, proxy=submit_proxy) as client:
+                response = client.request(
+                    method=method,
+                    url=submit_url,
+                    headers=request_headers,
+                    content=payload,
+                    cookies=cookies,
+                )
+            break
+        except Exception as exc:
+            should_retry = (
+                attempt < _HEADLESS_SUBMIT_PROXY_RETRY_LIMIT
+                and submit_proxy is not None
+                and _is_retryable_submit_proxy_error(exc)
             )
-    except Exception as exc:
-        raise RuntimeError(f"无头+httpx 提交请求失败: {exc}") from exc
+            if should_retry:
+                replacement = _acquire_replacement_submit_proxy(
+                    driver,
+                    ctx,
+                    stop_signal=stop_signal,
+                )
+                if replacement:
+                    used_proxy_retry = True
+                    logging.warning(
+                        "无头+httpx 提交命中可重试代理错误，将切换新代理后重试：%s",
+                        exc,
+                    )
+                    continue
+            raise RuntimeError(f"无头+httpx 提交请求失败: {exc}") from exc
+
+    if response is None:
+        raise RuntimeError("无头+httpx 提交失败：未获得有效响应")
+    if used_proxy_retry:
+        logging.info("无头+httpx 提交在切换新代理后重试成功")
 
     response_text = response.text or ""
     business_code, business_payload = _parse_submit_response(response_text)
@@ -503,6 +620,7 @@ def submit(
     if ctx is not None and bool(getattr(ctx, "headless_mode", False)):
         _submit_via_headless_httpx(
             driver,
+            ctx=ctx,
             stop_signal=stop_signal,
             settle_delay=settle_delay,
         )

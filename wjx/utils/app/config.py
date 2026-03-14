@@ -154,7 +154,6 @@ def get_proxy_auth() -> str:
     return os.environ.get("WJX_PROXY_AUTH", "")
 _DEFAULT_CONTACT_API = "https://bot.hungrym0.top"
 _DEFAULT_AUTH_TRIAL = "https://api-wjx.hungrym0.top/api/auth/trial"
-_DEFAULT_AUTH_REFRESH = "https://api-wjx.hungrym0.top/api/auth/refresh"
 _DEFAULT_AUTH_BONUS_CLAIM = "https://api-wjx.hungrym0.top/api/bonus"
 _DEFAULT_IP_EXTRACT_ENDPOINT = "https://api-wjx.hungrym0.top/api/ip/extract"
 _DEFAULT_STATUS_ENDPOINT = "https://api-wjx.hungrym0.top/api/status"
@@ -254,7 +253,6 @@ PROXY_POOL_QUALITY = "quality"
 # ==================== API 端点配置 ====================
 CONTACT_API_URL = _resolve_env_value("CONTACT_API_URL", _DEFAULT_CONTACT_API)
 AUTH_TRIAL_ENDPOINT = _resolve_env_value("AUTH_TRIAL_ENDPOINT", _DEFAULT_AUTH_TRIAL)
-AUTH_REFRESH_ENDPOINT = _resolve_env_value("AUTH_REFRESH_ENDPOINT", _DEFAULT_AUTH_REFRESH)
 AUTH_BONUS_CLAIM_ENDPOINT = _resolve_env_value("AUTH_BONUS_CLAIM_ENDPOINT", _DEFAULT_AUTH_BONUS_CLAIM)
 IP_EXTRACT_ENDPOINT = _resolve_env_value("IP_EXTRACT_ENDPOINT", _DEFAULT_IP_EXTRACT_ENDPOINT)
 STATUS_ENDPOINT = _resolve_env_value("STATUS_ENDPOINT", _DEFAULT_STATUS_ENDPOINT)

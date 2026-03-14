@@ -6,6 +6,7 @@ import ctypes
 import logging
 import sys
 from ctypes import wintypes
+from dataclasses import dataclass
 from typing import Optional
 
 if sys.platform == "win32":
@@ -14,6 +15,14 @@ else:  # pragma: no cover
     winreg = None
 
 _REGISTRY_PATH = r"Software\FuckWJX\SecureStore"
+
+
+@dataclass(frozen=True)
+class SecretReadResult:
+    value: str = ""
+    exists: bool = False
+    status: str = "not_found"
+    error: str = ""
 
 
 class _DATA_BLOB(ctypes.Structure):
@@ -90,28 +99,36 @@ def set_secret(key: str, value: Optional[str]) -> None:
         finally:
             winreg.CloseKey(reg_key)
     except Exception as exc:
-        logging.warning("安全存储写入失败：%s", exc)
+        logging.warning("安全存储写入失败：key=%s error=%s", name, exc)
 
 
-def get_secret(key: str) -> str:
+def read_secret(key: str) -> SecretReadResult:
     if winreg is None:
-        return ""
+        return SecretReadResult(status="unsupported")
     name = str(key or "").strip()
     if not name:
-        return ""
+        return SecretReadResult(status="invalid_key")
     hkey = winreg.HKEY_CURRENT_USER
     try:
         with winreg.OpenKey(hkey, _REGISTRY_PATH) as reg_key:
             encoded, _ = winreg.QueryValueEx(reg_key, name)
     except FileNotFoundError:
-        return ""
-    except Exception:
-        return ""
+        return SecretReadResult(status="not_found")
+    except Exception as exc:
+        return SecretReadResult(status="open_failed", error=str(exc))
+    encoded_text = str(encoded or "").strip()
+    if not encoded_text:
+        return SecretReadResult(exists=True, status="empty")
     try:
-        encrypted = base64.b64decode(str(encoded or "").strip())
-        return _crypt_unprotect_data(encrypted).decode("utf-8")
-    except Exception:
-        return ""
+        encrypted = base64.b64decode(encoded_text)
+        value = _crypt_unprotect_data(encrypted).decode("utf-8")
+    except Exception as exc:
+        return SecretReadResult(exists=True, status="decrypt_failed", error=str(exc))
+    return SecretReadResult(value=value, exists=True, status="ok")
+
+
+def get_secret(key: str) -> str:
+    return read_secret(key).value
 
 
 def delete_secret(key: str) -> None:
@@ -129,4 +146,4 @@ def delete_secret(key: str) -> None:
     except OSError:
         return
     except Exception as exc:
-        logging.warning("安全存储删除失败：%s", exc)
+        logging.warning("安全存储删除失败：key=%s error=%s", name, exc)

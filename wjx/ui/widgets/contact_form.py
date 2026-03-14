@@ -439,7 +439,7 @@ class ContactForm(StatusPollingMixin, QWidget):
             self.random_ip_user_id_label.setText(f"随机IP用户ID：{user_id}")
             self.random_ip_user_id_label.show()
         elif session_incomplete:
-            self.random_ip_user_id_label.setText("随机IP账号状态异常，请稍后重试或重新领取试用；未恢复前不能申请额度")
+            self.random_ip_user_id_label.setText("检测到旧版随机IP登录残留，服务端已停用 token 续签。请先重新领取试用；未恢复前不能申请额度")
             self.random_ip_user_id_label.show()
         else:
             self.random_ip_user_id_label.hide()

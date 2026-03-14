@@ -194,13 +194,13 @@ def _build_counter_snapshot() -> tuple[int, int]:
                 _counter_refresh_cache = (used, total, time.monotonic())
                 return used, total
             except RandomIPAuthError as exc:
-                log_suppressed_exception("_build_counter_snapshot: get_fresh_quota_snapshot", exc, level=logging.DEBUG)
-                if exc.detail.startswith("refresh_token_persist_failed"):
+                logging.warning("随机IP额度校验失败，改用本地快照：detail=%s", exc.detail)
+                if exc.detail.startswith("session_persist_failed"):
                     raise
                 snapshot = get_quota_snapshot()
                 return int(snapshot["used_quota"]), int(snapshot["total_quota"])
             except Exception as exc:
-                log_suppressed_exception("_build_counter_snapshot: get_fresh_quota_snapshot", exc, level=logging.DEBUG)
+                logging.warning("随机IP额度校验异常，改用本地快照：error=%s", exc)
                 snapshot = get_quota_snapshot()
                 return int(snapshot["used_quota"]), int(snapshot["total_quota"])
     count, limit, _custom_api = get_random_ip_counter_snapshot_local()
@@ -306,12 +306,14 @@ def show_random_ip_activation_dialog(gui: Any = None) -> bool:
             _run_with_loading_dialog(
                 gui,
                 title="校验登录状态中",
-                message="正在恢复随机IP账号信息...",
+                message="正在检查本机随机IP账号信息...",
                 worker=recover_incomplete_session,
             )
             return True
         except Exception as exc:
             message = format_random_ip_error(exc)
+            detail = exc.detail if isinstance(exc, RandomIPAuthError) else str(exc)
+            logging.warning("随机IP半残会话恢复失败：detail=%s", detail)
             _invoke_popup(gui, "warning", "随机IP账号状态异常", message)
             if _should_retry_incomplete_session_later(exc):
                 return False
@@ -332,7 +334,7 @@ def show_quota_request_dialog(gui: Any = None, *, require_confirm: bool = True) 
     if user_id <= 0:
         prompt = "暂时还不能申请额度。请先小测试一两份，确认能正常提交成功后，再来申请额度。"
         if session_incomplete:
-            prompt = "当前随机IP账号状态异常，暂时未读取到有效用户ID，开发者没法据此补额度。请稍后重试；如果一直不恢复，请先重新领取试用。"
+            prompt = "当前本机只剩旧版随机IP登录残留，服务端又已经停用了 token 续签，所以现在读不到有效用户ID。先重新领取试用；如果还是不行，再联系开发者处理。"
         _invoke_popup(gui, "warning", "暂时不能申请额度", prompt)
         return False
     if require_confirm:
@@ -358,9 +360,9 @@ def refresh_ip_counter_display(gui: Any) -> None:
             count, limit = _build_counter_snapshot()
         except RandomIPAuthError as exc:
             message = format_random_ip_error(exc)
-            logging.error("随机IP会话刷新后保存失败：%s", message)
+            logging.error("随机IP账号状态校验失败：%s", message)
             _set_random_ip_enabled(gui, False)
-            _invoke_popup(gui, "error", "随机IP登录状态保存失败", message)
+            _invoke_popup(gui, "error", "随机IP账号状态异常", message)
             count, limit, _ = get_random_ip_counter_snapshot_local()
         except Exception as exc:
             message = format_random_ip_error(exc)

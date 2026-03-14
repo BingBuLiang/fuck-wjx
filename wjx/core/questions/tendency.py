@@ -181,10 +181,13 @@ def get_tendency_index(
 
     # 未分组 → 纯随机/纯概率，不做一致性约束，但仍需处理反向题
     if _is_ungrouped(dimension):
+        logging.info(f"未分组模式: option_count={option_count}, probabilities={probabilities}, is_reverse={is_reverse}")
         result = _random_by_probabilities(option_count, probabilities)
         if is_reverse:
             result = (option_count - 1) - result
-        return _finalize_choice(result, anchor=result)
+        final = _finalize_choice(result, anchor=result)
+        logging.info(f"未分组模式选择结果: {final}")
+        return final
 
     # 获取该维度的基准偏好
     assert dimension is not None  # 已通过 _is_ungrouped 过滤，此处 dimension 必为 str

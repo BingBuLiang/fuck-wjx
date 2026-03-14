@@ -1087,7 +1087,6 @@ class TimeRangeSettingCard(SettingCard):
         input_layout.addWidget(self.inputEdit)
         input_layout.addWidget(sec_label)
 
-        self.value_edit.editingFinished.connect(self._normalize_inputs)
         self.setValue(0)
 
         self.hBoxLayout.addWidget(self._input_container, 0, Qt.AlignmentFlag.AlignRight)

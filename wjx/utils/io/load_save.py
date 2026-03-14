@@ -491,18 +491,77 @@ def _sanitize_runtime_config_payload(raw: Dict[str, Any]) -> RuntimeConfig:
     return config
 
 
-def load_config(path: Optional[str] = None) -> RuntimeConfig:
-    """Load persisted runtime configuration."""
+def _strip_json_comments(text: str) -> str:
+    """移除 JSON 中的单行注释（以 // 开头的行）"""
+    lines = text.splitlines()
+    cleaned = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("//"):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
+def _upgrade_config_payload(payload: dict) -> dict:
+    """升级旧版本配置格式到新版本
+    
+    处理配置格式变更，确保向后兼容。
+    """
+    # 这里可以添加配置迁移逻辑
+    # 例如：重命名字段、转换数据格式等
+    return payload
+
+
+def load_config(path: Optional[str] = None, *, strict: bool = False) -> RuntimeConfig:
+    """Load persisted runtime configuration.
+    
+    strict=True 时，遇到坏配置会抛出 ValueError，供 UI 明确提示用户。
+    strict=False 时，读取失败回退默认配置，避免启动中断。
+    """
     config_path = os.fspath(path or _default_config_path())
     if not os.path.exists(config_path):
         return RuntimeConfig()
     try:
         with open(config_path, "r", encoding="utf-8") as fp:
-            payload = json.load(fp)
+            raw_text = fp.read()
+        clean_text = _strip_json_comments(raw_text)
+        if not clean_text.strip():
+            default_path = os.path.abspath(_default_config_path())
+            current_path = os.path.abspath(config_path)
+            if not strict and current_path == default_path:
+                try:
+                    with open(config_path, "w", encoding="utf-8") as fp:
+                        fp.write("{}\n")
+                except Exception as repair_exc:
+                    logging.debug(f"自动修复空配置失败: {config_path} -> {repair_exc}")
+            raise ValueError("配置文件为空")
+        payload = json.loads(clean_text)
     except Exception as exc:
-        logging.warning(f"读取配置失败: {exc}")
+        error_message = f"读取配置失败: {config_path} -> {exc}"
+        if strict:
+            logging.error(error_message)
+            raise ValueError(error_message) from exc
+        logging.warning(error_message)
         return RuntimeConfig()
-    return _sanitize_runtime_config_payload(payload if isinstance(payload, dict) else {})
+    
+    if not isinstance(payload, dict):
+        error_message = f"读取配置失败: {config_path} -> JSON 顶层必须是对象"
+        if strict:
+            raise ValueError(error_message)
+        logging.warning(error_message)
+        return RuntimeConfig()
+    
+    try:
+        payload = _upgrade_config_payload(payload)
+    except Exception as exc:
+        error_message = f"迁移配置失败: {config_path} -> {exc}"
+        if strict:
+            raise ValueError(error_message) from exc
+        logging.warning(error_message)
+        return RuntimeConfig()
+    
+    return _sanitize_runtime_config_payload(payload)
 
 
 def save_config(config: RuntimeConfig, path: Optional[str] = None) -> str:

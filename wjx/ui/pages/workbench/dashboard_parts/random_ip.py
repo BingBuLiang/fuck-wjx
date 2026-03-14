@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from PySide6.QtWidgets import QDialog
 from qfluentwidgets import FluentIcon
 
-from wjx.network.proxy.auth import has_authenticated_session
+from wjx.network.proxy.auth import has_authenticated_session, has_incomplete_session
 from wjx.network.proxy import (
     _format_status_payload,
     get_proxy_minute_by_answer_seconds,
@@ -80,6 +80,7 @@ class DashboardRandomIPMixin:
 
     def update_random_ip_counter(self, count: int, limit: int, custom_api: bool):
         authenticated = has_authenticated_session()
+        session_incomplete = has_incomplete_session()
         used = max(0, int(count or 0))
         total = max(0, int(limit or 0))
         remaining = max(0, total - used)
@@ -88,6 +89,8 @@ class DashboardRandomIPMixin:
         self.card_btn.setIcon(FluentIcon.FINGERPRINT)
         if authenticated:
             self.card_btn.setToolTip("提交额度申请后，开发者会人工补充随机IP额度")
+        elif session_incomplete:
+            self.card_btn.setToolTip("检测到可恢复的随机IP旧会话，系统会自动尝试恢复；若长时间未恢复，再改用报错反馈")
         else:
             self.card_btn.setToolTip("勾选随机IP会自动尝试领取试用；试用不可用时可在这里提交额度申请")
 
@@ -97,7 +100,7 @@ class DashboardRandomIPMixin:
             self._update_ip_low_infobar(count, limit, custom_api)
             self._update_ip_cost_infobar(custom_api)
             return
-        if not authenticated:
+        if not authenticated and not session_incomplete:
             self.random_ip_hint.setText("--/--")
             self.random_ip_hint.setStyleSheet("color:#6b6b6b;")
             self._update_ip_low_infobar(count, limit, custom_api)
@@ -106,6 +109,12 @@ class DashboardRandomIPMixin:
                 self.random_ip_cb.blockSignals(True)
                 self.random_ip_cb.setChecked(False)
                 self.random_ip_cb.blockSignals(False)
+            return
+        if session_incomplete and not authenticated:
+            self.random_ip_hint.setText("恢复中")
+            self.random_ip_hint.setStyleSheet("color:#D46B08;")
+            self._update_ip_low_infobar(count, limit, custom_api)
+            self._update_ip_cost_infobar(custom_api)
             return
         self.random_ip_hint.setText(f"{used}/{total}")
         if remaining <= 0:

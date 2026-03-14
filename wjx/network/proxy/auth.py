@@ -120,6 +120,31 @@ def _to_non_negative_int(value: Any, default: int = 0) -> int:
     return max(0, parsed)
 
 
+def _is_valid_user_id(value: Any) -> bool:
+    try:
+        return int(value) > 0
+    except Exception:
+        return False
+
+
+def _require_valid_user_id(value: Any) -> int:
+    if not _is_valid_user_id(value):
+        raise RandomIPAuthError("invalid_response:user_id_invalid")
+    return int(value)
+
+
+def _session_has_tokens(session: RandomIPSession) -> bool:
+    return bool(session.has_refresh_token or session.has_access_token)
+
+
+def _has_complete_session(session: RandomIPSession) -> bool:
+    return bool(_session_has_tokens(session) and _is_valid_user_id(session.user_id))
+
+
+def _has_incomplete_session(session: RandomIPSession) -> bool:
+    return bool(_session_has_tokens(session) and not _is_valid_user_id(session.user_id))
+
+
 def _ensure_loaded() -> None:
     global _session_loaded, _session
     with _session_lock:
@@ -258,19 +283,37 @@ def clear_session() -> None:
 
 def has_authenticated_session() -> bool:
     session = _read_session()
-    return bool(session.has_refresh_token or session.has_access_token)
+    return _has_complete_session(session)
+
+
+def has_incomplete_session() -> bool:
+    return _has_incomplete_session(_read_session())
+
+
+def recover_incomplete_session() -> RandomIPSession:
+    session = _read_session()
+    if not _has_incomplete_session(session):
+        return session
+    if not session.has_refresh_token:
+        raise RandomIPAuthError("session_incomplete")
+    refreshed = refresh_session(force=True)
+    if not _has_complete_session(refreshed):
+        raise RandomIPAuthError("session_incomplete")
+    return refreshed
 
 
 def get_session_snapshot() -> Dict[str, Any]:
     session = _read_session()
     return {
-        "authenticated": bool(session.has_refresh_token or session.has_access_token),
+        "authenticated": _has_complete_session(session),
         "device_id": session.device_id,
         "user_id": int(session.user_id or 0),
         "remaining_quota": int(session.remaining_quota),
         "total_quota": int(session.total_quota),
         "has_access_token": bool(session.has_access_token),
         "has_refresh_token": bool(session.has_refresh_token),
+        "has_valid_user_id": _is_valid_user_id(session.user_id),
+        "session_incomplete": _has_incomplete_session(session),
     }
 
 
@@ -305,6 +348,8 @@ def format_random_ip_error(exc: BaseException) -> str:
         return "领取试用过于频繁，请稍后再试"
     if detail == "invalid_refresh_token":
         return "登录状态已失效，请重新领取试用或申请随机IP额度"
+    if detail == "session_incomplete":
+        return "随机IP账号信息不完整，请等待自动校验完成，或重新领取试用/申请额度"
     if detail.startswith(_REFRESH_PERSIST_FAILED_DETAIL):
         return "登录状态刷新后未能安全保存到本机，已停止继续使用随机IP，请重新领取试用或申请随机IP额度"
     if detail == "device_banned":
@@ -341,6 +386,8 @@ def format_random_ip_error(exc: BaseException) -> str:
         return "请先领取免费试用或提交额度申请后再使用随机IP"
     if detail.startswith("network_error:"):
         return f"网络请求失败：{detail.split(':', 1)[1].strip()}"
+    if detail == "invalid_response:user_id_invalid":
+        return "服务端返回了无效的随机IP用户ID，请稍后重试"
     if detail.startswith("invalid_response"):
         return "服务端返回格式异常，请稍后重试"
     if detail.startswith("http_"):
@@ -462,7 +509,7 @@ def _parse_session_payload(
         raise RandomIPAuthError("invalid_response:user_id_missing")
     session = RandomIPSession(
         device_id=device_id,
-        user_id=_to_non_negative_int(data.get("user_id"), 0),
+        user_id=_require_valid_user_id(data.get("user_id")),
         access_token=str(data.get("access_token") or "").strip(),
         refresh_token=str(data.get("refresh_token") or "").strip(),
         expires_at=_parse_datetime(data.get("expires_at")),
@@ -503,6 +550,8 @@ def activate_trial() -> RandomIPSession:
 
 
 def _should_refresh(session: RandomIPSession, *, force: bool = False) -> bool:
+    if not _is_valid_user_id(session.user_id):
+        return True
     if force or not session.access_token or session.expires_at is None:
         return True
     return session.expires_at <= (_utc_now() + timedelta(seconds=_TOKEN_EARLY_REFRESH_SECONDS))

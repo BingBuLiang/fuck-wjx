@@ -520,14 +520,20 @@ class MainWindow(
     def _refresh_title_random_ip_user_id(self) -> None:
         user_id = 0
         authenticated = False
+        session_incomplete = False
         try:
             snapshot = get_session_snapshot()
             authenticated = bool(snapshot.get("authenticated"))
+            session_incomplete = bool(snapshot.get("session_incomplete"))
             user_id = int(snapshot.get("user_id") or 0)
         except Exception as exc:
             log_suppressed_exception("_refresh_title_random_ip_user_id snapshot", exc, level=logging.WARNING)
 
-        suffix = f" <span style='color:#8A8A8A;'>({user_id})</span>" if authenticated and user_id > 0 else ""
+        suffix = ""
+        if authenticated and user_id > 0:
+            suffix = f" <span style='color:#8A8A8A;'>({user_id})</span>"
+        elif session_incomplete:
+            suffix = " <span style='color:#D46B08;'>(账号异常)</span>"
         title_label = getattr(getattr(self, "titleBar", None), "titleLabel", None)
         if title_label is None:
             return

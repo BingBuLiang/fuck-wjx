@@ -16,7 +16,9 @@ from wjx.network.proxy.auth import (
     get_quota_snapshot,
     get_session_snapshot,
     has_authenticated_session,
+    has_incomplete_session,
     load_session_for_startup,
+    recover_incomplete_session,
 )
 from wjx.network.proxy.quota import get_random_ip_counter_snapshot_local
 from wjx.utils.logging.log_utils import (
@@ -30,6 +32,11 @@ from wjx.utils.logging.log_utils import (
 _COUNTER_REFRESH_TTL_SECONDS = 2.0
 _counter_refresh_lock = threading.Lock()
 _counter_refresh_cache: Optional[tuple[int, int, float]] = None
+_INCOMPLETE_SESSION_RETRY_LATER_DETAILS = {
+    "site_daily_limit_exceeded",
+    "upstream_rejected",
+    "upstream_surplus_exhausted",
+}
 
 
 def _apply_counter_snapshot_to_gui(gui: Any, *, used: int, total: int, custom_api: bool = False) -> None:
@@ -147,6 +154,19 @@ def _schedule_on_gui_thread(gui: Any, callback: Callable[[], None]) -> None:
         logging.debug("执行回调失败", exc_info=True)
 
 
+def _should_retry_incomplete_session_later(exc: BaseException) -> bool:
+    if not isinstance(exc, RandomIPAuthError):
+        return True
+    detail = str(exc.detail or "").strip()
+    if not detail:
+        return True
+    if detail.startswith(("network_error:", "http_", "invalid_response")):
+        return True
+    if detail.endswith("rate_limited"):
+        return True
+    return detail in _INCOMPLETE_SESSION_RETRY_LATER_DETAILS
+
+
 def confirm_random_ip_usage(gui: Any) -> bool:
     if gui is not None:
         setattr(gui, "_random_ip_disclaimer_ack", True)
@@ -157,7 +177,7 @@ def _build_counter_snapshot() -> tuple[int, int]:
     global _counter_refresh_cache
     from wjx.network.proxy.source import is_custom_proxy_api_active
 
-    if not is_custom_proxy_api_active() and has_authenticated_session():
+    if not is_custom_proxy_api_active() and (has_authenticated_session() or has_incomplete_session()):
         now = time.monotonic()
         cached = _counter_refresh_cache
         if cached and (now - cached[2]) < _COUNTER_REFRESH_TTL_SECONDS:
@@ -281,6 +301,20 @@ def _try_activate_trial(gui: Any = None) -> tuple[bool, bool]:
 def show_random_ip_activation_dialog(gui: Any = None) -> bool:
     if has_authenticated_session():
         return True
+    if has_incomplete_session():
+        try:
+            _run_with_loading_dialog(
+                gui,
+                title="校验登录状态中",
+                message="正在恢复随机IP账号信息...",
+                worker=recover_incomplete_session,
+            )
+            return True
+        except Exception as exc:
+            message = format_random_ip_error(exc)
+            _invoke_popup(gui, "warning", "随机IP账号状态异常", message)
+            if _should_retry_incomplete_session_later(exc):
+                return False
 
     activated, should_fallback_to_card = _try_activate_trial(gui)
     if activated:
@@ -292,6 +326,15 @@ def show_random_ip_activation_dialog(gui: Any = None) -> bool:
 
 
 def show_quota_request_dialog(gui: Any = None, *, require_confirm: bool = True) -> bool:
+    snapshot = get_session_snapshot()
+    user_id = int(snapshot.get("user_id") or 0)
+    session_incomplete = bool(snapshot.get("session_incomplete"))
+    if user_id <= 0:
+        prompt = "暂时还不能申请额度。请先小测试一两份，确认能正常提交成功后，再来申请额度。"
+        if session_incomplete:
+            prompt = "当前随机IP账号状态异常，暂时未读取到有效用户ID，开发者没法据此补额度。请稍后重试；如果一直不恢复，请先重新领取试用。"
+        _invoke_popup(gui, "warning", "暂时不能申请额度", prompt)
+        return False
     if require_confirm:
         prompt = (
             "默认随机IP现已改为账号额度模式。\n\n"

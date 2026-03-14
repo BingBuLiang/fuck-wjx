@@ -135,6 +135,7 @@ class ContactForm(StatusPollingMixin, QWidget):
         self._auto_clear_on_success = auto_clear_on_success
         self._manage_polling = manage_polling
         self._random_ip_user_id: int = 0
+        self._random_ip_session_incomplete: bool = False
 
         wrapper = QVBoxLayout(self)
         wrapper.setContentsMargins(0, 0, 0, 0)
@@ -431,9 +432,14 @@ class ContactForm(StatusPollingMixin, QWidget):
             log_suppressed_exception("refresh_random_ip_user_id_hint", exc, level=logging.WARNING)
             snapshot = {}
         user_id = int(snapshot.get("user_id") or 0)
+        session_incomplete = bool(snapshot.get("session_incomplete"))
         self._random_ip_user_id = user_id
+        self._random_ip_session_incomplete = session_incomplete
         if user_id > 0:
             self.random_ip_user_id_label.setText(f"随机IP用户ID：{user_id}")
+            self.random_ip_user_id_label.show()
+        elif session_incomplete:
+            self.random_ip_user_id_label.setText("随机IP账号状态异常，请稍后重试或重新领取试用；未恢复前不能申请额度")
             self.random_ip_user_id_label.show()
         else:
             self.random_ip_user_id_label.hide()
@@ -783,6 +789,24 @@ class ContactForm(StatusPollingMixin, QWidget):
             InfoBar.warning("", "额度申请必须填写邮箱地址", parent=self, position=InfoBarPosition.TOP, duration=2000)
             return
 
+        if email and not self._validate_email(email):
+            InfoBar.warning("", "邮箱格式不正确", parent=self, position=InfoBarPosition.TOP, duration=2000)
+            return
+
+        self.refresh_random_ip_user_id_hint()
+        if mtype == REQUEST_MESSAGE_TYPE and self._random_ip_user_id <= 0:
+            warning_text = "暂时还不能申请额度。请先小测试一两份，确认能正常提交成功后，再来申请额度。"
+            if self._random_ip_session_incomplete:
+                warning_text = "当前随机IP账号状态异常，暂时未读取到有效用户ID，开发者没法据此补额度。请稍后重试；如果一直不恢复，请先重新领取试用。需要反馈问题的话，请改用“报错反馈”。"
+            InfoBar.warning(
+                "",
+                warning_text,
+                parent=self,
+                position=InfoBarPosition.TOP,
+                duration=3500,
+            )
+            return
+
         if mtype == REQUEST_MESSAGE_TYPE:
             confirm_email_box = MessageBox(
                 "确认邮箱地址",
@@ -805,20 +829,6 @@ class ContactForm(StatusPollingMixin, QWidget):
             if not confirm_box.exec():
                 return
 
-        if email and not self._validate_email(email):
-            InfoBar.warning("", "邮箱格式不正确", parent=self, position=InfoBarPosition.TOP, duration=2000)
-            return
-
-        self.refresh_random_ip_user_id_hint()
-        if mtype == REQUEST_MESSAGE_TYPE and self._random_ip_user_id <= 0:
-            InfoBar.warning(
-                "",
-                "暂时还不能申请额度。请先小测试一两份，确认能正常提交成功后，再来申请额度。",
-                parent=self,
-                position=InfoBarPosition.TOP,
-                duration=3000,
-            )
-            return
         version_str = __VERSION__
         full_message = f"来源：fuck-wjx v{version_str}\n类型：{mtype}\n"
         if email:
@@ -826,6 +836,8 @@ class ContactForm(StatusPollingMixin, QWidget):
         full_message += f"已捐助：{'是' if self.donated_cb.isChecked() else '否'}\n"
         if self._random_ip_user_id > 0:
             full_message += f"随机IP用户ID：{self._random_ip_user_id}\n"
+        elif self._random_ip_session_incomplete:
+            full_message += "随机IP账号状态：异常（未读取到有效用户ID）\n"
         if mtype == REQUEST_MESSAGE_TYPE:
             full_message += f"捐助金额：￥{request_amount_text}\n"
             full_message += f"申请额度：{request_quota_text}\n"

@@ -17,6 +17,7 @@ from wjx.network.proxy.auth import (
     format_random_ip_error,
     get_fresh_quota_snapshot,
     has_authenticated_session,
+    has_incomplete_session,
 )
 from wjx.network.proxy import (
     get_effective_proxy_api_url,
@@ -307,7 +308,7 @@ class RunControllerRuntimeMixin:
             return []
 
         if not is_custom_proxy_api_active():
-            if not has_authenticated_session():
+            if not has_authenticated_session() and not has_incomplete_session():
                 raise RuntimeError("默认随机IP需要先领取免费试用或提交额度申请，请先完成后再试，或改用自定义代理接口")
             _set_stage("初始化随机IP模块（同步额度）")
             try:

@@ -5,6 +5,7 @@ from wjx.network.proxy.auth import (
     get_quota_snapshot,
     get_session_snapshot,
     has_authenticated_session,
+    has_incomplete_session,
 )
 
 
@@ -20,7 +21,7 @@ def get_random_ip_counter_snapshot_local() -> tuple[int, int, bool]:
     if is_custom_proxy_api_active():
         return 0, 0, True
 
-    if has_authenticated_session():
+    if has_authenticated_session() or has_incomplete_session():
         snapshot = get_quota_snapshot()
         return int(snapshot["used_quota"]), int(snapshot["total_quota"]), False
 
@@ -33,6 +34,8 @@ def normalize_random_ip_enabled_value(desired_enabled: bool) -> bool:
     from wjx.network.proxy.source import is_custom_proxy_api_active
 
     if is_custom_proxy_api_active():
+        return True
+    if has_incomplete_session():
         return True
     if not has_authenticated_session():
         return False

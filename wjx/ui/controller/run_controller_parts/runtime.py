@@ -194,6 +194,7 @@ class RunControllerRuntimeMixin:
         ctx.multi_text_blank_modes = copy.deepcopy(pending.multi_text_blank_modes)
         ctx.multi_text_blank_ai_flags = copy.deepcopy(pending.multi_text_blank_ai_flags)
         ctx.single_option_fill_texts = copy.deepcopy(pending.single_option_fill_texts)
+        ctx.single_attached_option_selects = copy.deepcopy(pending.single_attached_option_selects)
         ctx.droplist_option_fill_texts = copy.deepcopy(pending.droplist_option_fill_texts)
         ctx.multiple_option_fill_texts = copy.deepcopy(pending.multiple_option_fill_texts)
         ctx.question_config_index_map = copy.deepcopy(pending.question_config_index_map)

@@ -152,6 +152,10 @@ class DashboardEntriesMixin:
             if 0 <= idx < len(entries):
                 entry = entries[idx]
                 entry.ai_enabled = bool(enabled) if entry.question_type in ("text", "multi_text") else False
+        attached_select_updates = dlg.get_attached_select_results()
+        for idx, attached_configs in attached_select_updates.items():
+            if 0 <= idx < len(entries):
+                entries[idx].attached_option_selects = attached_configs
         multi_text_blank_modes_updates = dlg.get_multi_text_blank_modes()
         for idx, modes in multi_text_blank_modes_updates.items():
             if 0 <= idx < len(entries):

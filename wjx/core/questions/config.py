@@ -1,4 +1,5 @@
 """题目配置数据结构 - 策略、概率、选项等参数定义"""
+import copy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, List, Optional, Union
 
@@ -97,6 +98,7 @@ class QuestionEntry:
     text_random_mode: str = _TEXT_RANDOM_NONE
     option_fill_texts: Optional[List[Optional[str]]] = None
     fillable_option_indices: Optional[List[int]] = None
+    attached_option_selects: List[dict] = field(default_factory=list)
     is_location: bool = False
     dimension: Optional[str] = None  # 题目所属维度（如"满意度"、"信任感"等），None 表示未分组
     is_reverse: bool = False  # 是否为反向题（用于信效度一致性约束时翻转基准）
@@ -165,6 +167,8 @@ class QuestionEntry:
         fillable_hint = ""
         if self.option_fill_texts and any(text for text in self.option_fill_texts if text):
             fillable_hint = " | 含填空项"
+        elif self.attached_option_selects:
+            fillable_hint = " | 含嵌入式下拉"
 
         if self.question_type == "multiple" and self.custom_weights:
             weights_str = ",".join(f"{int(round(max(w, 0)))}%" for w in self.custom_weights if isinstance(w, (int, float)))
@@ -220,6 +224,7 @@ def configure_probabilities(
     _target.multi_text_blank_modes = []
     _target.multi_text_blank_ai_flags = []
     _target.single_option_fill_texts = []
+    _target.single_attached_option_selects = []
     _target.droplist_option_fill_texts = []
     _target.multiple_option_fill_texts = []
     _target.question_config_index_map = {}
@@ -254,6 +259,7 @@ def configure_probabilities(
             _idx_single += 1
             _target.single_prob.append(_normalize_single_like_prob_config(probs, entry.option_count))
             _target.single_option_fill_texts.append(_normalize_option_fill_texts(entry.option_fill_texts, entry.option_count))
+            _target.single_attached_option_selects.append(copy.deepcopy(getattr(entry, "attached_option_selects", []) or []))
         elif entry.question_type == "dropdown":
             _target.question_config_index_map[question_num] = ("dropdown", _idx_dropdown)
             _idx_dropdown += 1

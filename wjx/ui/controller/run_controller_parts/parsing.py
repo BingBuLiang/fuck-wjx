@@ -127,6 +127,58 @@ class RunControllerParsingMixin:
             total = max(1, int(option_count or 1))
             return [1.0 if idx == forced_index else 0.0 for idx in range(total)]
 
+        def _normalize_attached_option_selects(
+            parsed_configs: Any,
+            existing_configs: Any = None,
+        ) -> List[Dict[str, Any]]:
+            parsed_list = parsed_configs if isinstance(parsed_configs, list) else []
+            existing_map: Dict[int, Dict[str, Any]] = {}
+            if isinstance(existing_configs, list):
+                for item in existing_configs:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        option_index = int(item.get("option_index"))
+                    except Exception:
+                        continue
+                    existing_map[option_index] = item
+            normalized: List[Dict[str, Any]] = []
+            for item in parsed_list:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    option_index = int(item.get("option_index"))
+                except Exception:
+                    continue
+                option_text = str(item.get("option_text") or "").strip()
+                select_options_raw = item.get("select_options")
+                if not isinstance(select_options_raw, list):
+                    continue
+                select_options = [str(opt or "").strip() for opt in select_options_raw if str(opt or "").strip()]
+                if not select_options:
+                    continue
+                weights = None
+                existing_item = existing_map.get(option_index)
+                if existing_item is not None:
+                    existing_weights = existing_item.get("weights")
+                    if isinstance(existing_weights, list) and existing_weights:
+                        weights = []
+                        for idx in range(len(select_options)):
+                            raw_weight = existing_weights[idx] if idx < len(existing_weights) else 0.0
+                            try:
+                                weights.append(max(0.0, float(raw_weight)))
+                            except Exception:
+                                weights.append(0.0)
+                        if not any(weight > 0 for weight in weights):
+                            weights = None
+                normalized.append({
+                    "option_index": option_index,
+                    "option_text": option_text,
+                    "select_options": select_options,
+                    "weights": weights,
+                })
+            return normalized
+
         existing_by_num: Dict[int, QuestionEntry] = {}
         existing_by_title: Dict[str, QuestionEntry] = {}
         if existing_entries:
@@ -155,6 +207,7 @@ class RunControllerParsingMixin:
             rating_max = int(q.get("rating_max") or 0)
             title_text = str(q.get("title") or "").strip()
             forced_option_text = str(q.get("forced_option_text") or "").strip()
+            attached_option_selects = q.get("attached_option_selects") if isinstance(q.get("attached_option_selects"), list) else []
 
             if is_multi_text or (is_text_like and text_inputs > 1):
                 q_type = "multi_text"
@@ -222,11 +275,13 @@ class RunControllerParsingMixin:
                     if q_type == "multi_text"
                     else []
                 )
+                attached_selects_from_existing = copy.deepcopy(getattr(existing_config, "attached_option_selects", []) or [])
             else:
                 ai_enabled_from_existing = False
                 text_random_mode_from_existing = "none"
                 multi_text_blank_modes_from_existing = []
                 multi_text_blank_ai_flags_from_existing = []
+                attached_selects_from_existing = []
                 if q_type in ("single", "dropdown", "scale"):
                     probabilities = -1
                     distribution = "random"
@@ -302,8 +357,11 @@ class RunControllerParsingMixin:
                 text_random_mode=text_random_mode_from_existing if q_type == "text" else "none",
                 option_fill_texts=None,
                 fillable_option_indices=q.get("fillable_options"),
+                attached_option_selects=_normalize_attached_option_selects(
+                    attached_option_selects,
+                    attached_selects_from_existing if q_type == "single" else None,
+                ) if q_type == "single" else [],
                 is_location=is_location,
             )
             entries.append(entry)
         return entries
-

@@ -411,6 +411,35 @@ def _extract_select_option_texts_from_element(select_element) -> List[str]:
     return options
 
 
+def _extract_custom_select_option_texts(element) -> List[str]:
+    if element is None:
+        return []
+    raw_values: List[str] = []
+    attr_keys = ("cusom", "custom", "data-custom", "data-cusom")
+    for key in attr_keys:
+        try:
+            raw = element.get(key)
+        except Exception:
+            raw = None
+        if raw is not None:
+            raw_values.append(str(raw))
+    options: List[str] = []
+    for raw in raw_values:
+        for part in re.split(r"[,，\n\r|/]+", raw):
+            text = _normalize_html_text(part)
+            if not text or text == "请选择":
+                continue
+            options.append(text)
+    deduped: List[str] = []
+    seen = set()
+    for option in options:
+        if option in seen:
+            continue
+        seen.add(option)
+        deduped.append(option)
+    return deduped
+
+
 def _extract_choice_attached_selects(question_div) -> List[Dict[str, Any]]:
     if question_div is None:
         return []
@@ -424,12 +453,6 @@ def _extract_choice_attached_selects(question_div) -> List[Dict[str, Any]]:
             break
     attached_selects: List[Dict[str, Any]] = []
     for option_index, element in enumerate(option_elements):
-        try:
-            select_element = element.find("select")
-        except Exception:
-            select_element = None
-        if select_element is None:
-            continue
         option_text = ""
         try:
             label_element = element.select_one(".label")
@@ -442,7 +465,23 @@ def _extract_choice_attached_selects(question_div) -> List[Dict[str, Any]]:
                 option_text = ""
         if not option_text:
             option_text = _extract_option_text_from_attrs(element)
+        try:
+            select_element = element.find("select")
+        except Exception:
+            select_element = None
         select_options = _extract_select_option_texts_from_element(select_element)
+        if not select_options:
+            input_candidates = []
+            try:
+                input_candidates = element.find_all("input")
+            except Exception:
+                input_candidates = []
+            for input_element in input_candidates:
+                select_options = _extract_custom_select_option_texts(input_element)
+                if select_options:
+                    break
+        if not select_options:
+            continue
         attached_selects.append({
             "option_index": option_index,
             "option_text": option_text,

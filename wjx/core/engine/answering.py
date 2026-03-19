@@ -211,7 +211,14 @@ class _QuestionDispatcher:
     # -- 各题型处理器 --------------------------------------------------
 
     def _handle_single(self, driver, q_num, idx, ctx: TaskContext):
-        _single_impl(driver, q_num, idx, ctx.single_prob, ctx.single_option_fill_texts)
+        _single_impl(
+            driver,
+            q_num,
+            idx,
+            ctx.single_prob,
+            ctx.single_option_fill_texts,
+            ctx.single_attached_option_selects,
+        )
 
     def _handle_multiple(self, driver, q_num, idx, ctx: TaskContext):
         _multiple_impl(driver, q_num, idx, ctx.multiple_prob, ctx.multiple_option_fill_texts)
@@ -486,7 +493,14 @@ def brush(
                             _multiple_impl(driver, current_question_number, _indices["multiple"], ctx.multiple_prob, ctx.multiple_option_fill_texts)
                             _indices["multiple"] += 1
                         else:
-                            _single_impl(driver, current_question_number, _indices["single"], ctx.single_prob, ctx.single_option_fill_texts)
+                            _single_impl(
+                                driver,
+                                current_question_number,
+                                _indices["single"],
+                                ctx.single_prob,
+                                ctx.single_option_fill_texts,
+                                ctx.single_attached_option_selects,
+                            )
                             _indices["single"] += 1
                         handled = True
 

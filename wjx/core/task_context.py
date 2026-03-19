@@ -72,6 +72,7 @@ class TaskContext:
     multi_text_blank_modes: List[List[str]] = field(default_factory=list)
     multi_text_blank_ai_flags: List[List[bool]] = field(default_factory=list)
     single_option_fill_texts: List[Optional[List[Optional[str]]]] = field(default_factory=list)
+    single_attached_option_selects: List[List[Dict[str, Any]]] = field(default_factory=list)
     droplist_option_fill_texts: List[Optional[List[Optional[str]]]] = field(default_factory=list)
     multiple_option_fill_texts: List[Optional[List[Optional[str]]]] = field(default_factory=list)
     answer_rules: List[Dict[str, Any]] = field(default_factory=list)

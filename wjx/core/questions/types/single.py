@@ -249,10 +249,22 @@ def _handle_attached_select(
     selected_option_index_zero_based: int,
     target_elem: Any,
     fill_value: Optional[str],
+    attached_selects_config: Optional[List[dict]],
 ) -> Optional[str]:
     select_element, select_options = _extract_attached_select_options(target_elem)
     if not select_element or not select_options:
         return None
+    config_item = None
+    for item in attached_selects_config or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            option_index = int(item.get("option_index"))
+        except Exception:
+            continue
+        if option_index == selected_option_index_zero_based:
+            config_item = item
+            break
     matched_idx: Optional[int] = None
     normalized_fill = str(fill_value or "").strip()
     if normalized_fill:
@@ -262,25 +274,57 @@ def _handle_attached_select(
                 matched_idx = idx
                 break
     if matched_idx is None:
-        matched_idx = weighted_index([1.0] * len(select_options))
+        configured_weights = config_item.get("weights") if isinstance(config_item, dict) else None
+        if isinstance(configured_weights, list) and configured_weights:
+            option_text_map = {str(text or "").strip(): idx for idx, (_, text) in enumerate(select_options)}
+            normalized_weights = [0.0] * len(select_options)
+            config_options = config_item.get("select_options") if isinstance(config_item, dict) else None
+            if isinstance(config_options, list) and config_options:
+                for cfg_idx, cfg_text in enumerate(config_options):
+                    target_idx = option_text_map.get(str(cfg_text or "").strip())
+                    if target_idx is None:
+                        continue
+                    raw_weight = configured_weights[cfg_idx] if cfg_idx < len(configured_weights) else 0.0
+                    try:
+                        normalized_weights[target_idx] = max(0.0, float(raw_weight))
+                    except Exception:
+                        normalized_weights[target_idx] = 0.0
+            else:
+                for idx in range(len(select_options)):
+                    raw_weight = configured_weights[idx] if idx < len(configured_weights) else 0.0
+                    try:
+                        normalized_weights[idx] = max(0.0, float(raw_weight))
+                    except Exception:
+                        normalized_weights[idx] = 0.0
+            if any(weight > 0 for weight in normalized_weights):
+                matched_idx = weighted_index(normalized_weights)
+        if matched_idx is None:
+            matched_idx = weighted_index([1.0] * len(select_options))
     option_value, option_text = select_options[matched_idx]
     if _select_attached_option_via_js(driver, select_element, option_value, option_text):
         logging.info(
-            "单选题第%s题第%s项命中联动下拉，已自动选择：%s",
+            "单选题第%s题第%s项命中嵌入式下拉，已自动选择：%s",
             current,
             selected_option_index_zero_based + 1,
             option_text or option_value or "未知选项",
         )
         return option_text or option_value or None
     logging.warning(
-        "单选题第%s题第%s项的联动下拉选择失败，页面可能仍会判定未作答。",
+        "单选题第%s题第%s项的嵌入式下拉选择失败，页面可能仍会判定未作答。",
         current,
         selected_option_index_zero_based + 1,
     )
     return None
 
 
-def single(driver: BrowserDriver, current: int, index: int, single_prob_config: List, single_option_fill_texts_config: List) -> None:
+def single(
+    driver: BrowserDriver,
+    current: int,
+    index: int,
+    single_prob_config: List,
+    single_option_fill_texts_config: List,
+    single_attached_selects_config: Optional[List[List[dict]]] = None,
+) -> None:
     """单选题处理主函数"""
     # 兼容不同模板下的单选题 DOM 结构，按优先级收集“真实选项”节点
     option_elements: List[Any] = []
@@ -363,7 +407,19 @@ def single(driver: BrowserDriver, current: int, index: int, single_prob_config: 
 
     fill_entries = single_option_fill_texts_config[index] if index < len(single_option_fill_texts_config) else None
     fill_value = get_fill_text_from_config(fill_entries, selected_option - 1)
-    attached_select_text = _handle_attached_select(driver, current, selected_option - 1, target_elem, fill_value)
+    attached_selects_config = (
+        single_attached_selects_config[index]
+        if single_attached_selects_config and index < len(single_attached_selects_config)
+        else None
+    )
+    attached_select_text = _handle_attached_select(
+        driver,
+        current,
+        selected_option - 1,
+        target_elem,
+        fill_value,
+        attached_selects_config,
+    )
 
     # 记录统计数据
 

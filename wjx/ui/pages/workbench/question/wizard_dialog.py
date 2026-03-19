@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QDialog,
     QButtonGroup,
+    QFrame,
 )
 from qfluentwidgets import (
     ScrollArea,
@@ -27,7 +28,7 @@ from wjx.core.questions.config import QuestionEntry
 from wjx.utils.app.config import DEFAULT_FILL_TEXT
 
 from .constants import _get_entry_type_label
-from .utils import _shorten_text, _apply_label_color
+from .utils import _shorten_text, _apply_label_color, _bind_slider_input
 from .wizard_sections import WizardSectionsMixin, _TEXT_RANDOM_NONE, _get_segmented_route_key
 from .psycho_config import BIAS_PRESET_CHOICES
 
@@ -142,6 +143,7 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
         self.text_random_mobile_check_map: Dict[int, CheckBox] = {}
         self.text_random_group_map: Dict[int, QButtonGroup] = {}
         self.bias_preset_map: Dict[int, Any] = {}
+        self.attached_select_slider_map: Dict[int, List[Dict[str, Any]]] = {}
         self._entry_snapshots: List[QuestionEntry] = [copy.deepcopy(entry) for entry in entries]
         self._has_content = False
 
@@ -336,28 +338,6 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
             _apply_label_color(desc, "#555555", "#c8c8c8")
             card_layout.addWidget(desc)
 
-        attached_option_selects: List[Dict[str, Any]] = []
-        if idx < len(self.info):
-            raw_attached_selects = self.info[idx].get("attached_option_selects")
-            if isinstance(raw_attached_selects, list):
-                attached_option_selects = [item for item in raw_attached_selects if isinstance(item, dict)]
-        if attached_option_selects:
-            hint_parts: List[str] = []
-            for item in attached_option_selects:
-                option_text = str(item.get("option_text") or "").strip() or f"第{int(item.get('option_index', 0)) + 1}项"
-                option_count = int(item.get("select_option_count") or 0)
-                hint_parts.append(f"{option_text} 后面还有 {option_count} 个下拉选项")
-            attached_hint = BodyLabel(
-                "联动提示：这题不是普通单选，"
-                + "；".join(hint_parts)
-                + "。运行时如果选中这些项，会自动补选下面的下拉。",
-                card,
-            )
-            attached_hint.setWordWrap(True)
-            attached_hint.setStyleSheet("font-size: 12px; padding: 4px 0;")
-            _apply_label_color(attached_hint, "#0f6cbd", "#63b3ff")
-            card_layout.addWidget(attached_hint)
-
         # 跳题逻辑风险提示
         if has_jump:
             jump_warn = BodyLabel(
@@ -379,8 +359,129 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
             self._build_order_section(card, card_layout, option_texts)
         else:
             self._build_slider_section(idx, entry, card, card_layout, option_texts)
+        self._build_attached_select_section(idx, entry, card, card_layout)
 
         inner.addWidget(card)
+
+    def _build_attached_select_section(self, idx: int, entry: QuestionEntry, card: CardWidget, card_layout: QVBoxLayout) -> None:
+        raw_configs = getattr(entry, "attached_option_selects", None) or []
+        if not isinstance(raw_configs, list) or not raw_configs:
+            return
+
+        stored_configs: List[Dict[str, Any]] = []
+        separator = QFrame(card)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Plain)
+        separator.setStyleSheet("color: rgba(255, 255, 255, 0.16); margin-top: 6px; margin-bottom: 6px;")
+        card_layout.addWidget(separator)
+
+        section_title = BodyLabel("嵌入式下拉配比：", card)
+        section_title.setStyleSheet("font-size: 12px; font-weight: 600; margin-top: 4px;")
+        _apply_label_color(section_title, "#444444", "#e0e0e0")
+        card_layout.addWidget(section_title)
+
+        section_hint = BodyLabel("只有命中对应单选项时，下面这些嵌入式下拉权重才会生效；底部会自动换算成目标占比。", card)
+        section_hint.setWordWrap(True)
+        section_hint.setStyleSheet("font-size: 12px;")
+        _apply_label_color(section_hint, "#666666", "#bfbfbf")
+        card_layout.addWidget(section_hint)
+
+        for item in raw_configs:
+            if not isinstance(item, dict):
+                continue
+            select_options_raw = item.get("select_options")
+            if not isinstance(select_options_raw, list):
+                continue
+            select_options = [str(opt or "").strip() for opt in select_options_raw if str(opt or "").strip()]
+            if not select_options:
+                continue
+            try:
+                option_index = int(item.get("option_index"))
+            except Exception:
+                option_index = len(stored_configs)
+            option_text = str(item.get("option_text") or "").strip() or f"第{option_index + 1}项"
+
+            raw_weights = item.get("weights")
+            weights: List[float] = []
+            if isinstance(raw_weights, list) and raw_weights:
+                for opt_idx in range(len(select_options)):
+                    raw_weight = raw_weights[opt_idx] if opt_idx < len(raw_weights) else 0.0
+                    try:
+                        weights.append(max(0.0, float(raw_weight)))
+                    except Exception:
+                        weights.append(0.0)
+            if len(weights) < len(select_options):
+                weights.extend([1.0] * (len(select_options) - len(weights)))
+            if not any(weight > 0 for weight in weights):
+                weights = [1.0] * len(select_options)
+
+            item_title = BodyLabel(f"当选择“{_shorten_text(option_text, 40)}”时：", card)
+            item_title.setWordWrap(True)
+            item_title.setStyleSheet("font-size: 12px; margin-top: 6px;")
+            _apply_label_color(item_title, "#0f6cbd", "#63b3ff")
+            card_layout.addWidget(item_title)
+
+            sliders: List[NoWheelSlider] = []
+            for opt_idx, select_text in enumerate(select_options):
+                row_widget = QWidget(card)
+                row_layout = QHBoxLayout(row_widget)
+                row_layout.setContentsMargins(0, 2, 0, 2)
+                row_layout.setSpacing(12)
+
+                num_label = BodyLabel(f"{opt_idx + 1}.", card)
+                num_label.setFixedWidth(24)
+                num_label.setStyleSheet("font-size: 12px;")
+                _apply_label_color(num_label, "#888888", "#a6a6a6")
+                row_layout.addWidget(num_label)
+
+                text_label = BodyLabel(_shorten_text(select_text, 40), card)
+                text_label.setFixedWidth(160)
+                text_label.setStyleSheet("font-size: 13px;")
+                row_layout.addWidget(text_label)
+
+                slider = NoWheelSlider(Qt.Orientation.Horizontal, card)
+                slider.setRange(0, 100)
+                slider.setValue(int(min(100, max(0, round(weights[opt_idx])))))
+                slider.setMinimumWidth(200)
+                row_layout.addWidget(slider, 1)
+
+                value_input = LineEdit(card)
+                value_input.setFixedWidth(60)
+                value_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                value_input.setText(str(slider.value()))
+                _bind_slider_input(slider, value_input)
+                row_layout.addWidget(value_input)
+
+                card_layout.addWidget(row_widget)
+                sliders.append(slider)
+
+            ratio_preview_label = BodyLabel("", card)
+            ratio_preview_label.setWordWrap(True)
+            ratio_preview_label.setStyleSheet("font-size: 12px; margin-bottom: 2px;")
+            _apply_label_color(ratio_preview_label, "#666666", "#bfbfbf")
+            card_layout.addWidget(ratio_preview_label)
+
+            def _update_option_preview(_value: int = 0, _label=ratio_preview_label, _sliders=sliders, _options=select_options):
+                self._refresh_ratio_preview_label(
+                    _label,
+                    _sliders,
+                    _options,
+                    "嵌入式下拉目标占比：",
+                )
+
+            for slider in sliders:
+                slider.valueChanged.connect(_update_option_preview)
+            _update_option_preview()
+
+            stored_configs.append({
+                "option_index": option_index,
+                "option_text": option_text,
+                "select_options": select_options,
+                "sliders": sliders,
+            })
+
+        if stored_configs:
+            self.attached_select_slider_map[idx] = stored_configs
 
     def _restore_entries(self) -> None:
         limit = min(len(self.entries), len(self._entry_snapshots))
@@ -476,6 +577,24 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
         for idx, cb in self.ai_check_map.items():
             random_mode = self.text_random_mode_map.get(idx, _TEXT_RANDOM_NONE)
             result[idx] = False if random_mode != _TEXT_RANDOM_NONE else cb.isChecked()
+        return result
+
+    def get_attached_select_results(self) -> Dict[int, List[Dict[str, Any]]]:
+        result: Dict[int, List[Dict[str, Any]]] = {}
+        for idx, config_items in self.attached_select_slider_map.items():
+            serialized_items: List[Dict[str, Any]] = []
+            for item in config_items:
+                sliders = item.get("sliders") or []
+                weights = [max(0, slider.value()) for slider in sliders]
+                if weights and not any(weight > 0 for weight in weights):
+                    weights = [1] * len(weights)
+                serialized_items.append({
+                    "option_index": int(item.get("option_index", 0)),
+                    "option_text": str(item.get("option_text") or "").strip(),
+                    "select_options": list(item.get("select_options") or []),
+                    "weights": weights,
+                })
+            result[idx] = serialized_items
         return result
 
     def get_reverse_results(self) -> Dict[int, Any]:

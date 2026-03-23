@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""多层检查 wjx/ 目录下 Python 文件的语法、静态导入和运行时导入问题。"""
+"""多层检查核心目录 Python 文件的语法、静态导入和运行时导入问题。"""
 
 from __future__ import annotations
 
@@ -14,8 +14,12 @@ from pathlib import Path
 from typing import Iterable
 
 ROOT_DIR = Path(__file__).resolve().parent
-TARGET_DIR = ROOT_DIR / "wjx"
-ENTRY_FILES = [ROOT_DIR / "fuck-wjx.py"]
+TARGET_DIRS = [
+    ROOT_DIR / "wjx",
+    ROOT_DIR / "software",
+    ROOT_DIR / "tencent",
+]
+ENTRY_FILES = [ROOT_DIR / "SurveyController.py"]
 
 # Ruff 规则：
 #   F    - Pyflakes：未使用的 import、未定义的名称、重复定义等
@@ -73,7 +77,7 @@ os.environ.setdefault("WJX_IMPORT_CHECK", "1")
 try:
     from PySide6.QtWidgets import QApplication
 
-    from wjx.ui.main_window import create_window
+    from software.ui.main_window import create_window
 
     app = QApplication.instance() or QApplication([])
     create_window()
@@ -97,12 +101,18 @@ os._exit(0)
 """
 
 
+def iter_target_dirs() -> list[Path]:
+    return [path for path in TARGET_DIRS if path.exists()]
+
+
 def iter_python_files() -> list[Path]:
-    files = [
-        path for path in TARGET_DIR.rglob("*.py")
-        if "__pycache__" not in path.parts
-    ]
-    return sorted(files)
+    files: list[Path] = []
+    for target_dir in iter_target_dirs():
+        files.extend(
+            path for path in target_dir.rglob("*.py")
+            if "__pycache__" not in path.parts
+        )
+    return sorted(set(files))
 
 
 def iter_compile_targets() -> list[Path]:
@@ -183,11 +193,15 @@ def run_compile_checks(files: Iterable[Path]) -> list[dict]:
     return issues
 
 
-def run_ruff_check() -> tuple[list[dict], str | None]:
+def run_ruff_check(target_dirs: Iterable[Path]) -> tuple[list[dict], str | None]:
+    target_args = [str(path) for path in target_dirs]
+    if not target_args:
+        return [], "未找到可执行 Ruff 检查的目标目录"
+
     result = subprocess.run(
         [
             sys.executable, "-m", "ruff", "check",
-            str(TARGET_DIR),
+            *target_args,
             "--select", RUFF_SELECT,
             "--output-format", "json",
         ],
@@ -352,7 +366,7 @@ def print_issues(title: str, issues: Iterable[dict]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="检查 wjx/ 目录下 Python 文件的语法、静态导入和启动链问题。"
+        description="检查 wjx、software、tencent 目录下 Python 文件的语法、静态导入和启动链问题。"
     )
     parser.add_argument(
         "--full",
@@ -365,8 +379,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    if not TARGET_DIR.exists():
-        print(f"[ERROR] 目录不存在: {TARGET_DIR}")
+    target_dirs = iter_target_dirs()
+    if not target_dirs:
+        print("[ERROR] 未找到可扫描目录（期望存在 wjx/、software/、tencent/ 至少一个）")
         return 2
 
     start_time = time.perf_counter()
@@ -375,7 +390,7 @@ def main() -> int:
     modules = iter_module_names(python_files)
     quick_mode = not args.full
 
-    print(f"[INFO] 扫描目录: {TARGET_DIR}")
+    print(f"[INFO] 扫描目录: {', '.join(str(path.relative_to(ROOT_DIR)) for path in target_dirs)}")
     print(f"[INFO] 检查模式: {'快检' if quick_mode else '完整'}")
     print(f"[INFO] Python 文件数: {len(python_files)}")
     print(f"[INFO] 编译目标数: {len(compile_targets)}")
@@ -385,7 +400,7 @@ def main() -> int:
         print(f"[INFO] 模块导入检查数: {len(modules)}")
 
     compile_issues = run_compile_checks(compile_targets)
-    ruff_issues, ruff_error = run_ruff_check()
+    ruff_issues, ruff_error = run_ruff_check(target_dirs)
     import_issues = run_module_import_checks(modules) if args.full else []
     window_issue = run_window_smoke_check()
 
@@ -422,3 +437,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

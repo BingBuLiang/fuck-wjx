@@ -1,15 +1,15 @@
 <div align="center">
-  <img src="assets/icon.png" alt="fuck-wjx" width="120" height="120" />
-  <h1>fuck-wjx (问卷星速填)</h1>
+  <img src="assets/icon.png" alt="SurveyController" width="120" height="120" />
+  <h1>SurveyController</h1>
   <p>一个支持图形化界面的问卷星自动填写工具，支持自定义答案分布与智能配置。</p>
 
-  [![GitHub Stars](https://img.shields.io/github/stars/hungryM0/fuck-wjx?style=flat&logo=github&color=yellow)](https://github.com/hungryM0/fuck-wjx/stargazers)
-  [![GitHub Forks](https://img.shields.io/github/forks/hungryM0/fuck-wjx?style=flat&logo=github)](https://github.com/hungryM0/fuck-wjx/network/members)
-  [![GitHub Release](https://img.shields.io/github/v/release/hungryM0/fuck-wjx?style=flat&logo=github&color=blue)](https://github.com/hungryM0/fuck-wjx/releases/latest)
-  [![Downloads](https://img.shields.io/github/downloads/hungryM0/fuck-wjx/total?style=flat&logo=github&color=green)](https://github.com/hungryM0/fuck-wjx/releases)
-  [![License](https://img.shields.io/github/license/hungryM0/fuck-wjx?style=flat&color=orange)](./LICENSE)
+  [![GitHub Stars](https://img.shields.io/github/stars/hungryM0/SurveyController?style=flat&logo=github&color=yellow)](https://github.com/hungryM0/SurveyController/stargazers)
+  [![GitHub Forks](https://img.shields.io/github/forks/hungryM0/SurveyController?style=flat&logo=github)](https://github.com/hungryM0/SurveyController/network/members)
+  [![GitHub Release](https://img.shields.io/github/v/release/hungryM0/SurveyController?style=flat&logo=github&color=blue)](https://github.com/hungryM0/SurveyController/releases/latest)
+  [![Downloads](https://img.shields.io/github/downloads/hungryM0/SurveyController/total?style=flat&logo=github&color=green)](https://github.com/hungryM0/SurveyController/releases)
+  [![License](https://img.shields.io/github/license/hungryM0/SurveyController?style=flat&color=orange)](./LICENSE)
   [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
-  [![Issues](https://img.shields.io/github/issues/hungryM0/fuck-wjx?style=flat&logo=github)](https://github.com/hungryM0/fuck-wjx/issues)
+  [![Issues](https://img.shields.io/github/issues/hungryM0/SurveyController?style=flat&logo=github)](https://github.com/hungryM0/SurveyController/issues)
 
 </div>
 
@@ -36,19 +36,19 @@
 ## 开始使用
 
 > [!TIP]
-> **安装包：** 前往 [发行版](https://github.com/hungryM0/fuck-wjx/releases/latest) 中下载已打包好的安装包，无需额外配置环境。
+> **安装包：** 前往 [发行版](https://github.com/hungryM0/SurveyController/releases/latest) 中下载已打包好的安装包，无需额外配置环境。
 
 ### 从源码运行
 
 克隆本仓库：
 ```bash
-git clone https://github.com/hungryM0/fuck-wjx.git
+git clone https://github.com/hungryM0/SurveyController.git
 ```
 
 安装依赖并运行：
 ```bash
 pip install -r requirements.txt
-python fuck-wjx.py
+python SurveyController.py
 ```
 
 **环境要求：** Windows 10/11，Python 3.8+
@@ -79,7 +79,7 @@ python fuck-wjx.py
 
 ## Mac 系统支持
 
-如果你需要查看支持 macOS 系统的源码，请切换到 [mac 分支](https://github.com/hungryM0/fuck-wjx/tree/mac)。
+如果你需要查看支持 macOS 系统的源码，请切换到 [mac 分支](https://github.com/hungryM0/SurveyController/tree/mac)。
 
 **该分支由社区维护，不受长期支持。**
 
@@ -138,4 +138,4 @@ python fuck-wjx.py
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=hungryM0/fuck-wjx&type=date&legend=top-left)](https://www.star-history.com/#hungryM0/fuck-wjx&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=hungryM0/SurveyController&type=date&legend=top-left)](https://www.star-history.com/#hungryM0/SurveyController&type=date&legend=top-left)

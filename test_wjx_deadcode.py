@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""使用 vulture 检查 wjx/ 目录下所有 Python 文件的未引用死代码。"""
+"""使用 vulture 检查核心目录下所有 Python 文件的未引用死代码。"""
 
 from __future__ import annotations
 
@@ -8,21 +8,26 @@ import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
-TARGET_DIR = ROOT_DIR / "wjx"
+TARGET_DIRS = [
+    ROOT_DIR / "wjx",
+    ROOT_DIR / "software",
+    ROOT_DIR / "tencent",
+]
 
 # 最小置信度：80 可过滤掉大量误报（如协议方法、Qt 槽函数等）
 MIN_CONFIDENCE = 80
 
 
 def main() -> int:
-    if not TARGET_DIR.exists():
-        print(f"[ERROR] 目录不存在: {TARGET_DIR}")
+    target_dirs = [path for path in TARGET_DIRS if path.exists()]
+    if not target_dirs:
+        print("[ERROR] 未找到可扫描目录（期望存在 wjx/、software/、tencent/ 至少一个）")
         return 2
 
     result = subprocess.run(
         [
             sys.executable, "-m", "vulture",
-            str(TARGET_DIR),
+            *[str(path) for path in target_dirs],
             "--min-confidence", str(MIN_CONFIDENCE),
         ],
         cwd=str(ROOT_DIR),
@@ -39,7 +44,13 @@ def main() -> int:
         return 2
 
     lines = [l for l in result.stdout.splitlines() if l.strip()]
-    py_count = sum(1 for _ in TARGET_DIR.rglob("*.py") if "__pycache__" not in _.parts)
+    py_count = sum(
+        1
+        for target_dir in target_dirs
+        for _ in target_dir.rglob("*.py")
+        if "__pycache__" not in _.parts
+    )
+    print(f"[INFO] 扫描目录: {', '.join(str(path.relative_to(ROOT_DIR)) for path in target_dirs)}")
     print(f"[INFO] 扫描文件数: {py_count}")
     print(f"[INFO] 发现死代码数: {len(lines)}")
 

@@ -48,7 +48,7 @@ from software.ui.controller import RunController
 from software.ui.pages.workbench.answer_rules import AnswerRulesPage
 from software.ui.pages.workbench.question import QuestionPage
 from software.ui.pages.workbench.runtime import RuntimePage
-from software.core.providers.common import (
+from software.providers.common import (
     detect_survey_provider,
     is_supported_survey_url,
     is_wjx_survey_url,

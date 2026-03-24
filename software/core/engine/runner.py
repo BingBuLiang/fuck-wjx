@@ -10,8 +10,6 @@ from software.logging.log_utils import log_suppressed_exception
 import software.core.modes.duration_control as duration_control
 import software.core.modes.timed_mode as timed_mode
 from software.core.ai.runtime import AIRuntimeError
-from software.core.captcha.control import _handle_aliyun_captcha_detected
-from software.core.captcha.handler import AliyunCaptchaBypassError, EmptySurveySubmissionError, handle_aliyun_captcha
 from software.core.engine.answering import brush
 from software.core.engine.driver_factory import (
     create_browser_manager,
@@ -25,13 +23,16 @@ from software.core.engine.runtime_control import (
     _wait_if_paused,
 )
 from software.core.engine.submission import (
+    EmptySurveySubmissionError,
     _is_device_quota_limit_page,
     _normalize_url_for_compare,
     consume_headless_httpx_submit_success,
 )
-from software.core.providers.registry import (
+from software.providers.registry import (
+    handle_submission_verification_detected as _provider_handle_submission_verification_detected,
     submission_requires_verification as _provider_submission_requires_verification,
     submission_validation_message as _provider_submission_validation_message,
+    wait_for_submission_verification as _provider_wait_for_submission_verification,
 )
 from software.core.task_context import TaskContext
 from software.network.browser import (
@@ -54,63 +55,6 @@ from software.app.config import (
     POST_SUBMIT_URL_MAX_WAIT,
     POST_SUBMIT_URL_POLL_INTERVAL,
 )
-
-
-def _submission_blocked_by_security_check(driver: BrowserDriver) -> bool:
-    """检测提交后是否出现阿里云智能验证 DOM。"""
-
-    script = r"""
-        return (() => {
-            const popupIds = [
-                'aliyunCaptcha-window-popup',
-                'aliyunCaptcha-title',
-                'aliyunCaptcha-checkbox-wrapper',
-                'aliyunCaptcha-checkbox-body',
-                'aliyunCaptcha-checkbox-icon',
-                'aliyunCaptcha-checkbox-left',
-                'aliyunCaptcha-checkbox-text',
-                'aliyunCaptcha-certifyId',
-            ];
-
-            const visible = (el, win) => {
-                if (!el || !win) return false;
-                const style = win.getComputedStyle(el);
-                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-                const rect = el.getBoundingClientRect();
-                return rect.width > 0 && rect.height > 0;
-            };
-
-            const docHasVisibleCaptchaDom = (doc) => {
-                const win = doc.defaultView;
-                if (!win) return false;
-                for (const id of popupIds) {
-                    const el = doc.getElementById(id);
-                    if (visible(el, win)) return true;
-                    }
-                return false;
-            };
-
-            const scanDoc = (doc) => {
-                if (!doc) return false;
-                return docHasVisibleCaptchaDom(doc);
-            };
-
-            if (scanDoc(document)) return true;
-            const frames = Array.from(document.querySelectorAll('iframe'));
-            for (const frame of frames) {
-                try {
-                    const doc = frame.contentDocument || frame.contentWindow?.document;
-                    if (scanDoc(doc)) return true;
-                } catch (e) {}
-            }
-            return false;
-        })();
-    """
-    try:
-        return bool(driver.execute_script(script))
-    except Exception:
-        return False
-
 
 # ---------------------------------------------------------------------------
 # 浏览器生命周期管理（Phase 5 前临时封装）
@@ -306,54 +250,75 @@ def _resolve_post_submit_close_grace_seconds(ctx: TaskContext) -> float:
     return float(POST_SUBMIT_CLOSE_GRACE_SECONDS or 0.0)
 
 
-def _check_captcha_after_submit(
+def _handle_detected_submission_verification(
     driver: BrowserDriver,
     ctx: TaskContext,
     stop_signal: threading.Event,
     gui_instance: Any,
     thread_name: Optional[str] = None,
 ) -> bool:
-    """提交后检测阿里云验证码。返回 True 表示命中验证码。"""
+    """统一处理 provider 提交后已命中的风控/验证。"""
+    survey_provider = str(getattr(ctx, "survey_provider", "wjx") or "wjx").strip().lower()
+    fallback_message = "提交命中平台安全验证，当前版本暂不支持自动处理"
+    message = _provider_submission_validation_message(driver, provider=survey_provider) or fallback_message
+    logging.warning("%s", message)
+
+    failure_reason = "qq_verification_required" if survey_provider == "qq" else "submission_verification_required"
+    status_text = "腾讯安全验证" if survey_provider == "qq" else "智能验证"
+    _handle_submission_failure(
+        ctx,
+        stop_signal,
+        thread_name=thread_name,
+        failure_reason=failure_reason,
+        status_text=status_text,
+        log_message=message,
+    )
+    _provider_handle_submission_verification_detected(
+        ctx,
+        gui_instance,
+        stop_signal,
+        provider=survey_provider,
+    )
+    return True
+
+
+def _check_submission_verification_after_submit(
+    driver: BrowserDriver,
+    ctx: TaskContext,
+    stop_signal: threading.Event,
+    gui_instance: Any,
+    thread_name: Optional[str] = None,
+) -> bool:
+    """提交后轮询 provider 风控/验证。返回 True 表示命中验证。"""
     survey_provider = str(getattr(ctx, "survey_provider", "wjx") or "wjx").strip().lower()
     if survey_provider == "qq":
         if _provider_submission_requires_verification(driver, provider=survey_provider):
-            message = (
-                _provider_submission_validation_message(driver, provider=survey_provider)
-                or "提交命中腾讯安全验证，当前版本暂不支持自动处理"
-            )
-            logging.warning("%s", message)
-            _handle_submission_failure(
+            return _handle_detected_submission_verification(
+                driver,
                 ctx,
                 stop_signal,
+                gui_instance,
                 thread_name=thread_name,
-                failure_reason="qq_verification_required",
-                status_text="腾讯安全验证",
-                log_message=message,
             )
-            return True
         return False
     try:
-        random_ip_enabled = bool(getattr(ctx, "random_proxy_ip_enabled", False))
-        detected = handle_aliyun_captcha(
+        detected = _provider_wait_for_submission_verification(
             driver,
+            provider=survey_provider,
             timeout=3,
             stop_signal=stop_signal,
-            raise_on_detect=not random_ip_enabled,
-            notify_on_detect=not random_ip_enabled,
         )
-        if detected and random_ip_enabled:
-            logging.warning("随机IP模式命中阿里云智能验证：仅记录失败并继续任务（不暂停、不弹窗）")
-            _handle_submission_failure(ctx, stop_signal, thread_name=thread_name)
-            _handle_aliyun_captcha_detected(ctx, gui_instance, stop_signal)
-            return True
+        if detected:
+            return _handle_detected_submission_verification(
+                driver,
+                ctx,
+                stop_signal,
+                gui_instance,
+                thread_name=thread_name,
+            )
         return False
-    except AliyunCaptchaBypassError:
-        logging.warning("提交后检测到阿里云智能验证，触发验证码处理流程")
-        _handle_submission_failure(ctx, stop_signal, thread_name=thread_name)
-        _handle_aliyun_captcha_detected(ctx, gui_instance, stop_signal)
-        return True
     except Exception as exc:
-        logging.warning(f"验证码检测过程出现异常：{exc}")
+        logging.warning("提交后安全验证检测过程出现异常：%s", exc)
         return False
 
 
@@ -619,9 +584,9 @@ def run(
                     break
 
                 # ── 5. 验证提交结果 ──────────────────────────────
-                # 5a. 立即检测阿里云验证码
+                # 5a. 立即检测 provider 风控/验证
                 if not stop_signal.is_set():
-                    if _check_captcha_after_submit(
+                    if _check_submission_verification_after_submit(
                         session.driver,
                         ctx,
                         stop_signal,
@@ -631,12 +596,19 @@ def run(
                         driver_had_error = True
                         break
 
-                # 5b. 阿里云验证码 DOM 检测
-                if not stop_signal.is_set() and _submission_blocked_by_security_check(session.driver):
+                # 5b. 等待完成页前，再做一次 provider DOM 级验证兜底
+                if not stop_signal.is_set() and _provider_submission_requires_verification(
+                    session.driver,
+                    provider=getattr(ctx, "survey_provider", None),
+                ):
                     driver_had_error = True
-                    logging.warning("提交后检测到阿里云智能验证DOM，触发验证码处理流程")
-                    _handle_submission_failure(ctx, stop_signal, thread_name=thread_name)
-                    _handle_aliyun_captcha_detected(ctx, gui_instance, stop_signal)
+                    _handle_detected_submission_verification(
+                        session.driver,
+                        ctx,
+                        stop_signal,
+                        gui_instance,
+                        thread_name=thread_name,
+                    )
                     break
 
                 # 5c. 等待完成页出现
@@ -650,21 +622,28 @@ def run(
                     provider=getattr(ctx, "survey_provider", None),
                 )
 
-                # 等待期间再次检查阿里云验证码 DOM
+                # 等待期间再次检查 provider DOM 级验证
                 if not completion_detected and not stop_signal.is_set():
-                    if _submission_blocked_by_security_check(session.driver):
+                    if _provider_submission_requires_verification(
+                        session.driver,
+                        provider=getattr(ctx, "survey_provider", None),
+                    ):
                         driver_had_error = True
-                        logging.warning("提交后等待完成页期间命中阿里云智能验证DOM，触发验证码处理流程")
-                        _handle_submission_failure(ctx, stop_signal, thread_name=thread_name)
-                        _handle_aliyun_captcha_detected(ctx, gui_instance, stop_signal)
+                        _handle_detected_submission_verification(
+                            session.driver,
+                            ctx,
+                            stop_signal,
+                            gui_instance,
+                            thread_name=thread_name,
+                        )
                         break
 
                 if driver_had_error or stop_signal.is_set():
                     break
 
-                # 5d. 未检测到完成页时再次检测验证码
+                # 5d. 未检测到完成页时再次轮询 provider 风控/验证
                 if not completion_detected:
-                    if _check_captcha_after_submit(
+                    if _check_submission_verification_after_submit(
                         session.driver,
                         ctx,
                         stop_signal,
@@ -692,11 +671,6 @@ def run(
                     pass  # 会在外层 while 检查 stop_signal 后 break
                 break
 
-        except AliyunCaptchaBypassError:
-            driver_had_error = True
-            _handle_submission_failure(ctx, stop_signal, thread_name=thread_name)
-            _handle_aliyun_captcha_detected(ctx, gui_instance, stop_signal)
-            break
         except AIRuntimeError as exc:
             driver_had_error = True
             logging.error("AI 填空失败，已停止任务：%s", exc, exc_info=True)
@@ -720,7 +694,7 @@ def run(
             )
 
             if not completion_detected and not stop_signal.is_set():
-                if _check_captcha_after_submit(
+                if _check_submission_verification_after_submit(
                     session.driver,
                     ctx,
                     stop_signal,

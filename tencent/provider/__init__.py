@@ -1,4 +1,4 @@
-"""腾讯问卷平台包。"""
+"""腾讯问卷平台实现。"""
 
 from __future__ import annotations
 

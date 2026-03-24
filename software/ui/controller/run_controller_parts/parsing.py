@@ -6,9 +6,9 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from software.core.engine import _normalize_question_type_code
 from software.core.questions.config import QuestionEntry
-from software.core.providers.common import (
+from software.core.questions.utils import _normalize_question_type_code
+from software.providers.common import (
     SURVEY_PROVIDER_WJX,
     detect_survey_provider,
     is_supported_survey_url,
@@ -67,7 +67,7 @@ class RunControllerParsingMixin:
         threading.Thread(target=_worker, daemon=True).start()
 
     def _parse_questions(self, url: str) -> Tuple[List[Dict[str, Any]], str, str]:
-        from software.core.providers.registry import parse_survey
+        from software.providers.registry import parse_survey
         return parse_survey(url)
 
     @staticmethod

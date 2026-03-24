@@ -10,6 +10,26 @@ from software.logging.log_utils import log_suppressed_exception
 from software.network.browser import By, BrowserDriver
 from software.app.config import DEFAULT_FILL_TEXT
 
+_KNOWN_NON_TEXT_QUESTION_TYPES = {"3", "4", "5", "6", "7", "8", "11"}
+
+
+def _normalize_question_type_code(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        return str(value).strip()
+    except Exception:
+        return ""
+
+
+def _should_treat_question_as_text_like(type_code: Any, option_count: int, text_input_count: int) -> bool:
+    normalized = _normalize_question_type_code(type_code)
+    if normalized in ("1", "2", "9"):
+        return text_input_count > 0
+    if normalized in _KNOWN_NON_TEXT_QUESTION_TYPES:
+        return False
+    return (option_count or 0) <= 1 and text_input_count > 0
+
 
 def weighted_index(probabilities: List[float]) -> int:
     """根据权重列表随机选择索引"""

@@ -6,7 +6,7 @@ from software.core.services.area_service import (
     load_supported_area_codes,
     resolve_proxy_area_for_source,
 )
-from software.core.providers.registry import parse_survey
+from software.providers.registry import parse_survey
 from software.core.services.proxy_service import prefetch_proxy_pool
 
 __all__ = [

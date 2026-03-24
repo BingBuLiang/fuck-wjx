@@ -4,7 +4,7 @@ import threading
 import time
 from typing import List, Optional, Tuple
 
-from wjx.providers.wjx.navigation import dismiss_resume_dialog_if_present, try_click_start_answer_button
+from wjx.provider.navigation import dismiss_resume_dialog_if_present, try_click_start_answer_button
 from software.network.browser import By, BrowserDriver
 
 

@@ -34,9 +34,9 @@ from software.core.questions.types.text import (
 from software.core.questions.consistency import reset_consistency_context
 from software.core.questions.strict_ratio import is_strict_ratio_question
 from software.core.questions.tendency import reset_tendency
+from software.core.questions.utils import _should_treat_question_as_text_like
 from software.core.psychometrics import build_psychometric_plan
-from software.core.providers.registry import fill_survey as _fill_provider_survey
-from software.core.survey.parser import _should_treat_question_as_text_like
+from software.providers.registry import fill_survey as _fill_provider_survey
 from software.core.ai.runtime import extract_question_title_from_dom
 from software.network.browser import BrowserDriver, By, NoSuchElementException
 from software.app.config import HEADLESS_PAGE_BUFFER_DELAY, HEADLESS_PAGE_CLICK_DELAY

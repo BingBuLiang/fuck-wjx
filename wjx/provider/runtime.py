@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from software.core.task_context import TaskContext
 from software.network.browser import BrowserDriver
-from wjx.providers.wjx.detection import detect as _wjx_detect
+from wjx.provider.detection import detect as _wjx_detect
 
 _WJX_RUNTIME_GUARD = threading.local()
 

@@ -8,7 +8,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from software.core.engine.driver_factory import create_playwright_driver
-from software.core.survey.parser import (
+from wjx.provider.html_parser import (
     _normalize_html_text,
     extract_survey_title_from_html,
     parse_survey_questions_from_html,

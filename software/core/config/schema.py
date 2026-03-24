@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from software.core.providers.common import SURVEY_PROVIDER_WJX
+from software.providers.common import SURVEY_PROVIDER_WJX
 from software.app.config import DEFAULT_RANDOM_UA_KEYS
 
 if TYPE_CHECKING:

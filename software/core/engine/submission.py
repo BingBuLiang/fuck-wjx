@@ -38,6 +38,10 @@ _HEADLESS_SUBMIT_RETRYABLE_ERRORS = (
 )
 
 
+class EmptySurveySubmissionError(RuntimeError):
+    """检测到问卷未添加题目导致无法提交时抛出，用于关闭当前实例并继续下一份。"""
+
+
 def _click_submit_button(driver: BrowserDriver, max_wait: float = 10.0) -> bool:
     """点击“提交”按钮（简单版）。"""
 

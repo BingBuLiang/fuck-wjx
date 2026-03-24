@@ -1,7 +1,11 @@
-"""问卷解析模块 - 从 HTML 解析问卷结构"""
+"""问卷星 HTML 解析模块 - 从 HTML 解析问卷结构。"""
 import re
 from typing import Any, Dict, List, Optional, Tuple
 import logging
+from software.core.questions.utils import (
+    _normalize_question_type_code,
+    _should_treat_question_as_text_like,
+)
 from software.logging.log_utils import log_suppressed_exception
 
 
@@ -1199,24 +1203,6 @@ def _extract_rating_option_count(question_div) -> int:
     except Exception as exc:
         log_suppressed_exception("survey.parser._extract_rating_option_count rate-off", exc, level=logging.ERROR)
     return 0
-
-
-def _normalize_question_type_code(value: Any) -> str:
-    if value is None:
-        return ""
-    try:
-        return str(value).strip()
-    except Exception:
-        return ""
-
-
-def _should_treat_question_as_text_like(type_code: Any, option_count: int, text_input_count: int) -> bool:
-    normalized = _normalize_question_type_code(type_code)
-    if normalized in ("1", "2", "9"):
-        return text_input_count > 0
-    if normalized in _KNOWN_NON_TEXT_QUESTION_TYPES:
-        return False
-    return (option_count or 0) <= 1 and text_input_count > 0
 
 
 def _should_mark_as_multi_text(type_code: Any, option_count: int, text_input_count: int, is_location: bool, has_gapfill: bool = False) -> bool:

@@ -26,59 +26,51 @@
 ├── rthook_pyside6.py     # PySide6 打包钩子
 ├── test_wjx_imports.py   # 导入检测脚本
 ├── test_wjx_deadcode.py  # 死代码检测脚本
-├── software/             # 软件基础设施目录
-├── tencent/              # 腾讯问卷 provider 目录
-└── wjx/                  # 主代码目录（问卷核心 + 问卷星 provider）
+├── software/             # 软件主包（应用壳 + 共享核心 + 平台总调度）
+├── tencent/              # 腾讯问卷主包
+└── wjx/                  # 问卷星主包
 ```
 
 ## 目录结构（`wjx/`、`software/`、`tencent/`）
 
 ```markdown
-wjx/
-├── main.py                # GUI 程序入口
-├── boot.py                # 启动流程相关
-├── assets/                # 静态资源（地区行政编码、法律文本等）
-│   └── legal/             # 法律文本（service_terms.txt、privacy_statement.txt）
-├── core/                  # 平台无关核心（共享业务）
-│   ├── task_context.py
-│   ├── engine/            # 共享引擎编排（run/answering/submission/runtime_control 等）
-│   ├── survey/            # 问卷结构解析能力（parser）
-│   ├── questions/         # 题目配置与题型实现
-│   │   └── types/
-│   ├── captcha/
-│   ├── ai/
-│   ├── psychometrics/
-│   ├── persona/
-│   └── services/
-├── providers/             # 平台专属实现（provider 分层）
-│   ├── common.py
-│   ├── registry.py
-│   └── wjx/               # 问卷星专属解析/运行时
-├── ui/                    # GUI 相关实现（含 theme.json）
-├── network/               # 网络能力（代理池、会话策略）
-├── utils/                 # 通用工具（配置、持久化、事件总线等）
-├── modes/                 # 运行模式控制（timed_mode/duration_control）
-├── event_bus.py           # 全局事件总线
-└── __pycache__/           # 运行时缓存文件，不应提交到仓库
-
 software/
-├── app/
-├── integrations/
-├── io/
-├── logging/
-├── network/
-├── system/
-├── ui/
-└── update/
+├── app/                   # 启动入口、版本、运行路径
+├── assets/                # 程序内置资源（地区数据、协议文本等）
+├── core/                  # 平台无关共享核心
+│   ├── ai/                # AI 填空运行时
+│   ├── captcha/           # 旧验证码接口兼容层
+│   ├── config/            # 配置编解码与结构定义
+│   ├── engine/            # 核心执行引擎
+│   ├── modes/             # 作答模式与时长控制
+│   ├── persona/           # 人设与上下文生成
+│   ├── providers/         # 旧路径兼容转发层（内部应改用 software/providers）
+│   ├── psychometrics/     # 心理测量题辅助逻辑
+│   ├── questions/         # 题目配置与分布逻辑
+│   └── services/          # 共享服务（地区、代理等）
+├── integrations/          # 外部能力接入
+├── io/                    # 配置读写、二维码、Markdown 等输入输出
+├── logging/               # 日志工具
+├── network/               # 浏览器与代理网络层
+├── providers/             # 平台识别、注册、分发总入口
+├── system/                # 系统资源、清理、安全存储
+├── ui/                    # 图形界面入口与页面/组件/控制器
+└── update/                # 更新检查与升级
+
+wjx/
+├── __init__.py            # 兼容入口；真正平台实现看 provider/
+└── provider/              # 问卷星专属实现（解析、检测、导航、运行时、提交）
 
 tencent/
-├── parser.py              # 腾讯问卷解析
-└── runtime.py             # 腾讯问卷运行时
+├── __init__.py
+├── parser.py              # 旧路径兼容转发到 tencent/provider/parser.py
+├── runtime.py             # 旧路径兼容转发到 tencent/provider/runtime.py
+└── provider/              # 腾讯问卷专属实现（解析/运行时）
 ```
 
 ## PR 流程（推荐）
 1. Fork 仓库本仓库
-2. 开发时遵守三层分层：共享业务放 `wjx/core`，问卷平台专属放 `wjx/providers` + `tencent`，软件基础设施放 `software`；`wjx/ui`、`wjx/network`、`wjx/utils` 内新增代码时需保持职责清晰、避免跨层耦合
+2. 开发时遵守三主包边界：共享业务、GUI、平台总调度放 `software`；问卷星专属实现只放 `wjx/provider`；腾讯问卷专属实现放 `tencent/provider`；兼容目录 `software/core/providers`、`tencent/parser.py`、`tencent/runtime.py` 不再作为新代码落点
 3. 自测：运行 `python test_wjx_imports.py` 检查 import 和语法错误；至少手动跑一次核心流程（启动、加载问卷、配置、开始运行），确保无报错
 4. 提交：保持清晰提交信息，必要时补充中文注释和变更说明
 5. PR 描述：写明变更目的、主要改动点、测试方式与结果，关联相关 Issue（如有）

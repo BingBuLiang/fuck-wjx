@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from software.core.config.schema import RuntimeConfig
 from software.core.questions.consistency import normalize_rule_dict, sanitize_answer_rules
 from software.network.proxy import normalize_random_ip_enabled_value
-from software.core.providers.common import (
+from software.providers.common import (
     SURVEY_PROVIDER_WJX,
     detect_survey_provider,
     ensure_questions_provider_fields,

@@ -541,44 +541,148 @@ def _select_dropdown_option(driver: BrowserDriver, provider_question_id: str, op
 
 
 def _click_matrix_cell(driver: BrowserDriver, provider_question_id: str, row_index: int, column_index: int) -> bool:
+    if not provider_question_id or row_index < 0 or column_index < 0:
+        return False
+    page = _page(driver)
+    base_selector = f'section.question[data-question-id="{provider_question_id}"]'
+
+    def _checked_index() -> int:
+        try:
+            return int(
+                page.evaluate(
+                    """({ questionId, rowIndex }) => {
+                        const section = document.querySelector(`section.question[data-question-id="${questionId}"]`);
+                        if (!section || rowIndex < 0) return -1;
+                        const tableRows = Array.from(section.querySelectorAll('tbody tr')).filter((row) => {
+                            return row && row.querySelector('input[type="radio"]');
+                        });
+                        const blockRows = Array.from(section.querySelectorAll('.question-item')).filter((row) => {
+                            return row && row.querySelector('input[type="radio"]');
+                        });
+                        const rows = tableRows.length > rowIndex ? tableRows : blockRows;
+                        const row = rows[rowIndex];
+                        if (!row) return -1;
+                        return Array.from(row.querySelectorAll('input[type="radio"]')).findIndex((input) => input.checked);
+                    }""",
+                    {
+                        "questionId": provider_question_id,
+                        "rowIndex": int(row_index),
+                    },
+                )
+                or -1
+            )
+        except Exception:
+            return -1
+
+    def _click_locator(locator) -> bool:
+        try:
+            if locator.count() <= 0:
+                return False
+            locator.scroll_into_view_if_needed(timeout=1800)
+        except Exception:
+            return False
+        for force in (False, True):
+            try:
+                locator.click(timeout=1800, force=force)
+            except Exception:
+                continue
+            try:
+                page.wait_for_timeout(180)
+            except Exception:
+                time.sleep(0.18)
+            if _checked_index() == column_index:
+                return True
+        return False
+
+    try:
+        table_rows = page.locator(f"{base_selector} tbody tr")
+        if table_rows.count() > row_index:
+            row_locator = table_rows.nth(row_index)
+            table_candidates = (
+                row_locator.locator("td").nth(column_index + 1).locator("label.clickBlock").first,
+                row_locator.locator("td").nth(column_index + 1).locator("label[for]").first,
+                row_locator.locator("td").nth(column_index + 1).locator(".matrix-option").first,
+                row_locator.locator("td").nth(column_index + 1),
+            )
+            for locator in table_candidates:
+                if _click_locator(locator):
+                    return True
+    except Exception:
+        pass
+
+    try:
+        question_rows = page.locator(f"{base_selector} .question-item")
+        if question_rows.count() > row_index:
+            row_locator = question_rows.nth(row_index)
+            group_locator = row_locator.locator(".checkbtn").nth(column_index)
+            block_candidates = (
+                group_locator.locator("label.checkbtn-label").first,
+                group_locator.locator("label[for]").first,
+                group_locator,
+                row_locator.locator('input[type="radio"]').nth(column_index),
+            )
+            for locator in block_candidates:
+                if _click_locator(locator):
+                    return True
+    except Exception:
+        pass
+
     return bool(
-        _page(driver).evaluate(
-            """({ questionId, rowIndex, columnIndex }) => {
+        page.evaluate(
+            """async ({ questionId, rowIndex, columnIndex }) => {
                 const section = document.querySelector(`section.question[data-question-id="${questionId}"]`);
                 if (!section || rowIndex < 0 || columnIndex < 0) return false;
-                const visible = (el) => {
-                    if (!el) return false;
-                    const style = window.getComputedStyle(el);
-                    if (!style) return false;
-                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-                    const rect = el.getBoundingClientRect();
-                    return rect.width > 0 && rect.height > 0;
-                };
-                const rows = Array.from(section.querySelectorAll('.question-item, tbody tr')).filter((row) => {
-                    if (!visible(row)) return false;
-                    return row.querySelector('input[type="radio"]');
+                const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+                const tableRows = Array.from(section.querySelectorAll('tbody tr')).filter((row) => {
+                    return row && row.querySelector('input[type="radio"]');
                 });
+                const blockRows = Array.from(section.querySelectorAll('.question-item')).filter((row) => {
+                    return row && row.querySelector('input[type="radio"]');
+                });
+                const rows = tableRows.length > rowIndex ? tableRows : blockRows;
                 const row = rows[rowIndex];
                 if (!row) return false;
-                const inputs = Array.from(row.querySelectorAll('input[type="radio"]')).filter(visible);
+                try { row.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
+                await wait(100);
+                const inputs = Array.from(row.querySelectorAll('input[type="radio"]'));
                 const target = inputs[columnIndex];
                 if (!target) return false;
+                const currentCheckedIndex = () => Array.from(row.querySelectorAll('input[type="radio"]')).findIndex((input) => input.checked);
+                const isConfirmed = () => currentCheckedIndex() === columnIndex;
+                if (isConfirmed()) return true;
+                const targetId = String(target.id || '');
+                const labelByFor = targetId
+                    ? (row.querySelector(`label.clickBlock[for="${targetId}"]`) || row.querySelector(`label[for="${targetId}"]`))
+                    : null;
                 const clickCandidates = [
-                    target,
-                    target.closest('label'),
+                    labelByFor,
+                    target.closest('label.clickBlock'),
+                    target.closest('.checkbtn'),
+                    target.closest('.matrix-option'),
+                    target.closest('.ui-radio'),
                     target.closest('td'),
-                    target.closest('.question-option'),
+                    target.closest('label'),
                     target.parentElement,
+                    target,
                 ].filter(Boolean);
                 for (const node of clickCandidates) {
+                    try { node.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
+                    await wait(80);
                     try { node.click(); } catch (e) {}
-                    if (target.checked) return true;
+                    await wait(180);
+                    if (isConfirmed()) return true;
+                    try {
+                        node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                    } catch (e) {}
+                    await wait(180);
+                    if (isConfirmed()) return true;
                 }
                 try { target.checked = true; } catch (e) {}
                 ['input', 'change', 'click'].forEach((name) => {
                     try { target.dispatchEvent(new Event(name, { bubbles: true })); } catch (e) {}
                 });
-                return !!target.checked;
+                await wait(180);
+                return isConfirmed();
             }""",
             {
                 "questionId": provider_question_id,

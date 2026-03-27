@@ -18,7 +18,7 @@ from software.core.questions.strict_ratio import enforce_reference_rank_order
 from software.core.questions.utils import (
     weighted_index,
     normalize_droplist_probs,
-    get_fill_text_from_config,
+    resolve_option_fill_text_from_config,
     fill_option_additional_text,
     extract_text_from_element,
     smooth_scroll_to_element,
@@ -462,7 +462,13 @@ def single(
 
     has_free_text_input = _single_option_has_free_text_input(target_elem)
     fill_entries = single_option_fill_texts_config[index] if index < len(single_option_fill_texts_config) else None
-    fill_value = get_fill_text_from_config(fill_entries, selected_option - 1)
+    fill_value = resolve_option_fill_text_from_config(
+        fill_entries,
+        selected_option - 1,
+        driver=driver,
+        question_number=current,
+        option_text=option_texts[target_index] if target_index < len(option_texts) else "",
+    )
     if not fill_value and has_free_text_input:
         fill_value = DEFAULT_FILL_TEXT
         logging.info(

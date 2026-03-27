@@ -28,7 +28,7 @@ def _pretty_text_answer(value: Any) -> str:
     if text == _TEXT_RANDOM_MOBILE_TOKEN:
         return "随机手机号"
     if text == _TEXT_RANDOM_ID_CARD_TOKEN:
-        return "随机身份证"
+        return "随机身份证号"
     return text
 
 
@@ -47,7 +47,7 @@ def question_summary(entry: QuestionEntry) -> str:
             if random_mode == "mobile":
                 return "答案: 随机手机号"
             if random_mode == "id_card":
-                return "答案: 随机身份证"
+                return "答案: 随机身份证号"
             if random_mode == "integer":
                 return f"答案: 随机整数({describe_random_int_range(getattr(entry, 'text_random_int_range', []))})"
         else:
@@ -67,7 +67,7 @@ def question_summary(entry: QuestionEntry) -> str:
                     elif mode == "mobile":
                         config_parts.append(f"填空{idx + 1}: 随机手机号")
                     elif mode == "id_card":
-                        config_parts.append(f"填空{idx + 1}: 随机身份证")
+                        config_parts.append(f"填空{idx + 1}: 随机身份证号")
                     elif mode == "integer":
                         int_range = blank_int_ranges[idx] if idx < len(blank_int_ranges) else []
                         config_parts.append(f"填空{idx + 1}: 随机整数({describe_random_int_range(int_range)})")

@@ -12,7 +12,7 @@ from software.core.questions.strict_ratio import enforce_reference_rank_order, i
 from software.core.questions.utils import (
     weighted_index,
     normalize_droplist_probs,
-    get_fill_text_from_config,
+    resolve_option_fill_text_from_config,
     fill_option_additional_text,
 )
 
@@ -162,7 +162,13 @@ def _fill_droplist_via_click(
     record_answer(current, "dropdown", selected_indices=[selected_idx], selected_texts=[selected_text])
     if strict_ratio:
         record_pending_distribution_choice(task_ctx, current, selected_idx, option_count)
-    fill_value = get_fill_text_from_config(fill_entries, selected_idx)
+    fill_value = resolve_option_fill_text_from_config(
+        fill_entries,
+        selected_idx,
+        driver=driver,
+        question_number=current,
+        option_text=selected_text,
+    )
     fill_option_additional_text(driver, current, selected_idx, fill_value)
 
 
@@ -202,7 +208,13 @@ def dropdown(
             record_answer(current, "dropdown", selected_indices=[selected_idx], selected_texts=[selected_text])
             if strict_ratio:
                 record_pending_distribution_choice(task_ctx, current, selected_idx, len(select_options))
-            fill_value = get_fill_text_from_config(fill_entries, selected_idx)
+            fill_value = resolve_option_fill_text_from_config(
+                fill_entries,
+                selected_idx,
+                driver=driver,
+                question_number=current,
+                option_text=selected_text,
+            )
             fill_option_additional_text(driver, current, selected_idx, fill_value)
             return
     _fill_droplist_via_click(driver, current, prob_config, fill_entries, task_ctx=task_ctx)

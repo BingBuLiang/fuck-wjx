@@ -26,7 +26,7 @@ from qfluentwidgets import (
     PushButton,
     PrimaryPushButton,
     LineEdit,
-    CheckBox,
+    RadioButton,
     SwitchButton,
     SegmentedWidget,
     MessageBox,
@@ -36,7 +36,7 @@ from qfluentwidgets import (
 from qfluentwidgets.components.widgets.tool_tip import ItemViewToolTipDelegate, ItemViewToolTipType
 from qfluentwidgets.components.widgets.pips_pager import PipsScrollButtonDisplayMode
 
-from software.core.questions.utils import serialize_random_int_range, try_parse_random_int_range
+from software.core.questions.utils import OPTION_FILL_AI_TOKEN, build_random_int_token, serialize_random_int_range, try_parse_random_int_range
 from software.ui.helpers.qfluent_compat import install_tooltip_filters
 from software.ui.widgets.no_wheel import NoWheelSlider
 from software.core.questions.config import QuestionEntry
@@ -44,7 +44,14 @@ from software.app.config import DEFAULT_FILL_TEXT
 
 from .constants import _get_entry_type_label
 from .utils import _shorten_text, _apply_label_color, _bind_slider_input, build_entry_info_list
-from .wizard_sections import WizardSectionsMixin, _TEXT_RANDOM_NONE, _get_segmented_route_key
+from .wizard_sections import (
+    WizardSectionsMixin,
+    _TEXT_RANDOM_NONE,
+    _TEXT_RANDOM_NAME_TOKEN,
+    _TEXT_RANDOM_MOBILE_TOKEN,
+    _TEXT_RANDOM_ID_CARD_TOKEN,
+    _get_segmented_route_key,
+)
 from .psycho_config import BIAS_PRESET_CHOICES
 
 
@@ -440,6 +447,28 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
                         min_edit or max_edit,
                     )
                     return False
+
+        for idx, option_states in self.option_fill_state_map.items():
+            for option_idx, state in option_states.items():
+                ai_cb = state.get("ai_cb")
+                if ai_cb is not None and ai_cb.isChecked():
+                    continue
+                group = state.get("group")
+                if group is None or group.checkedId() != 4:
+                    continue
+                min_edit = state.get("min_edit")
+                max_edit = state.get("max_edit")
+                raw_range = [
+                    min_edit.text().strip() if min_edit is not None else "",
+                    max_edit.text().strip() if max_edit is not None else "",
+                ]
+                if try_parse_random_int_range(raw_range) is None:
+                    self._show_validation_error(
+                        f"{self._format_question_label(idx)}的第{option_idx + 1}个附加填空随机整数范围未填写完整，请输入最小值和最大值。",
+                        idx,
+                        min_edit or max_edit,
+                    )
+                    return False
         return True
 
     def accept(self) -> None:
@@ -496,10 +525,11 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
         self.text_container_map: Dict[int, QWidget] = {}
         self.text_add_btn_map: Dict[int, PushButton] = {}
         self.text_random_mode_map: Dict[int, str] = {}
-        self.text_random_name_check_map: Dict[int, CheckBox] = {}
-        self.text_random_mobile_check_map: Dict[int, CheckBox] = {}
-        self.text_random_id_card_check_map: Dict[int, CheckBox] = {}
-        self.text_random_integer_check_map: Dict[int, CheckBox] = {}
+        self.text_random_list_radio_map: Dict[int, RadioButton] = {}
+        self.text_random_name_check_map: Dict[int, RadioButton] = {}
+        self.text_random_mobile_check_map: Dict[int, RadioButton] = {}
+        self.text_random_id_card_check_map: Dict[int, RadioButton] = {}
+        self.text_random_integer_check_map: Dict[int, RadioButton] = {}
         self.text_random_int_min_edit_map: Dict[int, LineEdit] = {}
         self.text_random_int_max_edit_map: Dict[int, LineEdit] = {}
         self.text_random_group_map: Dict[int, QButtonGroup] = {}
@@ -507,6 +537,7 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
         self.bias_preset_map: Dict[int, Any] = {}
         self.attached_select_slider_map: Dict[int, List[Dict[str, Any]]] = {}
         self.option_fill_edit_map: Dict[int, Dict[int, LineEdit]] = {}
+        self.option_fill_state_map: Dict[int, Dict[int, Dict[str, Any]]] = {}
         self._entry_snapshots: List[QuestionEntry] = [copy.deepcopy(entry) for entry in entries]
         self._has_content = False
         self._current_question_idx = 0
@@ -1199,18 +1230,40 @@ class QuestionWizardDialog(WizardSectionsMixin, QDialog):
     def get_option_fill_results(self) -> Dict[int, List[Optional[str]]]:
         """获取选择题中“其他请填空”等附加输入框的配置结果。"""
         result: Dict[int, List[Optional[str]]] = {}
-        for idx, edit_map in self.option_fill_edit_map.items():
-            if not edit_map:
+        for idx, state_map in self.option_fill_state_map.items():
+            if not state_map:
                 continue
             info = self._get_entry_info(idx)
             option_count = int(info.get("options") or 0)
-            max_index = max(edit_map.keys()) if edit_map else -1
+            max_index = max(state_map.keys()) if state_map else -1
             normalized_count = max(option_count, max_index + 1, 0)
             values: List[Optional[str]] = [None] * normalized_count
-            for option_index, edit in edit_map.items():
-                text = edit.text().strip()
+            for option_index, state in state_map.items():
+                ai_cb = state.get("ai_cb")
+                if ai_cb is not None and ai_cb.isChecked():
+                    text: Optional[str] = OPTION_FILL_AI_TOKEN
+                else:
+                    group = state.get("group")
+                    checked_id = group.checkedId() if group is not None else 0
+                    if checked_id == 1:
+                        text = _TEXT_RANDOM_NAME_TOKEN
+                    elif checked_id == 2:
+                        text = _TEXT_RANDOM_MOBILE_TOKEN
+                    elif checked_id == 3:
+                        text = _TEXT_RANDOM_ID_CARD_TOKEN
+                    elif checked_id == 4:
+                        min_edit = state.get("min_edit")
+                        max_edit = state.get("max_edit")
+                        text = build_random_int_token(
+                            min_edit.text().strip() if min_edit is not None else "",
+                            max_edit.text().strip() if max_edit is not None else "",
+                        )
+                    else:
+                        edit = state.get("edit")
+                        raw_text = edit.text().strip() if edit is not None else ""
+                        text = raw_text or None
                 if 0 <= option_index < normalized_count:
-                    values[option_index] = text or None
+                    values[option_index] = text
             result[idx] = values
         return result
 

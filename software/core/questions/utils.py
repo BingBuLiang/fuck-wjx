@@ -18,6 +18,7 @@ from software.app.runtime_paths import get_resource_path
 _KNOWN_NON_TEXT_QUESTION_TYPES = {"3", "4", "5", "6", "7", "8", "11"}
 RANDOM_INT_TOKEN_PREFIX = "__RANDOM_INT__:"
 _RANDOM_ID_CARD_TOKEN = "__RANDOM_ID_CARD__"
+OPTION_FILL_AI_TOKEN = "__AI_FILL__"
 _ID_CARD_CHECKSUM_WEIGHTS = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
 _ID_CARD_CHECKSUM_CHARS = "10X98765432"
 
@@ -353,6 +354,46 @@ def get_fill_text_from_config(fill_entries: Optional[List[Optional[str]]], optio
         return None
     text = str(value).strip()
     return text or None
+
+
+def resolve_option_fill_text_from_config(
+    fill_entries: Optional[List[Optional[str]]],
+    option_index: int,
+    *,
+    driver: Optional[BrowserDriver] = None,
+    question_number: int = 0,
+    option_text: Optional[str] = None,
+) -> Optional[str]:
+    """解析选项附加输入框配置，支持固定文本、随机值和 AI。"""
+    raw_value = get_fill_text_from_config(fill_entries, option_index)
+    if raw_value is None:
+        return None
+    text = str(raw_value).strip()
+    if not text:
+        return None
+    if text != OPTION_FILL_AI_TOKEN:
+        return resolve_dynamic_text_token(text)
+
+    from software.core.ai.runtime import AIRuntimeError, generate_ai_answer, resolve_question_title_for_ai
+
+    if driver is None or question_number <= 0:
+        raise AIRuntimeError("AI 选项附加填空缺少运行时上下文")
+
+    question_title = resolve_question_title_for_ai(driver, question_number)
+    option_hint = str(option_text or "").strip()
+    ai_prompt = (
+        f"{question_title}\n\n"
+        "当前需要填写的是某个选择题选项后面的补充输入框。"
+    )
+    if option_hint:
+        ai_prompt += f"\n已选择的选项是：{option_hint}"
+    ai_prompt += "\n请只输出最终要填写的内容，不要解释。"
+
+    try:
+        answer = generate_ai_answer(ai_prompt, question_type="fill_blank")
+    except AIRuntimeError as exc:
+        raise AIRuntimeError(f"第{question_number}题附加填空 AI 生成失败：{exc}") from exc
+    return str(answer).strip()
 
 
 def fill_option_additional_text(driver: BrowserDriver, question_number: int, option_index_zero_based: int, fill_value: Optional[str]) -> None:

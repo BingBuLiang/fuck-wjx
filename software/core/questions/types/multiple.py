@@ -22,7 +22,7 @@ from software.app.config import (
     _ENGLISH_MULTI_MIN_PATTERNS,
 )
 from software.core.questions.utils import (
-    get_fill_text_from_config,
+    resolve_option_fill_text_from_config,
     fill_option_additional_text,
     extract_text_from_element,
 )
@@ -693,7 +693,13 @@ def multiple(
                 )
                 continue
             confirmed_indices.append(option_idx)
-            fill_value = get_fill_text_from_config(fill_entries, option_idx)
+            fill_value = resolve_option_fill_text_from_config(
+                fill_entries,
+                option_idx,
+                driver=driver,
+                question_number=current,
+                option_text=option_texts[option_idx] if option_idx < len(option_texts) else "",
+            )
             fill_option_additional_text(driver, current, option_idx, fill_value)
         return confirmed_indices
 

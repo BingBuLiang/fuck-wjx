@@ -17,7 +17,7 @@ from qfluentwidgets import (
     SubtitleLabel,
     BodyLabel,
     CaptionLabel,
-    CardWidget,
+    ElevatedCardWidget,
     PushButton,
     PrimaryPushButton,
     FluentIcon,
@@ -98,11 +98,16 @@ class CommunityPage(ScrollArea):
 
     # ── QQ 群卡片 ──
 
-    def _build_qq_card(self) -> CardWidget:
-        card = CardWidget(self.content_widget)
-        self.qq_inner = QHBoxLayout(card)
-        self.qq_inner.setContentsMargins(40, 36, 40, 36)
-        self.qq_inner.setSpacing(32)
+    def _create_card_layout(self) -> tuple[ElevatedCardWidget, QHBoxLayout]:
+        """统一社区页卡片容器，避免每张卡片重复手搓同一套布局。"""
+        card = ElevatedCardWidget(self.content_widget)
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(40, 36, 40, 36)
+        layout.setSpacing(32)
+        return card, layout
+
+    def _build_qq_card(self) -> ElevatedCardWidget:
+        card, self.qq_inner = self._create_card_layout()
 
         # 左侧文字
         left = QVBoxLayout()
@@ -142,11 +147,8 @@ class CommunityPage(ScrollArea):
 
     # ── 开源声明卡片 ──
 
-    def _build_opensource_card(self) -> CardWidget:
-        card = CardWidget(self.content_widget)
-        self.os_inner = QHBoxLayout(card)
-        self.os_inner.setContentsMargins(40, 36, 40, 36)
-        self.os_inner.setSpacing(32)
+    def _build_opensource_card(self) -> ElevatedCardWidget:
+        card, self.os_inner = self._create_card_layout()
 
         # 左侧：描述
         left = QVBoxLayout()
@@ -203,11 +205,8 @@ class CommunityPage(ScrollArea):
 
     # ── 开发者招募卡片（全宽）──
 
-    def _build_recruit_card(self) -> CardWidget:
-        card = CardWidget(self.content_widget)
-        self.recruit_inner = QHBoxLayout(card)
-        self.recruit_inner.setContentsMargins(40, 36, 40, 36)
-        self.recruit_inner.setSpacing(32)
+    def _build_recruit_card(self) -> ElevatedCardWidget:
+        card, self.recruit_inner = self._create_card_layout()
 
         # 左侧：招募说明
         left = QVBoxLayout()

@@ -66,7 +66,8 @@ software/
 │   ├── helpers/           # UI 侧辅助门面
 │   │   └── qfluent_compat.py # QFluentWidgets 动画兼容补丁
 │   ├── pages/
-│   │   └── workbench/     # dashboard/question_editor（含单栏配置向导）/runtime_panel/log_panel
+│   │   ├── workbench/     # dashboard/question_editor（含单栏配置向导）/runtime_panel/log_panel
+│   │   └── settings/      # 应用程序设置页；settings.py 负责页面骨架，group_widgets.py 放设置页专用右侧控件
 │   └── widgets/           # 通用组件（contact_form 已拆成包；旧 time_range_slider 已移除）
 └── update/                # 更新检查与升级
 

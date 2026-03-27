@@ -2,25 +2,18 @@
 import sys
 import subprocess
 import logging
-from software.logging.action_logger import bind_logged_action, log_action
-from software.logging.log_utils import log_suppressed_exception
-
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QApplication
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 from qfluentwidgets import (
-    ScrollArea,
-    SettingCardGroup,
-    SettingCard,
-    PushSettingCard,
     FluentIcon,
+    GroupHeaderCardWidget,
     InfoBar,
     InfoBarPosition,
     MessageBox,
-    ComboBox,
+    ScrollArea,
 )
 
-from software.ui.widgets.setting_cards import SwitchSettingCard
 from software.app.config import (
     DEFAULT_DOWNLOAD_SOURCE,
     DOWNLOAD_SOURCES,
@@ -29,12 +22,17 @@ from software.app.config import (
     app_settings,
     get_bool_from_qsettings,
 )
+from software.logging.action_logger import bind_logged_action, log_action
+from software.logging.log_utils import log_suppressed_exception
+from software.ui.pages.settings.group_widgets import (
+    ActionButtonGroupWidget,
+    ComboBoxGroupWidget,
+    SwitchGroupWidget,
+)
 
 
 class SettingsPage(ScrollArea):
     """应用程序设置页面"""
-
-
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,113 +47,82 @@ class SettingsPage(ScrollArea):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
 
-        # 从设置中读取配置
         settings = app_settings()
 
-        # 界面外观组
-        self.appearance_group = SettingCardGroup("界面外观", self.view)
-
-        # 微软商店风格导航标签显示设置卡片
-        self.navigation_text_card = SwitchSettingCard(
+        self.appearance_group = GroupHeaderCardWidget("界面外观", self.view)
+        self.navigation_text_card = SwitchGroupWidget(self.appearance_group)
+        self.navigation_text_card.setChecked(self._read_navigation_text_visible_setting())
+        self.topmost_card = SwitchGroupWidget(self.appearance_group)
+        self.topmost_card.setChecked(get_bool_from_qsettings(settings.value("window_topmost"), False))
+        self.appearance_group.addGroup(
             FluentIcon.MENU,
             "显示选中导航名称",
             "开启后左侧导航会像微软商店一样显示当前选中项的文字标签",
-            self.appearance_group
+            self.navigation_text_card,
         )
-        self.navigation_text_card.setChecked(self._read_navigation_text_visible_setting())
-        self.appearance_group.addSettingCard(self.navigation_text_card)
-
-        # 窗口置顶设置卡片
-        self.topmost_card = SwitchSettingCard(
+        self.appearance_group.addGroup(
             FluentIcon.PIN,
             "窗口置顶",
             "开启后程序窗口将始终保持在最上层",
-            self.appearance_group
+            self.topmost_card,
         )
-        self.topmost_card.setChecked(get_bool_from_qsettings(settings.value("window_topmost"), False))
-        self.appearance_group.addSettingCard(self.topmost_card)
-
         layout.addWidget(self.appearance_group)
 
-        # 行为设置组
-        self.behavior_group = SettingCardGroup("行为设置", self.view)
-
-        # 关闭前询问保存设置卡片
-        self.ask_save_card = SwitchSettingCard(
+        self.behavior_group = GroupHeaderCardWidget("行为设置", self.view)
+        self.ask_save_card = SwitchGroupWidget(self.behavior_group)
+        self.ask_save_card.setChecked(get_bool_from_qsettings(settings.value("ask_save_on_close"), True))
+        self.behavior_group.addGroup(
             FluentIcon.SAVE,
             "关闭前询问是否保存",
             "关闭窗口时提示是否保存当前配置",
-            self.behavior_group
+            self.ask_save_card,
         )
-        self.ask_save_card.setChecked(get_bool_from_qsettings(settings.value("ask_save_on_close"), True))
-        self.behavior_group.addSettingCard(self.ask_save_card)
-
         layout.addWidget(self.behavior_group)
 
-        # 软件更新组
-        self.update_group = SettingCardGroup("软件更新", self.view)
-
-        # 启动时检查更新开关
-        self.auto_update_card = SwitchSettingCard(
-            FluentIcon.UPDATE,
-            "在应用程序启动时检查更新",
-            "新版本将更加稳定并拥有更多功能（建议启用此选项）",
-            self.update_group
-        )
-        # 从设置中读取，默认开启
-        settings = app_settings()
+        self.update_group = GroupHeaderCardWidget("软件更新", self.view)
+        self.auto_update_card = SwitchGroupWidget(self.update_group)
         self.auto_update_card.setChecked(get_bool_from_qsettings(settings.value("auto_check_update"), True))
-        self.update_group.addSettingCard(self.auto_update_card)
-
-        # 下载源选择
-        self.download_source_card = SettingCard(
-            FluentIcon.DOWNLOAD,
-            "下载源",
-            "选择用于下载更新的源（如果下载速度较慢，可以尝试切换到其他源）",
-            self.update_group
-        )
-        self.download_source_combo = ComboBox(self.download_source_card)
-        self.download_source_combo.setMinimumWidth(180)
+        self.download_source_card = ComboBoxGroupWidget(180, self.update_group)
+        self.download_source_combo = self.download_source_card.comboBox
         for key, source in DOWNLOAD_SOURCES.items():
             self.download_source_combo.addItem(source["label"], userData=key)
         saved_source = str(settings.value("download_source", DEFAULT_DOWNLOAD_SOURCE)).strip()
         idx = self.download_source_combo.findData(saved_source)
         if idx >= 0:
             self.download_source_combo.setCurrentIndex(idx)
-        self.download_source_card.hBoxLayout.addWidget(self.download_source_combo, 0, Qt.AlignmentFlag.AlignRight)
-        self.download_source_card.hBoxLayout.addSpacing(16)
-        self.update_group.addSettingCard(self.download_source_card)
-
+        self.update_group.addGroup(
+            FluentIcon.UPDATE,
+            "在应用程序启动时检查更新",
+            "新版本将更加稳定并拥有更多功能（建议启用此选项）",
+            self.auto_update_card,
+        )
+        self.update_group.addGroup(
+            FluentIcon.DOWNLOAD,
+            "下载源",
+            "选择用于下载更新的源（如果下载速度较慢，可以尝试切换到其他源）",
+            self.download_source_card,
+        )
         layout.addWidget(self.update_group)
 
-        # 系统工具组
-        self.tools_group = SettingCardGroup("系统工具", self.view)
-
-        # 重启程序设置卡片
-        self.restart_card = PushSettingCard(
-            text="重启",
-            icon=FluentIcon.SYNC,
-            title="重新启动程序",
-            content="重启程序以应用某些设置更改",
-            parent=self.tools_group
+        self.tools_group = GroupHeaderCardWidget("系统工具", self.view)
+        self.restart_card = ActionButtonGroupWidget("重启", self.tools_group)
+        self.reset_ui_card = ActionButtonGroupWidget("恢复默认", self.tools_group)
+        self.tools_group.addGroup(
+            FluentIcon.SYNC,
+            "重新启动程序",
+            "重启程序以应用某些设置更改",
+            self.restart_card,
         )
-        self.tools_group.addSettingCard(self.restart_card)
-
-        # 恢复默认设置卡片
-        self.reset_ui_card = PushSettingCard(
-            text="恢复默认",
-            icon=FluentIcon.BROOM,
-            title="恢复默认设置",
-            content="恢复所有设置项的默认值",
-            parent=self.tools_group
+        self.tools_group.addGroup(
+            FluentIcon.BROOM,
+            "恢复默认设置",
+            "恢复所有设置项的默认值",
+            self.reset_ui_card,
         )
-        self.tools_group.addSettingCard(self.reset_ui_card)
-
         layout.addWidget(self.tools_group)
 
         layout.addStretch(1)
 
-        # 绑定事件
         bind_logged_action(
             self.navigation_text_card.switchButton.checkedChanged,
             self._on_navigation_text_toggled,
@@ -221,7 +188,7 @@ class SettingsPage(ScrollArea):
             forward_signal_args=False,
         )
 
-    def _set_switch_state(self, card: SwitchSettingCard, checked: bool):
+    def _set_switch_state(self, card, checked: bool):
         btn = getattr(card, "switchButton", None)
         if btn is None:
             return
@@ -308,24 +275,18 @@ class SettingsPage(ScrollArea):
         )
 
     def _on_navigation_text_toggled(self, checked: bool):
-        """导航标签显示切换"""
         self._apply_navigation_text_state(checked)
 
     def _restart_program(self):
-        """重启程序"""
-        box = MessageBox(
-            "重启程序",
-            "确定要重新启动程序吗？\n未保存的配置将会丢失。",
-            self.window() or self
-        )
+        box = MessageBox("重启程序", "确定要重新启动程序吗？\n未保存的配置将会丢失。", self.window() or self)
         box.yesButton.setText("确定")
         box.cancelButton.setText("取消")
         if box.exec():
             log_action("UI", "restart_program", "restart_card", "settings", result="confirmed")
             try:
                 win = self.window()
-                if hasattr(win, '_skip_save_on_close'):
-                    setattr(win, '_skip_save_on_close', True)
+                if hasattr(win, "_skip_save_on_close"):
+                    setattr(win, "_skip_save_on_close", True)
                 subprocess.Popen([sys.executable] + sys.argv)
                 log_action("UI", "restart_program", "restart_card", "settings", result="started")
                 QApplication.quit()
@@ -339,36 +300,21 @@ class SettingsPage(ScrollArea):
                     level=logging.ERROR,
                     detail=exc,
                 )
-                InfoBar.error(
-                    "",
-                    f"重启失败：{exc}",
-                    parent=self.window(),
-                    position=InfoBarPosition.TOP,
-                    duration=3000
-                )
-
+                InfoBar.error("", f"重启失败：{exc}", parent=self.window(), position=InfoBarPosition.TOP, duration=3000)
         else:
             log_action("UI", "restart_program", "restart_card", "settings", result="cancelled")
 
     def _on_auto_update_toggled(self, checked: bool):
-        """自动检查更新开关切换"""
         self._apply_auto_update_state(checked)
 
     def _on_topmost_toggled(self, checked: bool):
-        """窗口置顶切换"""
         self._apply_topmost_state(checked)
 
     def _on_ask_save_on_close_toggled(self, checked: bool):
-        """关闭前询问保存切换"""
         self._apply_ask_save_state(checked)
 
     def _on_reset_ui_settings(self):
-        """恢复默认设置"""
-        box = MessageBox(
-            "恢复默认设置",
-            "确定要恢复默认设置吗？\n这将还原所有设置项到初始状态。",
-            self.window() or self
-        )
+        box = MessageBox("恢复默认设置", "确定要恢复默认设置吗？\n这将还原所有设置项到初始状态。", self.window() or self)
         box.yesButton.setText("恢复")
         box.cancelButton.setText("取消")
         if not box.exec():
@@ -398,18 +344,11 @@ class SettingsPage(ScrollArea):
         self._set_switch_state(self.auto_update_card, defaults["auto_check_update"])
         self._apply_navigation_text_state(defaults[NAVIGATION_TEXT_VISIBLE_SETTING_KEY], persist=False)
         self._apply_topmost_state(defaults["window_topmost"], persist=False)
-        InfoBar.success(
-            "",
-            "已恢复默认设置",
-            parent=self.window(),
-            position=InfoBarPosition.TOP,
-            duration=2000
-        )
+        InfoBar.success("", "已恢复默认设置", parent=self.window(), position=InfoBarPosition.TOP, duration=2000)
 
         log_action("CONFIG", "reset_ui_settings", "reset_ui_card", "settings", result="success")
 
     def _on_download_source_changed(self):
-        """下载源选择变化"""
         idx = self.download_source_combo.currentIndex()
         source_key = str(self.download_source_combo.itemData(idx)) if idx >= 0 else DEFAULT_DOWNLOAD_SOURCE
         settings = app_settings()
@@ -422,6 +361,3 @@ class SettingsPage(ScrollArea):
             result="changed",
             payload={"source": source_key},
         )
-
-
-

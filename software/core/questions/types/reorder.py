@@ -272,6 +272,46 @@ def reorder(driver: BrowserDriver, current: int) -> None:
         except Exception:
             return None
 
+    def _playwright_click_selector(css_selector: str, timeout_ms: int = 1200) -> bool:
+        page = getattr(driver, "page", None)
+        if not page:
+            return False
+        try:
+            page.locator(css_selector).first.click(timeout=timeout_ms)
+            return True
+        except Exception:
+            return False
+
+    def _build_option_click_selectors(option_idx: int) -> List[str]:
+        roots = [
+            f"#div{current} ul > li:nth-child({option_idx + 1})",
+            f"#div{current} ol > li:nth-child({option_idx + 1})",
+            f"#div{current} li:nth-child({option_idx + 1})",
+        ]
+        suffixes = [
+            "",
+            " label",
+            " a",
+            " input[type='checkbox']",
+            " input[type='radio']",
+            " .option",
+            " .item",
+            " .ui-state-default",
+            " .ui-sortable-handle",
+            " span",
+            " div",
+        ]
+        selectors: List[str] = []
+        seen = set()
+        for root in roots:
+            for suffix in suffixes:
+                selector = f"{root}{suffix}"
+                if selector in seen:
+                    continue
+                seen.add(selector)
+                selectors.append(selector)
+        return selectors
+
     def _force_mark_rank_selected(li, rank: int) -> None:
         """强制通过 DOM 操作标记排序项为已选中"""
         if not li:
@@ -304,7 +344,7 @@ def reorder(driver: BrowserDriver, current: int) -> None:
             _log_reorder_exception_once("force_mark_rank_selected", exc)
 
     def _robust_click_rank_item(option_idx: int) -> bool:
-        """增强的点击逻辑，多种方式尝试点击排序项"""
+        """仅使用 Playwright 标准点击处理排序项"""
         li = _get_rank_item(option_idx)
         if not li:
             return False
@@ -312,51 +352,23 @@ def reorder(driver: BrowserDriver, current: int) -> None:
             return True
 
         count_before = _count_selected()
+        uid = rank_item_uids[option_idx] if option_idx < len(rank_item_uids) else ""
+        selectors = []
+        if uid:
+            selectors.append(f"#div{current} li[data-wjx-rank-uid='{uid}']")
+        selectors.extend(_build_option_click_selectors(option_idx))
 
-        # 方式2: JavaScript 模拟完整点击事件
-        try:
-            li = _get_rank_item(option_idx)
-            if li:
-                driver.execute_script(
-                    r"""
-                    const el = arguments[0];
-                    if (!el) return;
-                    el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
-                    el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true}));
-                    el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
-                    el.click();
-                    """,
-                    li,
-                )
-                time.sleep(0.06)
-                li = _get_rank_item(option_idx)
-                if li and _is_rank_selected(li) and _count_selected() >= count_before:
-                    return True
-        except Exception as exc:
-            _log_reorder_exception_once("is_item_selected.badge_check", exc)
-
-        # 方式3: 元素直接点击（放到后面，减少自动滚动概率）
-        try:
-            li = _get_rank_item(option_idx)
-            if li:
-                in_view = driver.execute_script(
-                    r"""
-                    const el = arguments[0];
-                    if (!el || !el.getBoundingClientRect) return false;
-                    const rect = el.getBoundingClientRect();
-                    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-                    return rect.top >= 0 && rect.bottom <= vh && rect.height > 0;
-                    """,
-                    li,
-                )
-                if in_view:
-                    li.click()
-                    time.sleep(0.06)
+        for _ in range(4):
+            for selector in selectors:
+                if not _playwright_click_selector(selector, timeout_ms=1200):
+                    continue
+                deadline = time.time() + 0.55
+                while time.time() < deadline:
                     li = _get_rank_item(option_idx)
                     if li and _is_rank_selected(li) and _count_selected() >= count_before:
                         return True
-        except Exception as exc:
-            _log_reorder_exception_once("count_selected.container_scan", exc)
+                    time.sleep(0.05)
+            time.sleep(0.05)
 
         li = _get_rank_item(option_idx)
         if not li:
@@ -395,7 +407,7 @@ def reorder(driver: BrowserDriver, current: int) -> None:
             time.sleep(0.06)
 
     def _click_item(option_idx: int, item) -> bool:
-        """非 rank_mode 通用点击逻辑"""
+        """非 rank_mode：仅使用 Playwright 标准点击"""
         selector = (
             f"#div{current} ul > li:nth-child({option_idx + 1}), "
             f"#div{current} ol > li:nth-child({option_idx + 1})"
@@ -404,106 +416,6 @@ def reorder(driver: BrowserDriver, current: int) -> None:
         def _after_rank_click(changed: bool) -> None:
             if changed and rank_mode:
                 time.sleep(0.28)
-
-        def _playwright_click_selector(css_selector: str) -> bool:
-            page = getattr(driver, "page", None)
-            if not page:
-                return False
-            try:
-                page.click(css_selector, timeout=1200)
-                return True
-            except Exception:
-                return False
-
-        def _native_click(target) -> None:
-            try:
-                if target is not None and hasattr(target, "click"):
-                    target.click()
-            except Exception as exc:
-                _log_reorder_exception_once("click_item.native_click", exc)
-
-        def _safe_dom_click(target) -> None:
-            driver.execute_script(
-                r"""
-                const el = arguments[0];
-                if (!el) return;
-                const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
-                const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-                const inView = !!(rect && rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= vh);
-                const y = window.scrollY || document.documentElement.scrollTop || 0;
-                try { if (!inView) el.scrollIntoView({block:'nearest', inline:'nearest'}); } catch(e) {}
-                try { el.focus({preventScroll:true}); } catch(e) {}
-                try { el.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true, composed:true})); } catch(e) {}
-                try { el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, composed:true})); } catch(e) {}
-                try { el.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, cancelable:true, composed:true})); } catch(e) {}
-                try { el.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, composed:true})); } catch(e) {}
-                try { el.click(); } catch(e) {}
-                try { if (inView) window.scrollTo(0, y); } catch(e) {}
-                """,
-                target,
-            )
-
-        def _mouse_click_center(target) -> bool:
-            page = getattr(driver, "page", None)
-            if not page:
-                return False
-            try:
-                payload = driver.execute_script(
-                    r"""
-                    const el = arguments[0];
-                    if (!el || !el.getBoundingClientRect) return null;
-                    const rect = el.getBoundingClientRect();
-                    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
-                    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-                    if (rect.bottom < 0 || rect.top > vh) {
-                        try { el.scrollIntoView({block:'nearest', inline:'nearest'}); } catch(e) {}
-                    }
-                    const r2 = el.getBoundingClientRect();
-                    return {x: r2.left + r2.width / 2, y: r2.top + r2.height / 2, w: r2.width, h: r2.height};
-                    """,
-                    target,
-                )
-            except Exception:
-                payload = None
-            if not isinstance(payload, dict):
-                return False
-            try:
-                x = float(payload.get("x", 0))
-                y = float(payload.get("y", 0))
-            except Exception:
-                return False
-            if x <= 0 or y <= 0:
-                return False
-            try:
-                page.mouse.click(x, y)
-                return True
-            except Exception:
-                return False
-
-        def _click_targets(base_item) -> List[Any]:
-            targets: List[Any] = []
-            if base_item:
-                targets.append(base_item)
-                for css in (
-                    "input[type='checkbox']",
-                    "input[type='radio']",
-                    "input[type='hidden']",
-                    "label",
-                    "a",
-                    ".option",
-                    ".item",
-                    ".ui-state-default",
-                    ".ui-sortable-handle",
-                    "span",
-                    "div",
-                ):
-                    try:
-                        found = base_item.find_elements(By.CSS_SELECTOR, css)
-                    except Exception:
-                        found = []
-                    for el in found[:3]:
-                        targets.append(el)
-            return targets
 
         def _get_item_fresh() -> Any:
             try:
@@ -521,13 +433,11 @@ def reorder(driver: BrowserDriver, current: int) -> None:
             return True
 
         count_before = _count_selected()
+        click_selectors = _build_option_click_selectors(option_idx)
         if rank_mode:
             clicked = False
-            for css in (
-                f"#div{current} ul > li:nth-child({option_idx + 1})",
-                f"#div{current} ol > li:nth-child({option_idx + 1})",
-            ):
-                if _playwright_click_selector(css):
+            for css in click_selectors:
+                if _playwright_click_selector(css, timeout_ms=1200):
                     clicked = True
                     break
             if clicked:
@@ -552,12 +462,9 @@ def reorder(driver: BrowserDriver, current: int) -> None:
             if base_item and _is_item_selected(base_item):
                 return True
 
-            for target in _click_targets(base_item):
-                try:
-                    _native_click(target)
-                except Exception as exc:
-                    _log_reorder_exception_once("click_item.native_click_wrapper", exc)
-
+            for css in click_selectors:
+                if not _playwright_click_selector(css, timeout_ms=1200):
+                    continue
                 deadline = time.time() + 0.45
                 while time.time() < deadline:
                     try:
@@ -574,42 +481,6 @@ def reorder(driver: BrowserDriver, current: int) -> None:
                     except Exception as exc:
                         _log_reorder_exception_once("click_item.wait_fresh", exc)
                     time.sleep(0.05)
-
-                try:
-                    _safe_dom_click(target)
-                except Exception as exc:
-                    _log_reorder_exception_once("click_item.safe_dom_click", exc)
-                deadline = time.time() + 0.45
-                while time.time() < deadline:
-                    try:
-                        if _count_selected() > count_before:
-                            _after_rank_click(True)
-                            return True
-                    except Exception as exc:
-                        _log_reorder_exception_once("click_item.dom_wait_count", exc)
-                    try:
-                        fresh_check = _get_item_fresh()
-                        if fresh_check and _is_item_selected(fresh_check):
-                            _after_rank_click(True)
-                            return True
-                    except Exception as exc:
-                        _log_reorder_exception_once("click_item.dom_wait_fresh", exc)
-                    time.sleep(0.05)
-
-                try:
-                    if _mouse_click_center(target):
-                        deadline = time.time() + 0.45
-                        while time.time() < deadline:
-                            try:
-                                if _count_selected() > count_before:
-                                    _after_rank_click(True)
-                                    return True
-                            except Exception as exc:
-                                _log_reorder_exception_once("click_item.mouse_wait_count", exc)
-                            time.sleep(0.05)
-                except Exception as exc:
-                    _log_reorder_exception_once("click_item.mouse_click_center", exc)
-
             time.sleep(0.06)
 
         try:

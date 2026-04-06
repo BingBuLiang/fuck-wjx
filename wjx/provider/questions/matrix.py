@@ -260,6 +260,11 @@ def _fill_slider_matrix(
                 row_index=row_offset,
                 reliability_priority_mode=task_ctx.reliability_priority_mode if task_ctx else "ratio_first",
             )
+        
+        # ── S3 新增：记录信效度答案到缓冲区 ──
+        if dimension is not None and task_ctx is not None:
+            task_ctx.record_psycho_answer(dimension, (resolved_question_index, row_offset), selected_index)
+        
         selected_value = candidate_values[selected_index]
         try:
             container = slider_input.find_element(By.XPATH, "./..")
@@ -371,6 +376,11 @@ def matrix(
                 row_index=row_index - 1,
                 reliability_priority_mode=task_ctx.reliability_priority_mode if task_ctx else "ratio_first",
             )
+        
+        # ── S3 新增：记录信效度答案到缓冲区 ──
+        if dimension is not None and task_ctx is not None:
+            task_ctx.record_psycho_answer(dimension, (resolved_question_index, row_index - 1), selected_index)
+        
         selected_column = candidate_columns[selected_index]
         driver.find_element(
             By.CSS_SELECTOR, f"#drv{current}_{row_index} > td:nth-child({selected_column})"

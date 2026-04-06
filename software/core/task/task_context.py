@@ -97,6 +97,21 @@ class TaskContext:
     psycho_target_alpha: float = 0.9
     reliability_priority_mode: str = "ratio_first"
 
+    # ── 信效度回验 —— 答案历史收集 ────────────────────────────────────────
+    # key = 维度名称
+    # value = 答案矩阵，每行是一次提交中该维度所有题目的答案
+    #         例如维度"满意度"有 Q1, Q3, Q5 三道题
+    #         则每行为 [Q1_answer, Q3_answer, Q5_answer]
+    psycho_answer_history: Dict[str, List[List[int]]] = field(default_factory=dict)
+
+    # 维度内题目顺序映射（用于保证矩阵列顺序一致）
+    # key = 维度名称, value = 有序题号列表 [(question_num, row_index), ...]
+    psycho_dimension_question_order: Dict[str, List[Tuple[int, Optional[int]]]] = field(default_factory=dict)
+
+    # 线程级答案缓冲区（提交成功前暂存，避免失败提交污染历史）
+    # key = thread_name, value = {(question_num, row_index): choice}
+    psycho_answer_pending_by_thread: Dict[str, Dict[Tuple[int, Optional[int]], int]] = field(default_factory=dict)
+
     # ── 并发 / 浏览器配置 ─────────────────────────────────────────────────
     headless_mode: bool = False
     browser_preference: List[str] = field(default_factory=list)
@@ -432,3 +447,102 @@ class TaskContext:
             )
         )
         return rows
+
+    # ── 信效度回验 —— 答案收集方法 ────────────────────────────────────────
+
+    def record_psycho_answer(
+        self,
+        dimension: str,
+        question_key: Tuple[int, Optional[int]],
+        choice: int,
+        thread_name: Optional[str] = None,
+    ) -> None:
+        """记录一道题的信效度答案到线程缓冲区（线程安全）。
+
+        Args:
+            dimension: 维度名称
+            question_key: (question_num, row_index)，row_index 为 None 表示非矩阵题
+            choice: 选项索引（0-based）
+            thread_name: 线程名称，默认使用当前线程
+        """
+        if not dimension or not isinstance(dimension, str):
+            return
+
+        key = str(thread_name or threading.current_thread().name or "Worker-?").strip() or "Worker-?"
+
+        with self.lock:
+            # 初始化线程缓冲区
+            if key not in self.psycho_answer_pending_by_thread:
+                self.psycho_answer_pending_by_thread[key] = {}
+
+            # 记录答案
+            self.psycho_answer_pending_by_thread[key][question_key] = int(choice)
+
+            # 初始化维度题目顺序（首次遇到该维度时）
+            if dimension not in self.psycho_dimension_question_order:
+                self.psycho_dimension_question_order[dimension] = []
+
+            # 记录题目顺序（避免重复）
+            if question_key not in self.psycho_dimension_question_order[dimension]:
+                self.psycho_dimension_question_order[dimension].append(question_key)
+
+    def commit_psycho_answers(self, thread_name: Optional[str] = None) -> None:
+        """提交成功后，将线程缓冲区的答案合并到历史矩阵（线程安全）。
+
+        Args:
+            thread_name: 线程名称，默认使用当前线程
+        """
+        key = str(thread_name or threading.current_thread().name or "Worker-?").strip() or "Worker-?"
+
+        with self.lock:
+            # 获取线程缓冲区
+            pending = self.psycho_answer_pending_by_thread.get(key, {})
+            if not pending:
+                return
+
+            # 按维度整理答案
+            dimension_answers: Dict[str, Dict[Tuple[int, Optional[int]], int]] = {}
+            for question_key, choice in pending.items():
+                # 查找该题目属于哪个维度
+                question_num = question_key[0]
+                dimension = self.question_dimension_map.get(question_num)
+                if dimension:
+                    if dimension not in dimension_answers:
+                        dimension_answers[dimension] = {}
+                    dimension_answers[dimension][question_key] = choice
+
+            # 将答案追加到历史矩阵
+            for dimension, answers in dimension_answers.items():
+                # 获取该维度的题目顺序
+                question_order = self.psycho_dimension_question_order.get(dimension, [])
+                if not question_order:
+                    continue
+
+                # 按顺序组装答案行
+                answer_row = []
+                for question_key in question_order:
+                    if question_key in answers:
+                        answer_row.append(answers[question_key])
+                    else:
+                        # 如果某道题没有答案（可能是跳过或未答），跳过该维度
+                        break
+
+                # 只有所有题目都有答案时才追加
+                if len(answer_row) == len(question_order):
+                    if dimension not in self.psycho_answer_history:
+                        self.psycho_answer_history[dimension] = []
+                    self.psycho_answer_history[dimension].append(answer_row)
+
+            # 清空线程缓冲区
+            self.psycho_answer_pending_by_thread[key] = {}
+
+    def reset_psycho_answers(self, thread_name: Optional[str] = None) -> None:
+        """清空线程缓冲区（提交失败时调用）。
+
+        Args:
+            thread_name: 线程名称，默认使用当前线程
+        """
+        key = str(thread_name or threading.current_thread().name or "Worker-?").strip() or "Worker-?"
+
+        with self.lock:
+            self.psycho_answer_pending_by_thread[key] = {}

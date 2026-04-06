@@ -356,6 +356,11 @@ def _record_successful_submission(
             ctx.commit_pending_distribution(thread_name)
         except Exception:
             logging.info("提交成功后写入比例统计失败", exc_info=True)
+        # ── S3 新增：提交成功后合并信效度答案到历史矩阵 ──
+        try:
+            ctx.commit_psycho_answers(thread_name)
+        except Exception:
+            logging.info("提交成功后写入信效度答案失败", exc_info=True)
         try:
             ctx.increment_thread_success(thread_name, status_text="提交成功")
         except Exception:
@@ -569,6 +574,11 @@ def run(
                     ctx.reset_pending_distribution(thread_name)
                 except Exception:
                     logging.info("重置本轮比例统计缓存失败", exc_info=True)
+                # ── S3 新增：重置信效度答案缓冲区 ──
+                try:
+                    ctx.reset_psycho_answers(thread_name)
+                except Exception:
+                    logging.info("重置本轮信效度答案缓存失败", exc_info=True)
                 finished = _provider_fill_survey(
                     session.driver,
                     ctx=ctx,

@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from software.core.persona.context import reset_context as _reset_answer_context
 from software.core.persona.generator import generate_persona, reset_persona, set_current_persona
 from software.core.psychometrics import build_dimension_psychometric_plan
+from software.core.psychometrics.utils import cronbach_alpha
 from software.core.questions.consistency import reset_consistency_context
 from software.core.questions.strict_ratio import is_strict_ratio_question
 from software.core.task import TaskContext
@@ -143,6 +144,8 @@ def provider_run_context(ctx: TaskContext, *, psycho_plan: Optional[Any] = None)
         yield resolved_plan
     finally:
         reset_persona()
+        # ── S3 新增：提交成功后触发 Alpha 回验 ──
+        _try_psychometric_validation(ctx)
 
 
 def normalize_url_for_compare(value: str) -> str:
@@ -162,6 +165,58 @@ def normalize_url_for_compare(value: str) -> str:
         return parsed.geturl()
     except Exception:
         return text
+
+
+def _try_psychometric_validation(ctx: TaskContext) -> None:
+    """尝试执行信效度回验（每 10 份成功提交触发一次）。
+
+    Args:
+        ctx: 任务上下文
+    """
+    # 检查触发条件：cur_num 是 10 的倍数且 > 0
+    if ctx.cur_num <= 0 or ctx.cur_num % 10 != 0:
+        return
+
+    # 检查是否有答案历史数据
+    if not ctx.psycho_answer_history:
+        return
+
+    try:
+        # 获取目标 Alpha
+        target_alpha = float(getattr(ctx, "psycho_target_alpha", 0.9) or 0.9)
+        target_alpha = max(0.70, min(0.95, target_alpha))
+
+        # 遍历各维度进行回验
+        for dimension, answer_matrix in ctx.psycho_answer_history.items():
+            # 检查样本数是否足够（至少 2 份）
+            sample_count = len(answer_matrix)
+            if sample_count < 2:
+                continue
+
+            # 检查题目数是否足够（至少 2 道）
+            if not answer_matrix or len(answer_matrix[0]) < 2:
+                continue
+
+            # 转换为 float 矩阵（cronbach_alpha 接受 List[List[float]]）
+            float_matrix = [[float(choice) for choice in row] for row in answer_matrix]
+
+            # 调用 cronbach_alpha 计算
+            actual_alpha = cronbach_alpha(float_matrix)
+
+            # 计算偏差
+            deviation = abs(actual_alpha - target_alpha)
+
+            # 输出日志
+            log_message = f"信效度回验 | 维度={dimension} 目标α={target_alpha:.2f} 实际α={actual_alpha:.2f} 样本数={sample_count}"
+
+            if deviation > 0.15:
+                logging.warning(log_message)
+            else:
+                logging.info(log_message)
+
+    except Exception as e:
+        # 异常不影响主流程，仅记录日志
+        logging.error(f"信效度回验异常: {e}", exc_info=True)
 
 
 __all__ = [

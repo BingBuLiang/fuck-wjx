@@ -52,6 +52,11 @@ def scale(
             question_index=resolved_question_index,
             reliability_priority_mode=task_ctx.reliability_priority_mode if task_ctx else "ratio_first",
         )
+    
+    # ── S3 新增：记录信效度答案到缓冲区 ──
+    if dimension is not None and task_ctx is not None:
+        task_ctx.record_psycho_answer(dimension, (resolved_question_index, None), selected_index)
+    
     scale_options[selected_index].click()
     record_pending_distribution_choice(
         task_ctx,

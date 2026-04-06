@@ -95,7 +95,7 @@ class TaskContext:
 
     # 心理测量计划目标 Alpha（0.70-0.95）
     psycho_target_alpha: float = 0.9
-    reliability_priority_mode: str = "reliability_first"
+    reliability_priority_mode: str = "ratio_first"
 
     # ── 并发 / 浏览器配置 ─────────────────────────────────────────────────
     headless_mode: bool = False

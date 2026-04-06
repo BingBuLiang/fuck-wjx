@@ -380,6 +380,9 @@ class RunControllerRuntimeMixin:
             user_agent_ratios=dict(getattr(config, "random_ua_ratios", {"wechat": 33, "mobile": 33, "pc": 34})),
             answer_rules=copy.deepcopy(getattr(config, "answer_rules", []) or []),
             psycho_target_alpha=psycho_target_alpha,
+            reliability_priority_mode=str(
+                getattr(config, "reliability_priority_mode", "ratio_first") or "ratio_first"
+            ).strip().lower(),
             stop_on_fail_enabled=config.fail_stop_enabled,
             pause_on_aliyun_captcha=bool(getattr(config, "pause_on_aliyun_captcha", True)),
         )

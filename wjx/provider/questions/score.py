@@ -112,6 +112,7 @@ def score(
             dimension=dimension,
             psycho_plan=psycho_plan,
             question_index=resolved_question_index,
+            reliability_priority_mode=task_ctx.reliability_priority_mode if task_ctx else "ratio_first",
         )
     if selected_index >= len(options):
         selected_index = max(0, len(options) - 1)

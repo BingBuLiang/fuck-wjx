@@ -258,6 +258,7 @@ def _fill_slider_matrix(
                 psycho_plan=psycho_plan,
                 question_index=resolved_question_index,
                 row_index=row_offset,
+                reliability_priority_mode=task_ctx.reliability_priority_mode if task_ctx else "ratio_first",
             )
         selected_value = candidate_values[selected_index]
         try:
@@ -368,6 +369,7 @@ def matrix(
                 psycho_plan=psycho_plan,
                 question_index=resolved_question_index,
                 row_index=row_index - 1,
+                reliability_priority_mode=task_ctx.reliability_priority_mode if task_ctx else "ratio_first",
             )
         selected_column = candidate_columns[selected_index]
         driver.find_element(

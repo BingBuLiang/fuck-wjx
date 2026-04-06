@@ -1135,6 +1135,7 @@ def _answer_qq_score_like(
             dimension=ctx.question_dimension_map.get(current),
             psycho_plan=psycho_plan,
             question_index=current,
+            reliability_priority_mode=ctx.reliability_priority_mode if ctx else "ratio_first",
         )
     if not _click_choice_input(driver, str(question.get("provider_question_id") or ""), "radio", selected_index):
         logging.warning("腾讯问卷第%d题（评分）点击未生效。", current)
@@ -1206,6 +1207,7 @@ def _answer_qq_matrix(
                 psycho_plan=psycho_plan,
                 question_index=current,
                 row_index=row_index,
+                reliability_priority_mode=ctx.reliability_priority_mode if ctx else "ratio_first",
             )
         if not _click_matrix_cell(driver, question_id, row_index, selected_index):
             logging.warning("腾讯问卷第%d题（矩阵）第%d行点击失败。", current, row_index + 1)

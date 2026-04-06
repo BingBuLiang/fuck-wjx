@@ -50,6 +50,7 @@ def scale(
             dimension=dimension,
             psycho_plan=psycho_plan,
             question_index=resolved_question_index,
+            reliability_priority_mode=task_ctx.reliability_priority_mode if task_ctx else "ratio_first",
         )
     scale_options[selected_index].click()
     record_pending_distribution_choice(

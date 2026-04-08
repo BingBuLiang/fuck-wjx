@@ -71,8 +71,11 @@ def build_psychometric_plan_for_run(ctx: TaskContext) -> Optional[Any]:
 
         question_type, start_index = config_entry
         dimension = str(ctx.question_dimension_map.get(question_num) or "").strip()
+        
+        # 如果没有设置维度，跳过该题（不参与心理测量计划）
         if not dimension:
             continue
+        
         if is_strict_ratio_question(ctx, question_num):
             continue
 
@@ -144,8 +147,6 @@ def provider_run_context(ctx: TaskContext, *, psycho_plan: Optional[Any] = None)
         yield resolved_plan
     finally:
         reset_persona()
-        # ── S3 新增：提交成功后触发 Alpha 回验 ──
-        _try_psychometric_validation(ctx)
 
 
 def normalize_url_for_compare(value: str) -> str:

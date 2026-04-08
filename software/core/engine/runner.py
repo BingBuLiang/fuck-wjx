@@ -365,6 +365,14 @@ def _record_successful_submission(
             ctx.increment_thread_success(thread_name, status_text="提交成功")
         except Exception:
             logging.info("更新线程成功计数失败", exc_info=True)
+    
+    # ── S3 新增：提交成功后触发 Alpha 回验（在 cur_num += 1 之后） ──
+    if record_thread_success:
+        try:
+            from software.core.engine.provider_common import _try_psychometric_validation
+            _try_psychometric_validation(ctx)
+        except Exception:
+            logging.info("信效度回验失败", exc_info=True)
     if should_break:
         stop_signal.set()
     if trigger_target_stop:

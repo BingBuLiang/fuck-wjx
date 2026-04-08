@@ -45,10 +45,10 @@ def generate_psycho_answer(
     sigma_e: float = 0.5,
 ) -> int:
     """从潜变量生成单个题目的答案"""
-    # 偏向处理：使用 ±0.5 标准差的偏移
+    # 偏向处理：使用 ±1.5 标准差的偏移
     # 这样可以产生明显的偏向效果，但不会导致极端的分布集中
-    # 对于标准正态分布，±0.5 约等于 19% 的分位点偏移
-    bias_shift = -0.5 if bias == "left" else 0.5 if bias == "right" else 0.0
+    # 对于标准正态分布，±1.5 约等于 93%/7% 的分位点偏移
+    bias_shift = -1.5 if bias == "left" else 1.5 if bias == "right" else 0.0
     
     # 生成带误差的观测值
     z = theta + bias_shift + sigma_e * randn()
@@ -170,7 +170,10 @@ def build_dimension_psychometric_plan(
     grouped_items: Dict[str, List[Tuple[int, str, int, str, Optional[int]]]],
     target_alpha: float = 0.9,
 ) -> Optional[DimensionPsychometricPlan]:
-    """按维度分别构建心理测量计划。"""
+    """按维度分别构建心理测量计划。
+    
+    关键改进：所有维度共享同一个θ（潜变量），确保同一份问卷内各维度答案的一致性。
+    """
     if not grouped_items:
         return None
 
@@ -178,6 +181,11 @@ def build_dimension_psychometric_plan(
     item_dimension_map: Dict[str, str] = {}
     skipped_dimensions: Dict[str, int] = {}
     merged_items: List[PsychometricItem] = []
+
+    # 关键改进：为整份问卷生成一个共享的θ值
+    # 这样同一个人在不同维度的答案会保持一致性
+    shared_theta = randn()
+    logger.info("生成共享潜变量 θ=%.2f（所有维度共用）", shared_theta)
 
     for dimension, items in grouped_items.items():
         normalized_dimension = str(dimension or "").strip()
@@ -189,7 +197,8 @@ def build_dimension_psychometric_plan(
             logger.info("维度[%s]题目数不足 2，道数=%d，已回退常规逻辑", normalized_dimension, item_count)
             continue
 
-        plan = build_psychometric_plan(items, target_alpha=target_alpha)
+        # 使用共享的θ值构建该维度的计划
+        plan = _build_psychometric_plan_with_theta(items, target_alpha=target_alpha, theta=shared_theta)
         if plan is None:
             skipped_dimensions[normalized_dimension] = item_count
             continue
@@ -208,6 +217,64 @@ def build_dimension_psychometric_plan(
         item_dimension_map=item_dimension_map,
         skipped_dimensions=skipped_dimensions,
         items=merged_items,
+    )
+
+
+def _build_psychometric_plan_with_theta(
+    psycho_items: List[Tuple[int, str, int, str, Optional[int]]],
+    target_alpha: float = 0.9,
+    theta: float = 0.0,
+) -> Optional[PsychometricPlan]:
+    """使用指定的θ值构建心理测量计划（内部辅助函数）"""
+    if not psycho_items:
+        return None
+    
+    # 构建题目项列表
+    items: List[PsychometricItem] = []
+    
+    for q_idx, q_type, opt_count, bias, row_idx in psycho_items:
+        if q_type == "matrix" and row_idx is not None:
+            items.append(PsychometricItem(
+                kind="matrix_row",
+                question_index=q_idx,
+                row_index=row_idx,
+                option_count=opt_count,
+                bias=bias,
+            ))
+        else:
+            items.append(PsychometricItem(
+                kind=q_type,
+                question_index=q_idx,
+                option_count=opt_count,
+                bias=bias,
+            ))
+    
+    k = len(items)
+    if k < 2:
+        logger.warning("心理测量计划需要至少2道题目，当前只有 %d 道", k)
+        return None
+    
+    # 计算误差标准差
+    sigma_e = compute_sigma_e_from_alpha(target_alpha, k)
+    
+    # 为每个题目生成答案（使用传入的θ值）
+    choices: Dict[str, int] = {}
+    
+    for item in items:
+        choice = generate_psycho_answer(
+            theta=theta,
+            option_count=item.option_count,
+            bias=item.bias,
+            sigma_e=sigma_e,
+        )
+        
+        choices[_build_choice_key(item.question_index, item.row_index)] = choice
+    
+    return PsychometricPlan(
+        items=items,
+        theta=theta,
+        sigma_e=sigma_e,
+        choices=choices,
     )
 
 

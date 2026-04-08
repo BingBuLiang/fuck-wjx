@@ -54,7 +54,8 @@ def scale(
         )
     
     # ── S3 新增：记录信效度答案到缓冲区 ──
-    if dimension is not None and task_ctx is not None:
+    # 只有设置了维度才记录
+    if task_ctx is not None and dimension:
         task_ctx.record_psycho_answer(dimension, (resolved_question_index, None), selected_index)
     
     scale_options[selected_index].click()

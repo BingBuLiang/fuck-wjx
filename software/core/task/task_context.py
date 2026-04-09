@@ -11,6 +11,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from software.core.questions.reliability_mode import DEFAULT_RELIABILITY_PRIORITY_MODE
 
 # ---------------------------------------------------------------------------
 # 答题内容配置（由 configure_probabilities 写入）
@@ -95,7 +96,7 @@ class TaskContext:
 
     # 心理测量计划目标 Alpha（0.70-0.95）
     psycho_target_alpha: float = 0.9
-    reliability_priority_mode: str = "ratio_first"
+    
 
     # ── 信效度回验 —— 答案历史收集 ────────────────────────────────────────
     # key = 维度名称
@@ -111,6 +112,7 @@ class TaskContext:
     # 线程级答案缓冲区（提交成功前暂存，避免失败提交污染历史）
     # key = thread_name, value = {(question_num, row_index): choice}
     psycho_answer_pending_by_thread: Dict[str, Dict[Tuple[int, Optional[int]], int]] = field(default_factory=dict)
+    reliability_priority_mode: str = DEFAULT_RELIABILITY_PRIORITY_MODE
 
     # ── 并发 / 浏览器配置 ─────────────────────────────────────────────────
     headless_mode: bool = False

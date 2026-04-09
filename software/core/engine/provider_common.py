@@ -12,7 +12,6 @@ from software.core.persona.generator import generate_persona, reset_persona, set
 from software.core.psychometrics import build_dimension_psychometric_plan
 from software.core.psychometrics.utils import cronbach_alpha
 from software.core.questions.consistency import reset_consistency_context
-from software.core.questions.strict_ratio import is_strict_ratio_question
 from software.core.task import TaskContext
 from software.core.questions.tendency import reset_tendency
 

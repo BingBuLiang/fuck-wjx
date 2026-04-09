@@ -1117,13 +1117,19 @@ def _answer_qq_score_like(
     probabilities = ctx.scale_prob[config_index] if config_index < len(ctx.scale_prob) else -1
     probs = normalize_droplist_probs(probabilities, option_count)
     probs = apply_single_like_consistency(probs, current)
-    strict_ratio = is_strict_ratio_question(ctx, current)
     probs = resolve_distribution_probabilities(
         probs,
         option_count,
         ctx,
         current,
-        psycho_plan=None if strict_ratio else psycho_plan,
+        psycho_plan=psycho_plan,
+    )
+    selected_index = get_tendency_index(
+        option_count,
+        probs,
+        dimension=ctx.question_dimension_map.get(current),
+        psycho_plan=psycho_plan,
+        question_index=current,
     )
     if strict_ratio:
         probs = enforce_reference_rank_order(probs, normalize_droplist_probs(probabilities, option_count))
@@ -1156,7 +1162,7 @@ def _answer_qq_matrix(
     question_id = str(question.get("provider_question_id") or "")
     row_count = max(1, int(question.get("rows") or 1))
     option_count = max(2, int(question.get("options") or 0))
-    strict_ratio = is_strict_ratio_question(ctx, current)
+    strict_ratio_question = is_strict_ratio_question(ctx, current)
     next_index = config_index
     for row_index in range(row_count):
         raw_probabilities = ctx.matrix_prob[next_index] if next_index < len(ctx.matrix_prob) else -1
@@ -1179,7 +1185,7 @@ def _answer_qq_matrix(
                     ctx,
                     current,
                     row_index=row_index,
-                    psycho_plan=None if strict_ratio else psycho_plan,
+                    psycho_plan=psycho_plan,
                 )
         else:
             uniform_probs = apply_matrix_row_consistency([1.0] * option_count, current, row_index)
@@ -1190,7 +1196,7 @@ def _answer_qq_matrix(
                     ctx,
                     current,
                     row_index=row_index,
-                    psycho_plan=None if strict_ratio else psycho_plan,
+                    psycho_plan=psycho_plan,
                 )
         if strict_ratio:
             if isinstance(row_probabilities, list):

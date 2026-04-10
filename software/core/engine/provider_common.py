@@ -12,6 +12,7 @@ from software.core.persona.generator import generate_persona, reset_persona, set
 from software.core.psychometrics import build_dimension_psychometric_plan
 from software.core.psychometrics.utils import cronbach_alpha
 from software.core.questions.consistency import reset_consistency_context
+from software.core.questions.strict_ratio import is_strict_ratio_question
 from software.core.task import TaskContext
 from software.core.questions.tendency import reset_tendency
 
@@ -173,13 +174,20 @@ def _try_psychometric_validation(ctx: TaskContext) -> None:
     Args:
         ctx: 任务上下文
     """
+    logging.info(f"[DEBUG] 回验检查: cur_num={ctx.cur_num}, 是否10的倍数={ctx.cur_num % 10 == 0}")
+    
     # 检查触发条件：cur_num 是 10 的倍数且 > 0
     if ctx.cur_num <= 0 or ctx.cur_num % 10 != 0:
         return
 
+    logging.info(f"[DEBUG] 答案历史维度: {list(ctx.psycho_answer_history.keys())}")
+    
     # 检查是否有答案历史数据
     if not ctx.psycho_answer_history:
+        logging.warning("[DEBUG] 回验跳过: 答案历史为空")
         return
+
+    logging.info(f"[DEBUG] 开始回验...")
 
     try:
         # 获取目标 Alpha

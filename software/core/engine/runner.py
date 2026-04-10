@@ -358,7 +358,9 @@ def _record_successful_submission(
             logging.info("提交成功后写入比例统计失败", exc_info=True)
         # ── S3 新增：提交成功后合并信效度答案到历史矩阵 ──
         try:
+            logging.info(f"[DEBUG] 提交答案到历史矩阵: thread={thread_name}")
             ctx.commit_psycho_answers(thread_name)
+            logging.info(f"[DEBUG] 答案历史: {[(k, len(v)) for k, v in ctx.psycho_answer_history.items()]}")
         except Exception:
             logging.info("提交成功后写入信效度答案失败", exc_info=True)
         try:

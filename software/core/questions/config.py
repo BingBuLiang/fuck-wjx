@@ -227,14 +227,19 @@ def _resolve_runtime_dimension(
     *,
     reliability_mode_enabled: bool,
     strict_ratio: bool,
+    reliability_priority_mode: str = "balanced",
 ) -> Optional[str]:
     if not reliability_mode_enabled:
         return None
-    if strict_ratio:
+
+    # 当 reliability_priority_mode 为 "reliability_first" 时，即使是严格配比模式也参与信度回验
+    if strict_ratio and reliability_priority_mode != "reliability_first":
         return None
+
     raw_dimension = str(getattr(entry, "dimension", "") or "").strip()
     if not raw_dimension or raw_dimension == DIMENSION_UNGROUPED:
         return None
+
     return raw_dimension
 
 
@@ -243,6 +248,9 @@ def configure_probabilities(
     ctx: "TaskContext",
     reliability_mode_enabled: bool = True,
 ):
+    # Get reliability_priority_mode from context, with fallback to default
+    reliability_priority_mode = getattr(ctx, "reliability_priority_mode", "balanced")
+    
     def _count_positive_weights(raw_weights: Any) -> int:
         if not isinstance(raw_weights, (list, tuple)):
             return 0
@@ -369,6 +377,7 @@ def configure_probabilities(
                 entry,
                 reliability_mode_enabled=reliability_mode_enabled,
                 strict_ratio=strict_ratio,
+                reliability_priority_mode=reliability_priority_mode,
             )
             bias_value = getattr(entry, "psycho_bias", "custom")
             if isinstance(bias_value, list):
@@ -430,6 +439,7 @@ def configure_probabilities(
                 entry,
                 reliability_mode_enabled=reliability_mode_enabled,
                 strict_ratio=strict_ratio,
+                reliability_priority_mode=reliability_priority_mode,
             )
             _target.question_psycho_bias_map[question_num] = str(getattr(entry, "psycho_bias", "custom") or "custom")
             _idx_scale += 1

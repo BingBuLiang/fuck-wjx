@@ -358,12 +358,9 @@ class RunControllerRuntimeMixin:
         except Exception:
             psycho_target_alpha = 0.9
         psycho_target_alpha = max(0.70, min(0.95, psycho_target_alpha))
-        # reliability_priority_mode = normalize_reliability_priority_mode(
-        #     getattr(config, "reliability_priority_mode", None)
-        # )
-        reliability_priority_mode=str(
-                getattr(config, "reliability_priority_mode", "ratio_first") or "ratio_first"
-            ).strip().lower(),
+        reliability_priority_mode = str(
+            getattr(config, "reliability_priority_mode", "ratio_first") or "ratio_first"
+        ).strip().lower()
 
         ctx = TaskContext(
             url=config.url,
@@ -396,7 +393,13 @@ class RunControllerRuntimeMixin:
     def _apply_pending_question_ctx(self, ctx: TaskContext, *, consume: bool) -> None:
         pending = self._pending_question_ctx
         if pending is None:
+            logging.warning("[DEBUG] _apply_pending_question_ctx: pending is None!")
             return
+        
+        logging.info(f"[DEBUG] ===== _apply_pending_question_ctx 开始 =====")
+        logging.info(f"[DEBUG] pending.question_dimension_map: {pending.question_dimension_map}")
+        logging.info(f"[DEBUG] consume: {consume}")
+        
         ctx.single_prob = copy.deepcopy(pending.single_prob)
         ctx.droplist_prob = copy.deepcopy(pending.droplist_prob)
         ctx.multiple_prob = copy.deepcopy(pending.multiple_prob)
@@ -421,6 +424,10 @@ class RunControllerRuntimeMixin:
         ctx.question_psycho_bias_map = copy.deepcopy(pending.question_psycho_bias_map)
         ctx.questions_metadata = copy.deepcopy(pending.questions_metadata)
         ctx.survey_provider = str(getattr(pending, "survey_provider", getattr(ctx, "survey_provider", "wjx")) or "wjx")
+        
+        logging.info(f"[DEBUG] ctx.question_dimension_map 复制后: {ctx.question_dimension_map}")
+        logging.info(f"[DEBUG] ===== _apply_pending_question_ctx 结束 =====")
+        
         if consume:
             self._pending_question_ctx = None
 
@@ -862,17 +869,34 @@ class RunControllerRuntimeMixin:
         logging.info("配置题目概率分布（共%s题）", len(config.question_entries))
         _tmp_ctx = TaskContext()
         _tmp_ctx.survey_provider = str(getattr(config, "survey_provider", "wjx") or "wjx")
+        _tmp_ctx.reliability_priority_mode = str(
+            getattr(config, "reliability_priority_mode", "balanced") or "balanced"
+        ).strip().lower()
+        
+        reliability_mode_enabled = getattr(config, "reliability_mode_enabled", True)
+        logging.info(f"[DEBUG] ===== 配置题目前检查 =====")
+        logging.info(f"[DEBUG] reliability_mode_enabled: {reliability_mode_enabled}")
+        logging.info(f"[DEBUG] reliability_priority_mode: {_tmp_ctx.reliability_priority_mode}")
+        logging.info(f"[DEBUG] 题目数量: {len(config.question_entries)}")
+        for idx, entry in enumerate(config.question_entries[:3], 1):  # 只打印前3题
+            logging.info(f"[DEBUG] 题{idx}: type={entry.question_type}, dimension={getattr(entry, 'dimension', None)}")
+        logging.info(f"[DEBUG] ========================")
+        
         try:
             configure_probabilities(
                 config.question_entries,
                 ctx=_tmp_ctx,
-                reliability_mode_enabled=getattr(config, "reliability_mode_enabled", True),
+                reliability_mode_enabled=reliability_mode_enabled,
             )
         except Exception as exc:
             logging.error("配置题目失败：%s", exc)
             self._starting = False
             self.runFailed.emit(str(exc))
             return
+
+        logging.info(f"[DEBUG] ===== 配置题目后检查 =====")
+        logging.info(f"[DEBUG] _tmp_ctx.question_dimension_map: {_tmp_ctx.question_dimension_map}")
+        logging.info(f"[DEBUG] ========================")
 
         _tmp_ctx.questions_metadata = {}
         if hasattr(self, "questions_info") and self.questions_info:

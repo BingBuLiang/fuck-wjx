@@ -109,20 +109,14 @@ def score(
         question_index=resolved_question_index,
         priority_mode=getattr(task_ctx, "reliability_priority_mode", None),
     )
-    if strict_ratio:
-        probs = enforce_reference_rank_order(probs, normalize_droplist_probs(probabilities, len(options)))
-        selected_index = weighted_index(probs)
-    else:
-        selected_index = get_tendency_index(
-            len(options),
-            probs,
-            dimension=dimension,
-            psycho_plan=psycho_plan,
-            question_index=resolved_question_index,
-            reliability_priority_mode=task_ctx.reliability_priority_mode if task_ctx else "ratio_first",
-        )
     if selected_index >= len(options):
         selected_index = max(0, len(options) - 1)
+
+    # ── S3 新增：记录信效度答案到缓冲区 ──
+    # 只有设置了维度才记录
+    if task_ctx is not None and dimension:
+        task_ctx.record_psycho_answer(dimension, (resolved_question_index, None), selected_index)
+
     target = options[selected_index]
     try:
         target.click()
@@ -137,7 +131,6 @@ def score(
         selected_index,
         len(options),
     )
-    # 记录统计数据
     # 记录作答上下文
     record_answer(current, "score", selected_indices=[selected_index])
 

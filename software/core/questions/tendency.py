@@ -204,12 +204,12 @@ def get_tendency_index(
             else:
                 # 现有混合逻辑
                 blended_choice = _blend_psychometric_choice(
-                choice,
-                option_count,
-                probabilities,
-                priority_mode=priority_mode,
+                    choice,
+                    option_count,
+                    probabilities,
+                    priority_mode=priority_mode,
                 )
-            return _finalize_choice(blended_choice, anchor=choice)
+                return _finalize_choice(blended_choice, anchor=choice)
             
         # 计划未命中时，回退到常规倾向逻辑
         logging.info(

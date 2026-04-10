@@ -89,6 +89,14 @@ def scale(
             driver.execute_script("arguments[0].click();", target)
         except Exception as exc:
             log_suppressed_exception("scale: driver.execute_script(\"arguments[0].click();\", target)", exc, level=logging.ERROR)
+    # ── S3 新增：记录信效度答案到缓冲区 ──
+    # 只有设置了维度才记录
+    if task_ctx is not None and dimension:
+        logging.info(f"[DEBUG] 记录量表题答案: 维度={dimension}, 题号={resolved_question_index}, 答案={selected_index}")
+        task_ctx.record_psycho_answer(dimension, (resolved_question_index, None), selected_index)
+    elif task_ctx is not None:
+        logging.info(f"[DEBUG] 跳过记录: 题号={resolved_question_index}, 维度为空")
+
     record_pending_distribution_choice(
         task_ctx,
         resolved_question_index,
@@ -97,26 +105,5 @@ def scale(
     )
     # 记录作答上下文
     record_answer(current, "scale", selected_indices=[selected_index])
-
-
-    # if strict_ratio:
-    #     probs = enforce_reference_rank_order(probs, normalize_droplist_probs(probabilities, len(scale_options)))
-    #     selected_index = weighted_index(probs)
-    # else:
-    #     selected_index = get_tendency_index(
-    #         len(scale_options),
-    #         probs,
-    #         dimension=dimension,
-    #         psycho_plan=psycho_plan,
-    #         question_index=resolved_question_index,
-    #         reliability_priority_mode=task_ctx.reliability_priority_mode if task_ctx else "ratio_first",
-    #     )
-    
-    # ── S3 新增：记录信效度答案到缓冲区 ──
-    # 只有设置了维度才记录
-    if task_ctx is not None and dimension:
-        task_ctx.record_psycho_answer(dimension, (resolved_question_index, None), selected_index)
-    
-    # scale_options[selected_index].click()
 
 

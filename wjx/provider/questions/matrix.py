@@ -370,6 +370,12 @@ def matrix(
             row_index=row_index - 1,
             priority_mode=getattr(task_ctx, "reliability_priority_mode", None),
         )
+
+        # ── S3 新增：记录信效度答案到缓冲区 ──
+        # 只有设置了维度才记录
+        if task_ctx is not None and dimension:
+            task_ctx.record_psycho_answer(dimension, (resolved_question_index, row_index - 1), selected_index)
+
         selected_column = candidate_columns[selected_index]
         driver.find_element(
             By.CSS_SELECTOR, f"#drv{current}_{row_index} > td:nth-child({selected_column})"

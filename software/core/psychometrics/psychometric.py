@@ -108,10 +108,10 @@ def build_psychometric_plan(
     """构建信效度生成计划"""
     if not psycho_items:
         return None
-    
+
     # 构建题目项列表
     items: List[PsychometricItem] = []
-    
+
     for q_idx, q_type, opt_count, bias, row_idx in psycho_items:
         if q_type == "matrix" and row_idx is not None:
             items.append(PsychometricItem(
@@ -128,21 +128,21 @@ def build_psychometric_plan(
                 option_count=opt_count,
                 bias=bias,
             ))
-    
+
     k = len(items)
     if k < 2:
         logger.warning("心理测量计划需要至少2道题目，当前只有 %d 道", k)
         return None
-    
+
     # 计算误差标准差
     sigma_e = compute_sigma_e_from_alpha(target_alpha, k)
-    
-    # 生成潜变量
+
+    # 每个计划单独生成潜变量，避免把多维量表压扁成单因子。
     theta = randn()
-    
+
     # 为每个题目生成答案
     choices: Dict[str, int] = {}
-    
+
     for item in items:
         choice = generate_psycho_answer(
             theta=theta,
@@ -150,14 +150,14 @@ def build_psychometric_plan(
             bias=item.bias,
             sigma_e=sigma_e,
         )
-        
+
         choices[_build_choice_key(item.question_index, item.row_index)] = choice
-    
+
     logger.info(
         "心理测量计划已启用 | 目标α=%.2f 题数=%d θ=%.2f σ_e=%.2f",
         target_alpha, k, theta, sigma_e
     )
-    
+
     return PsychometricPlan(
         items=items,
         theta=theta,
@@ -209,5 +209,4 @@ def build_dimension_psychometric_plan(
         skipped_dimensions=skipped_dimensions,
         items=merged_items,
     )
-
 

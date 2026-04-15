@@ -24,7 +24,8 @@
 仓库根目录
 ├── .github/
 │   ├── workflows/
-│   │   └── release-to-r2.yml  # CI/CD 自动发布到 R2
+│   │   ├── release-to-r2.yml   # CI/CD 自动发布安装包到 R2
+│   │   └── deploy-worker.yml   # CI/CD 自动部署 Cloudflare Worker
 │   └── ISSUE_TEMPLATE/        # Issue 模板（报错反馈、新功能请求）
 ├── README.md
 ├── LICENSE
@@ -42,6 +43,7 @@
 ├── test_reliability_modes.py  # 三模式信效度策略的最小回归检查
 ├── software/             # 软件主包（应用壳 + 共享核心 + 平台总调度）
 ├── tencent/              # 腾讯问卷主包
+├── worker/               # Cloudflare Worker 相关配置，用于发送联系开发者消息
 └── wjx/                  # 问卷星主包
 ```
 

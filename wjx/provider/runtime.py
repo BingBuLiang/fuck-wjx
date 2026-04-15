@@ -150,6 +150,11 @@ class _QuestionDispatcher:
 
     def _handle_scale(self, driver, q_num, idx, ctx: ExecutionState, question_div=None, psycho_plan=None):
         dim = ctx.question_dimension_map.get(q_num)
+
+        # ========== 调试日志：答题时 ==========
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[DEBUG-ANSWER] 答题 q{q_num} (scale): dimension={repr(dim)}, psycho_plan={psycho_plan is not None}")
         if question_div is not None and _driver_question_looks_like_rating(question_div):
             _score_impl(
                 driver,
@@ -175,6 +180,11 @@ class _QuestionDispatcher:
 
     def _handle_matrix(self, driver, q_num, idx, ctx: ExecutionState, psycho_plan=None):
         dim = ctx.question_dimension_map.get(q_num)
+
+        # ========== 调试日志：答题时 ==========
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[DEBUG-ANSWER] 答题 q{q_num} (matrix): dimension={repr(dim)}, psycho_plan={psycho_plan is not None}")
         return _matrix_impl(
             driver,
             q_num,
@@ -187,6 +197,12 @@ class _QuestionDispatcher:
         )
 
     def _handle_dropdown(self, driver, q_num, idx, ctx: ExecutionState, psycho_plan=None):
+        # ========== 调试日志：答题时 ==========
+        import logging
+        logger = logging.getLogger(__name__)
+        dim = ctx.question_dimension_map.get(q_num)
+        logger.info(f"[DEBUG-ANSWER] 答题 q{q_num} (dropdown): dimension={repr(dim)}, psycho_plan={psycho_plan is not None}")
+
         _dropdown_impl(
             driver,
             q_num,

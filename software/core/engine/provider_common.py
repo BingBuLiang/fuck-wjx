@@ -61,6 +61,15 @@ def _resolve_bias(raw_bias: Any, probability_config: Any, option_count: int) -> 
 
 def build_psychometric_plan_for_run(config: ExecutionConfig) -> Optional[Any]:
     """根据当前任务配置构建本轮问卷的心理测量作答计划。"""
+
+    # ========== 调试日志：开始构建 ==========
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[DEBUG-PLAN] 开始构建心理测量计划")
+    logger.info(f"[DEBUG-PLAN] question_dimension_map 内容:")
+    for q_num, dim in sorted(config.question_dimension_map.items()):
+        logger.info(f"  - 题目 {q_num}: dimension={repr(dim)}")
+
     grouped_items: Dict[str, List[Tuple[int, str, int, str, Optional[int]]]] = {}
 
     for question_num in sorted(config.question_config_index_map.keys()):
@@ -111,6 +120,19 @@ def build_psychometric_plan_for_run(config: ExecutionConfig) -> Optional[Any]:
                 row_bias = saved_bias[row_idx] if isinstance(saved_bias, list) and row_idx < len(saved_bias) else saved_bias
                 bias = _resolve_bias(row_bias, probability_config, option_count)
                 grouped_items.setdefault(dimension, []).append((question_num, "matrix", option_count, bias, row_idx))
+
+    # ========== 调试日志：grouped_items 检查 ==========
+    logger.info(f"[DEBUG-PLAN] grouped_items 构建完成:")
+    if not grouped_items:
+        logger.warning(f"[DEBUG-PLAN] grouped_items 为空！返回 None")
+        return None
+
+    for dim, items in grouped_items.items():
+        logger.info(f"  - 维度 {repr(dim)}: {len(items)} 道题")
+        for item in items[:3]:  # 只打印前3道题
+            q_num, q_type, opt_count, bias, row_idx = item
+            row_str = f", row={row_idx}" if row_idx is not None else ""
+            logger.info(f"    * 题目 {q_num} ({q_type}{row_str}): options={opt_count}, bias={bias}")
 
     if not grouped_items:
         return None

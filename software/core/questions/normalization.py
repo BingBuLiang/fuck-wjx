@@ -331,8 +331,30 @@ def configure_probabilities(
         isinstance(dimension, str) and bool(str(dimension).strip())
         for dimension in target.question_dimension_map.values()
     )
+
+    # ========== 调试日志：全局维度分配前 ==========
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[DEBUG-NORM] 全局维度分配检查:")
+    logger.info(f"  - reliability_mode_enabled: {reliability_mode_enabled}")
+    logger.info(f"  - reliability_candidates 数量: {len(reliability_candidates)}")
+    logger.info(f"  - has_explicit_runtime_dimension: {has_explicit_runtime_dimension}")
+    logger.info(f"  - 当前 question_dimension_map: {dict(target.question_dimension_map)}")
+
     if reliability_mode_enabled and reliability_candidates and not has_explicit_runtime_dimension:
+        logger.info(f"[DEBUG-NORM] 开始分配全局维度...")
         for question_num, strict_ratio in reliability_candidates:
+            existing_dim = target.question_dimension_map.get(question_num)
+            logger.info(f"  - 题目 {question_num}: strict_ratio={strict_ratio}, existing_dim={repr(existing_dim)}")
             if strict_ratio or target.question_dimension_map.get(question_num):
+                logger.info(f"    → 跳过（strict_ratio={strict_ratio} 或已有维度）")
                 continue
             target.question_dimension_map[question_num] = GLOBAL_RELIABILITY_DIMENSION
+            logger.info(f"    → 已分配全局维度 '{GLOBAL_RELIABILITY_DIMENSION}'")
+    else:
+        logger.info(f"[DEBUG-NORM] 不满足全局维度分配条件，跳过")
+
+    # ========== 调试日志：全局维度分配后 ==========
+    logger.info(f"[DEBUG-NORM] 配置加载完成，最终 question_dimension_map:")
+    for q_num, dim in sorted(target.question_dimension_map.items()):
+        logger.info(f"  - 题目 {q_num}: dimension={repr(dim)}")

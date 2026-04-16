@@ -196,6 +196,8 @@ def get_tendency_index(
     if psycho_plan is not None and question_index is not None:
         choice = _get_psychometric_answer(psycho_plan, question_index, row_index, option_count)
         if choice is not None:
+            if _is_distribution_locked_plan(psycho_plan, question_index, row_index):
+                return _finalize_choice(choice, anchor=choice)
             blended_choice = _blend_psychometric_choice(
                 choice,
                 option_count,
@@ -337,6 +339,24 @@ def _get_psychometric_answer(
             level=logging.WARNING
         )
         return None
+
+
+def _is_distribution_locked_plan(
+    plan: Any,
+    question_index: int,
+    row_index: Optional[int],
+) -> bool:
+    if plan is None or not hasattr(plan, "is_distribution_locked"):
+        return False
+    try:
+        return bool(plan.is_distribution_locked(question_index, row_index))
+    except Exception as exc:
+        log_suppressed_exception(
+            f"_is_distribution_locked_plan: question_index={question_index}, row_index={row_index}",
+            exc,
+            level=logging.WARNING,
+        )
+        return False
 
 
 

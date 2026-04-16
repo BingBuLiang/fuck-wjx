@@ -675,7 +675,7 @@ class ReliabilitySettingCard(ExpandGroupSettingCard):
         super().__init__(
             FluentIcon.CERTIFICATE,
             "提升问卷信效度",
-            "启用后会对维度内题目统一施加信度约束，自定义配比题仍保持硬约束。",
+            "启用后会对量表/评分/下拉/矩阵等信效度题型优先锁定整批配比，再尽量提高维度一致性。",
             parent,
         )
 
@@ -714,7 +714,7 @@ class ReliabilitySettingCard(ExpandGroupSettingCard):
 
         layout.addLayout(alpha_row)
         hint_label = BodyLabel(
-            "系统会固定按统一策略平衡信度和现有配比，不再提供额外偏向选项。",
+            "系统会固定按“先保配比、再尽量拉高信度”的统一策略执行；若目标 α 做不到，会保留配比并下调实际信度。",
             self._groupContainer,
         )
         hint_label.setStyleSheet("color: #606060; font-size: 12px;")
